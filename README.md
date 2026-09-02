@@ -48,11 +48,11 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   sounds when capture starts and ends.
 - Say only `cancel`, `stop`, or `dismiss` to discard the capture. Repeating the
   same word twice cancels immediately, even before recognition finalizes.
-- Hold the push-to-talk shortcut shown in the menu, speak without a wake phrase,
-  then release. Push-to-talk has its own URL template, independent of every wake
-  profile. Change its URL or shortcut in Settings, then select **Save Settings**.
+- Give any wake profile its own push-to-talk shortcut. Hold that shortcut, speak
+  without the wake phrase, then release; the profile’s URL and color are used.
+  Each assigned binding appears beside its phrase in the menu.
 - Open **Settings…** from the menu to add or remove wake profiles, change their
-  URLs and colors, set the locale and shortcut, or enable launch at login.
+  URLs, colors, and shortcuts, set the locale, or enable launch at login.
 
 Passive listening requires on-device recognition for the selected locale and
 fails closed if the Mac does not support it. Push-to-talk may use Apple's speech

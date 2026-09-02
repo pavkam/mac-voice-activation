@@ -82,6 +82,11 @@ public final class VoiceActivationCoordinator {
     }
 
     public func pushToTalkPressed() {
+        guard let profileID = try? configuration().profiles.first?.id else { return }
+        pushToTalkPressed(profileID: profileID)
+    }
+
+    public func pushToTalkPressed(profileID: UUID) {
         guard !pushToTalkActive else { return }
         pushToTalkActive = true
         stopActiveSession()
@@ -91,8 +96,11 @@ public final class VoiceActivationCoordinator {
 
         do {
             let config = try configuration()
-            activeProfile = nil
-            activeCommandTemplate = config.pushToTalkCommandTemplate
+            guard let profile = config.profiles.first(where: { $0.id == profileID }) else {
+                throw CoordinatorError.profileUnavailable
+            }
+            activeProfile = profile
+            activeCommandTemplate = try profile.commandTemplate
             startSession(mode: .pushToTalk, localeID: config.localeID)
         } catch {
             state = .failed(error.localizedDescription)
@@ -477,5 +485,13 @@ public final class VoiceActivationCoordinator {
     private func stopSpeechSession() {
         generation &+= 1
         speechSession.stop()
+    }
+}
+
+private enum CoordinatorError: Error, LocalizedError {
+    case profileUnavailable
+
+    var errorDescription: String? {
+        "The push-to-talk profile is no longer available."
     }
 }

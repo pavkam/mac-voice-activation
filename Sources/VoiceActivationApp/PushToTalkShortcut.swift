@@ -5,9 +5,9 @@ import VoiceActivationCore
 @MainActor
 protocol PushToTalkShortcutManaging: AnyObject {
     func start(
-        hotKey: PushToTalkHotKey,
-        onPressed: @escaping () -> Void,
-        onReleased: @escaping () -> Void) throws
+        profiles: [WakeProfile],
+        onPressed: @escaping (UUID) -> Void,
+        onReleased: @escaping (UUID) -> Void) throws
 
     func stop()
 }
@@ -31,18 +31,23 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
     private static let signature: OSType = 0x56414354
 
     private var eventHandler: EventHandlerRef?
-    private var hotKey: EventHotKeyRef?
-    private var onPressed: (() -> Void)?
-    private var onReleased: (() -> Void)?
+    private var hotKeys: [EventHotKeyRef] = []
+    private var profileIDs: [UInt32: UUID] = [:]
+    private var onPressed: ((UUID) -> Void)?
+    private var onReleased: ((UUID) -> Void)?
 
     func start(
-        hotKey configuration: PushToTalkHotKey,
-        onPressed: @escaping () -> Void,
-        onReleased: @escaping () -> Void) throws
+        profiles: [WakeProfile],
+        onPressed: @escaping (UUID) -> Void,
+        onReleased: @escaping (UUID) -> Void) throws
     {
         stop()
         self.onPressed = onPressed
         self.onReleased = onReleased
+        let bindings = profiles.compactMap { profile in
+            profile.pushToTalkHotKey.map { (profile.id, $0) }
+        }
+        guard !bindings.isEmpty else { return }
 
         var eventTypes = [
             EventTypeSpec(
@@ -60,12 +65,25 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
                 let shortcut = Unmanaged<PushToTalkShortcut>
                     .fromOpaque(userData)
                     .takeUnretainedValue()
+                var identifier = EventHotKeyID()
+                let parameterStatus = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &identifier)
+                guard
+                    parameterStatus == noErr,
+                    let profileID = shortcut.profileIDs[identifier.id]
+                else { return OSStatus(eventNotHandledErr) }
                 let kind = GetEventKind(event)
                 MainActor.assumeIsolated {
                     if kind == UInt32(kEventHotKeyPressed) {
-                        shortcut.onPressed?()
+                        shortcut.onPressed?(profileID)
                     } else if kind == UInt32(kEventHotKeyReleased) {
-                        shortcut.onReleased?()
+                        shortcut.onReleased?(profileID)
                     }
                 }
                 return noErr
@@ -79,28 +97,35 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
             throw RegistrationError.eventHandler(handlerStatus)
         }
 
-        let identifier = EventHotKeyID(signature: Self.signature, id: 1)
-        let registrationStatus = RegisterEventHotKey(
-            configuration.keyCode,
-            Self.carbonModifiers(for: configuration.modifiers),
-            identifier,
-            GetApplicationEventTarget(),
-            0,
-            &hotKey)
-        guard registrationStatus == noErr else {
-            stop()
-            throw RegistrationError.hotKey(registrationStatus)
+        for (index, binding) in bindings.enumerated() {
+            let identifierValue = UInt32(index + 1)
+            let identifier = EventHotKeyID(signature: Self.signature, id: identifierValue)
+            var registeredHotKey: EventHotKeyRef?
+            let registrationStatus = RegisterEventHotKey(
+                binding.1.keyCode,
+                Self.carbonModifiers(for: binding.1.modifiers),
+                identifier,
+                GetApplicationEventTarget(),
+                0,
+                &registeredHotKey)
+            guard registrationStatus == noErr, let registeredHotKey else {
+                stop()
+                throw RegistrationError.hotKey(registrationStatus)
+            }
+            hotKeys.append(registeredHotKey)
+            profileIDs[identifierValue] = binding.0
         }
     }
 
     func stop() {
-        if let hotKey {
+        for hotKey in hotKeys {
             UnregisterEventHotKey(hotKey)
         }
         if let eventHandler {
             RemoveEventHandler(eventHandler)
         }
-        hotKey = nil
+        hotKeys = []
+        profileIDs = [:]
         eventHandler = nil
         onPressed = nil
         onReleased = nil

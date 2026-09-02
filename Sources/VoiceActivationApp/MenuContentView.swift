@@ -24,6 +24,9 @@ struct MenuContentView: View {
                             .isEnabled ?? false
                     },
                     set: { model.setWakeProfileEnabled(profile.id, enabled: $0) }))
+            if let hotKey = profile.pushToTalkHotKey {
+                Text("Push to talk “\(profile.wakePhrase)”: \(hotKey.displayName)")
+            }
         }
 
         if model.state == .capturing {
@@ -32,10 +35,6 @@ struct MenuContentView: View {
             }
             .keyboardShortcut(.cancelAction)
         }
-
-        Divider()
-
-        Text("Push to talk: \(model.activePushToTalkHotKey.displayName)")
 
         Divider()
 

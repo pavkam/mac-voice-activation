@@ -8,7 +8,7 @@ and framework adapters.
 - `VoiceActivationCore` owns wake matching, state transitions, command
   templates, process execution, and preferences.
 - `VoiceActivationApp` owns the SwiftUI menu and Settings window, Apple speech
-  capture, privacy requests, Carbon global shortcut, and Service Management
+  capture, privacy requests, Carbon global shortcuts, and Service Management
   login-item registration. It also owns the non-activating recording overlay.
 - `VoiceActivationCoreTests` covers pure coordinator, matcher, template,
   runner, and preference behavior.
@@ -53,10 +53,11 @@ command`, or an error message.
   may use Apple's speech service. It finishes after 5 seconds without initial
   command text, on a final result, after 1.5 seconds of inactivity following
   text, or at the 30-second absolute maximum.
-- **Push to talk:** a persisted, configurable Carbon global hotkey starts
-  recognition that may use Apple's speech service. Releasing the shortcut
-  finishes capture. Settings records AppKit key events into a draft and converts
-  them to the Carbon key code and modifier mask only when settings are saved.
+- **Push to talk:** each profile may persist a distinct Carbon global hotkey that
+  starts recognition for that profile and may use Apple's speech service.
+  Releasing the shortcut finishes capture. Settings records AppKit key events
+  into profile drafts and registers the full binding set only when settings are
+  saved.
   The prior registration remains active until that save succeeds and is restored
   if the requested combination is unavailable.
 
@@ -74,8 +75,9 @@ can still grow into `stop the music`. Two adjacent copies of the same word
 cancel immediately in passive command capture or push-to-talk.
 
 `WakePhraseMatcher` checks every enabled profile and chooses the longest matching
-phrase. The profile owns its URL template and accent color. Push-to-talk owns a
-separate command template and does not select or depend on a wake profile.
+phrase. The profile owns its URL template, accent color, and optional push-to-talk
+binding. A shortcut event identifies its profile before capture begins, so both
+wake and push-to-talk paths execute the same profile command.
 Passive recognition supplies every enabled phrase to Apple Speech as contextual
 vocabulary so uncommon names and intentional spellings are not treated as
 ordinary dictation.

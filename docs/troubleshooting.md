@@ -84,12 +84,12 @@ cancellation, timeout, and capture errors.
 
 ## Push-to-talk does not react
 
-The default shortcut is Control-Option-Space. The active combination appears in
-the menu and can be changed by clicking it in Settings, recording a combination,
-and selecting **Save Settings**. Another application may have registered the
-requested global shortcut first; Voice Activation reports that conflict and keeps
-the previous shortcut. Keep the keys held while speaking and release them to
-submit.
+The first profile defaults to Control-Option-Space. Every assigned combination
+appears next to its profile in the menu and can be changed inside that profile’s
+Settings card. Select **Save Settings** to register the new binding set. Another
+application may own a requested shortcut first; Voice Activation reports that
+conflict and restores all previous bindings. Keep the keys held while speaking
+and release them to submit through the selected profile.
 
 ## Listening stops after joining or leaving a call
 

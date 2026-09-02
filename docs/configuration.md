@@ -17,17 +17,18 @@ validation errors keep it open so the invalid field can be corrected.
   locale identifier such as `en-US` or `pt-PT`.
 - **Always listen:** enabled by default and keeps an on-device recognition
   session active for every enabled wake phrase.
-- **Push to talk:** is a separate operation with its own URL template and defaults
-  to Control-Option-Space. Click the shortcut button, then press a new combination
-  containing Control, Option, Shift, or Command plus another key. Press Escape to
-  cancel recording, or select **Save Settings** to apply the URL and recorded
-  combination. Until then, the menu and global hotkey continue using the saved
-  settings. If another application owns the combination, Voice Activation keeps
-  the previous shortcut and reports the conflict.
+- **Push to talk:** each wake profile may have its own shortcut. Holding a
+  profile’s binding captures speech without requiring its wake phrase, then runs
+  that profile’s URL and uses its overlay color. Click **Set shortcut**, then press
+  a combination containing Control, Option, Shift, or Command plus another key.
+  Press Escape to cancel recording, or select **Save Settings** to apply every
+  recorded binding. Assigned bindings must be unique. If another application owns
+  a combination, Voice Activation restores the previous saved bindings and reports
+  the conflict.
 
 A wake phrase must be enabled and end at a word boundary. `computer, open calendar`
-matches; `supercomputer open calendar` does not. Push-to-talk remains available
-when every wake phrase is disabled because its command is configured separately.
+matches; `supercomputer open calendar` does not. A profile’s push-to-talk binding
+remains available when that profile’s passive wake phrase is disabled.
 
 Passive recognition fails closed when the selected locale does not support
 on-device recognition. Command capture and push-to-talk may use Apple's speech

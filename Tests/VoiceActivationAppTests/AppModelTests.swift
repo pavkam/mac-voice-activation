@@ -5,15 +5,15 @@ import VoiceActivationCore
 
 @MainActor
 private final class ShortcutSpy: PushToTalkShortcutManaging {
-    private(set) var startedHotKeys: [PushToTalkHotKey] = []
+    private(set) var startedProfiles: [[WakeProfile]] = []
     private(set) var stopCount = 0
 
     func start(
-        hotKey: PushToTalkHotKey,
-        onPressed: @escaping () -> Void,
-        onReleased: @escaping () -> Void) throws
+        profiles: [WakeProfile],
+        onPressed: @escaping (UUID) -> Void,
+        onReleased: @escaping (UUID) -> Void) throws
     {
-        startedHotKeys.append(hotKey)
+        startedProfiles.append(profiles)
     }
 
     func stop() {
@@ -30,78 +30,78 @@ private final class AppModelOverlayStub: RecordingOverlayDisplaying {
 }
 
 struct AppModelTests {
-    @MainActor @Test func setPushToTalkHotKey_WhenRecorded_ChangesOnlyDraft() throws {
+    @MainActor @Test func setPushToTalkHotKey_WhenRecorded_ChangesOnlyThatProfileDraft() throws {
         let fixture = try Fixture()
+        let profileID = fixture.model.wakeProfiles[0].id
         let draft = try PushToTalkHotKey(
             keyCode: 40,
             modifiers: [.command, .shift],
             keyLabel: "K")
 
-        fixture.model.setPushToTalkHotKey(draft)
+        fixture.model.setPushToTalkHotKey(draft, for: profileID)
 
-        #expect(fixture.model.pushToTalkHotKey == draft)
-        #expect(fixture.model.activePushToTalkHotKey == .defaultValue)
-        #expect(fixture.preferences.pushToTalkHotKey == .defaultValue)
-        #expect(fixture.shortcut.startedHotKeys.isEmpty)
+        #expect(fixture.model.wakeProfiles[0].pushToTalkHotKey == draft)
+        #expect(fixture.model.activeWakeProfiles[0].pushToTalkHotKey == .defaultValue)
+        #expect(fixture.preferences.wakeProfiles[0].pushToTalkHotKey == .defaultValue)
+        #expect(fixture.shortcut.startedProfiles.isEmpty)
     }
 
     @MainActor @Test func saveSettings_WhenDraftIsValid_AppliesAndPersistsHotKey() throws {
         let fixture = try Fixture()
+        let profileID = fixture.model.wakeProfiles[0].id
         let draft = try PushToTalkHotKey(
             keyCode: 40,
             modifiers: [.command, .shift],
             keyLabel: "K")
-        fixture.model.setPushToTalkHotKey(draft)
+        fixture.model.setPushToTalkHotKey(draft, for: profileID)
 
         let saved = fixture.model.saveSettings()
 
         #expect(saved)
-        #expect(fixture.model.activePushToTalkHotKey == draft)
-        #expect(fixture.preferences.pushToTalkHotKey == draft)
-        #expect(fixture.shortcut.startedHotKeys == [draft])
-    }
-
-    @MainActor @Test func saveSettings_WhenPushToTalkURLChanges_PersistsSeparateURL() throws {
-        let fixture = try Fixture()
-        fixture.model.pushToTalkURLTemplate = "https://keyboard.example/?q={urlText}"
-
-        let saved = fixture.model.saveSettings()
-
-        #expect(saved)
-        #expect(fixture.preferences.pushToTalkURLTemplate == "https://keyboard.example/?q={urlText}")
-        #expect(fixture.preferences.wakeProfiles[0].argumentTemplates == [
-            "https://www.google.com/search?q={urlText}",
-        ])
+        #expect(fixture.model.activeWakeProfiles[0].pushToTalkHotKey == draft)
+        #expect(fixture.preferences.wakeProfiles[0].pushToTalkHotKey == draft)
+        #expect(fixture.shortcut.startedProfiles.last?[0].pushToTalkHotKey == draft)
     }
 
     @MainActor @Test func saveSettings_WhenProfileIsInvalid_DoesNotApplyHotKey() throws {
         let fixture = try Fixture()
+        let profileID = fixture.model.wakeProfiles[0].id
         let draft = try PushToTalkHotKey(
             keyCode: 40,
             modifiers: [.command, .shift],
             keyLabel: "K")
-        fixture.model.setPushToTalkHotKey(draft)
+        fixture.model.setPushToTalkHotKey(draft, for: profileID)
         fixture.model.wakeProfiles[0].urlTemplate = "https://example.com/static"
 
         let saved = fixture.model.saveSettings()
 
         #expect(!saved)
-        #expect(fixture.model.activePushToTalkHotKey == .defaultValue)
-        #expect(fixture.preferences.pushToTalkHotKey == .defaultValue)
-        #expect(fixture.shortcut.startedHotKeys.isEmpty)
+        #expect(fixture.model.activeWakeProfiles[0].pushToTalkHotKey == .defaultValue)
+        #expect(fixture.preferences.wakeProfiles[0].pushToTalkHotKey == .defaultValue)
+        #expect(fixture.shortcut.startedProfiles.isEmpty)
     }
 
     @MainActor @Test func saveSettings_WhenProfilesAreValid_PersistsEveryProfile() throws {
         let fixture = try Fixture()
+        let searchHotKey = try PushToTalkHotKey(
+            keyCode: 40,
+            modifiers: [.command, .shift],
+            keyLabel: "K")
+        let assistantHotKey = try PushToTalkHotKey(
+            keyCode: 45,
+            modifiers: [.control, .option],
+            keyLabel: "N")
         fixture.model.wakeProfiles = [
             WakeProfileDraft(
                 wakePhrase: "search",
                 urlTemplate: "https://search.example/?q={urlText}",
-                accent: .cyan),
+                accent: .cyan,
+                pushToTalkHotKey: searchHotKey),
             WakeProfileDraft(
                 wakePhrase: "ask assistant",
                 urlTemplate: "https://assistant.example/?prompt={urlText}",
-                accent: .purple),
+                accent: .purple,
+                pushToTalkHotKey: assistantHotKey),
         ]
 
         let saved = fixture.model.saveSettings()
@@ -111,6 +111,9 @@ struct AppModelTests {
             "search", "ask assistant",
         ])
         #expect(fixture.model.activeWakeProfiles.map(\.accent) == [.cyan, .purple])
+        #expect(fixture.shortcut.startedProfiles.last?.map(\.pushToTalkHotKey) == [
+            searchHotKey, assistantHotKey,
+        ])
     }
 
     @MainActor @Test func setWakeProfileEnabled_WhenOneProfileChanges_PersistsOnlyThatProfile() throws {
@@ -133,18 +136,19 @@ struct AppModelTests {
 
     @MainActor @Test func shortcutRecording_WhenDraftIsNotSaved_RestoresActiveHotKey() throws {
         let fixture = try Fixture()
+        let profileID = fixture.model.wakeProfiles[0].id
         let draft = try PushToTalkHotKey(
             keyCode: 40,
             modifiers: [.command, .shift],
             keyLabel: "K")
-        fixture.model.setPushToTalkHotKey(draft)
+        fixture.model.setPushToTalkHotKey(draft, for: profileID)
 
         fixture.model.setPushToTalkShortcutRecording(true)
         fixture.model.setPushToTalkShortcutRecording(false)
 
         #expect(fixture.shortcut.stopCount == 1)
-        #expect(fixture.shortcut.startedHotKeys == [.defaultValue])
-        #expect(fixture.preferences.pushToTalkHotKey == .defaultValue)
+        #expect(fixture.shortcut.startedProfiles.last?[0].pushToTalkHotKey == .defaultValue)
+        #expect(fixture.preferences.wakeProfiles[0].pushToTalkHotKey == .defaultValue)
     }
 
     @MainActor

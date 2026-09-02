@@ -9,7 +9,7 @@ public final class AppPreferences {
         static let pushToTalkKeyCode = "pushToTalkKeyCode"
         static let pushToTalkModifiers = "pushToTalkModifiers"
         static let pushToTalkKeyLabel = "pushToTalkKeyLabel"
-        static let pushToTalkURLTemplate = "pushToTalkURLTemplate"
+        static let profileHotKeysMigrated = "profileHotKeysMigrated"
         static let executablePath = "executablePath"
         static let argumentTemplates = "argumentTemplates"
     }
@@ -41,15 +41,14 @@ public final class AppPreferences {
                 let profiles = try? JSONDecoder().decode([WakeProfile].self, from: data),
                 !profiles.isEmpty
             else {
-                return [legacyWakeProfile()]
+                return profilesWithMigratedHotKey([legacyWakeProfile()])
             }
-            return profiles
+            return profilesWithMigratedHotKey(profiles)
         }
         set {
             let profiles = newValue.isEmpty ? [WakeProfile.defaultValue] : newValue
-            if let data = try? JSONEncoder().encode(profiles) {
-                defaults.set(data, forKey: Key.wakeProfiles)
-            }
+            storeWakeProfiles(profiles)
+            defaults.set(true, forKey: Key.profileHotKeysMigrated)
         }
     }
 
@@ -86,22 +85,6 @@ public final class AppPreferences {
         }
     }
 
-    public var pushToTalkURLTemplate: String {
-        get {
-            normalized(
-                defaults.string(forKey: Key.pushToTalkURLTemplate),
-                fallback: wakeProfiles.first?.argumentTemplates.first
-                    ?? "https://www.google.com/search?q={urlText}")
-        }
-        set {
-            defaults.set(
-                normalized(
-                    newValue,
-                    fallback: "https://www.google.com/search?q={urlText}"),
-                forKey: Key.pushToTalkURLTemplate)
-        }
-    }
-
     public var argumentTemplates: [String] {
         get {
             defaults.stringArray(forKey: Key.argumentTemplates)
@@ -122,5 +105,20 @@ public final class AppPreferences {
             executablePath: executablePath,
             argumentTemplates: argumentTemplates,
             accent: .blue)) ?? .defaultValue
+    }
+
+    private func profilesWithMigratedHotKey(_ profiles: [WakeProfile]) -> [WakeProfile] {
+        guard !defaults.bool(forKey: Key.profileHotKeysMigrated) else { return profiles }
+        var migrated = profiles
+        migrated[0].pushToTalkHotKey = pushToTalkHotKey
+        storeWakeProfiles(migrated)
+        defaults.set(true, forKey: Key.profileHotKeysMigrated)
+        return migrated
+    }
+
+    private func storeWakeProfiles(_ profiles: [WakeProfile]) {
+        if let data = try? JSONEncoder().encode(profiles) {
+            defaults.set(data, forKey: Key.wakeProfiles)
+        }
     }
 }

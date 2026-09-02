@@ -17,6 +17,7 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
         case argumentTemplates
         case accent
         case isEnabled
+        case pushToTalkHotKey
     }
 
     public enum ValidationError: Error, Equatable, LocalizedError {
@@ -46,13 +47,15 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
     public var argumentTemplates: [String]
     public var accent: WakeProfileAccent
     public var isEnabled: Bool
+    public var pushToTalkHotKey: PushToTalkHotKey?
 
     public init(
         id: UUID = UUID(),
         wakePhrase: String,
         urlTemplate: String,
         accent: WakeProfileAccent,
-        isEnabled: Bool = true) throws
+        isEnabled: Bool = true,
+        pushToTalkHotKey: PushToTalkHotKey? = nil) throws
     {
         try self.init(
             id: id,
@@ -60,7 +63,8 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
             executablePath: "/usr/bin/open",
             argumentTemplates: [urlTemplate],
             accent: accent,
-            isEnabled: isEnabled)
+            isEnabled: isEnabled,
+            pushToTalkHotKey: pushToTalkHotKey)
     }
 
     public init(
@@ -69,7 +73,8 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
         executablePath: String,
         argumentTemplates: [String],
         accent: WakeProfileAccent,
-        isEnabled: Bool = true) throws
+        isEnabled: Bool = true,
+        pushToTalkHotKey: PushToTalkHotKey? = nil) throws
     {
         let normalizedPhrase = wakePhrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedPhrase.isEmpty else {
@@ -90,6 +95,7 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
         self.argumentTemplates = argumentTemplates
         self.accent = accent
         self.isEnabled = isEnabled
+        self.pushToTalkHotKey = pushToTalkHotKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -100,7 +106,10 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
             executablePath: container.decode(String.self, forKey: .executablePath),
             argumentTemplates: container.decode([String].self, forKey: .argumentTemplates),
             accent: container.decode(WakeProfileAccent.self, forKey: .accent),
-            isEnabled: container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true)
+            isEnabled: container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true,
+            pushToTalkHotKey: container.decodeIfPresent(
+                PushToTalkHotKey.self,
+                forKey: .pushToTalkHotKey))
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -111,6 +120,7 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
         try container.encode(argumentTemplates, forKey: .argumentTemplates)
         try container.encode(accent, forKey: .accent)
         try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encodeIfPresent(pushToTalkHotKey, forKey: .pushToTalkHotKey)
     }
 
     public var commandTemplate: CommandTemplate {

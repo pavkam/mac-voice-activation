@@ -12,9 +12,6 @@ final class AppModel {
     var wakeProfiles: [WakeProfileDraft]
     private(set) var activeWakeProfiles: [WakeProfile]
     var localeID: String
-    var pushToTalkHotKey: PushToTalkHotKey
-    var pushToTalkURLTemplate: String
-    private(set) var activePushToTalkHotKey: PushToTalkHotKey
     var settingsError: String?
 
     @ObservationIgnored private let preferences: AppPreferences
@@ -51,9 +48,6 @@ final class AppModel {
         activeWakeProfiles = preferences.wakeProfiles
         wakeProfiles = preferences.wakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
-        pushToTalkHotKey = preferences.pushToTalkHotKey
-        pushToTalkURLTemplate = preferences.pushToTalkURLTemplate
-        activePushToTalkHotKey = preferences.pushToTalkHotKey
         overlayPresenter.onCancel = { [weak self] in
             self?.cancelCapture()
         }
@@ -95,7 +89,6 @@ final class AppModel {
     @discardableResult
     func saveSettings() -> Bool {
         let profiles: [WakeProfile]
-        let pushToTalkTemplate: CommandTemplate
         do {
             guard !wakeProfiles.isEmpty else { throw ModelError.profileRequired }
             profiles = try wakeProfiles.map { try $0.validatedProfile() }
@@ -105,31 +98,28 @@ final class AppModel {
             guard Set(phrases).count == phrases.count else {
                 throw ModelError.duplicateWakePhrase
             }
-            pushToTalkTemplate = try CommandTemplate(
-                executablePath: "/usr/bin/open",
-                argumentTemplates: [pushToTalkURLTemplate])
+            let hotKeys = profiles.compactMap(\.pushToTalkHotKey)
+            guard Set(hotKeys).count == hotKeys.count else {
+                throw ModelError.duplicatePushToTalkHotKey
+            }
         } catch {
             settingsError = error.localizedDescription
             return false
         }
 
         do {
-            try registerShortcut(pushToTalkHotKey)
+            try registerShortcuts(profiles)
         } catch {
-            try? registerShortcut(activePushToTalkHotKey)
+            try? registerShortcuts(activeWakeProfiles)
             settingsError = error.localizedDescription
             return false
         }
 
         preferences.wakeProfiles = profiles
         preferences.localeID = localeID
-        preferences.pushToTalkHotKey = pushToTalkHotKey
-        preferences.pushToTalkURLTemplate = pushToTalkTemplate.argumentTemplates[0]
         activeWakeProfiles = preferences.wakeProfiles
         wakeProfiles = activeWakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
-        activePushToTalkHotKey = preferences.pushToTalkHotKey
-        pushToTalkURLTemplate = preferences.pushToTalkURLTemplate
         settingsError = nil
         coordinator.refreshConfiguration()
         return true
@@ -141,9 +131,10 @@ final class AppModel {
         overlayPresenter.update(state: .disabled, transcript: "")
     }
 
-    func setPushToTalkHotKey(_ hotKey: PushToTalkHotKey) {
-        guard hotKey != pushToTalkHotKey else { return }
-        pushToTalkHotKey = hotKey
+    func setPushToTalkHotKey(_ hotKey: PushToTalkHotKey?, for profileID: UUID) {
+        guard let index = wakeProfiles.firstIndex(where: { $0.id == profileID }) else { return }
+        guard wakeProfiles[index].pushToTalkHotKey != hotKey else { return }
+        wakeProfiles[index].pushToTalkHotKey = hotKey
         settingsError = nil
     }
 
@@ -156,7 +147,7 @@ final class AppModel {
         }
 
         do {
-            try registerShortcut(activePushToTalkHotKey)
+            try registerShortcuts(activeWakeProfiles)
         } catch {
             settingsError = error.localizedDescription
         }
@@ -180,7 +171,7 @@ final class AppModel {
             self?.updateRecordingOverlay()
         }
         do {
-            try registerShortcut(activePushToTalkHotKey)
+            try registerShortcuts(activeWakeProfiles)
         } catch {
             settingsError = error.localizedDescription
         }
@@ -190,19 +181,19 @@ final class AppModel {
         }
     }
 
-    private func registerShortcut(_ hotKey: PushToTalkHotKey) throws {
+    private func registerShortcuts(_ profiles: [WakeProfile]) throws {
         try shortcut.start(
-            hotKey: hotKey,
-            onPressed: { [weak self] in self?.pushToTalkPressed() },
-            onReleased: { [weak self] in self?.pushToTalkReleased() })
+            profiles: profiles,
+            onPressed: { [weak self] in self?.pushToTalkPressed(profileID: $0) },
+            onReleased: { [weak self] _ in self?.pushToTalkReleased() })
     }
 
-    private func pushToTalkPressed() {
+    private func pushToTalkPressed(profileID: UUID) {
         guard !hotkeyHeld else { return }
         hotkeyHeld = true
         Task { @MainActor [weak self] in
             guard let self, await self.ensurePermissions(), self.hotkeyHeld else { return }
-            self.coordinator.pushToTalkPressed()
+            self.coordinator.pushToTalkPressed(profileID: profileID)
         }
     }
 
@@ -231,10 +222,7 @@ final class AppModel {
     private func savedConfiguration() throws -> ActivationConfiguration {
         ActivationConfiguration(
             profiles: preferences.wakeProfiles,
-            localeID: preferences.localeID,
-            pushToTalkCommandTemplate: try CommandTemplate(
-                executablePath: "/usr/bin/open",
-                argumentTemplates: [preferences.pushToTalkURLTemplate]))
+            localeID: preferences.localeID)
     }
 
     private func updateRecordingOverlay() {
@@ -248,6 +236,7 @@ final class AppModel {
         case unavailable
         case profileRequired
         case duplicateWakePhrase
+        case duplicatePushToTalkHotKey
 
         var errorDescription: String? {
             switch self {
@@ -257,6 +246,8 @@ final class AppModel {
                 "Add at least one wake profile."
             case .duplicateWakePhrase:
                 "Wake phrases must be unique."
+            case .duplicatePushToTalkHotKey:
+                "Push-to-talk shortcuts must be unique."
             }
         }
     }

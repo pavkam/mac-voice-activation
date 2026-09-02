@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import VoiceActivationCore
 
@@ -34,6 +35,24 @@ struct WakeProfileTests {
             profiles: [profile])
 
         #expect(match == nil)
+    }
+
+    @Test func coding_WhenProfileHasPushToTalkBinding_RoundTripsIt() throws {
+        let hotKey = try PushToTalkHotKey(
+            keyCode: 40,
+            modifiers: [.command, .shift],
+            keyLabel: "K")
+        let profile = try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://example.com?q={urlText}",
+            accent: .purple,
+            pushToTalkHotKey: hotKey)
+
+        let decoded = try JSONDecoder().decode(
+            WakeProfile.self,
+            from: JSONEncoder().encode(profile))
+
+        #expect(decoded.pushToTalkHotKey == hotKey)
     }
 
     @Test func init_WhenWakePhraseIsEmpty_RejectsProfile() {

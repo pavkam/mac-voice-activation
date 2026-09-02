@@ -1,6 +1,6 @@
 import Foundation
 
-public struct HotKeyModifiers: OptionSet, Equatable, Sendable {
+public struct HotKeyModifiers: OptionSet, Codable, Equatable, Hashable, Sendable {
     public static let control = HotKeyModifiers(rawValue: 1 << 0)
     public static let option = HotKeyModifiers(rawValue: 1 << 1)
     public static let shift = HotKeyModifiers(rawValue: 1 << 2)
@@ -13,7 +13,7 @@ public struct HotKeyModifiers: OptionSet, Equatable, Sendable {
     }
 }
 
-public struct PushToTalkHotKey: Equatable, Sendable {
+public struct PushToTalkHotKey: Codable, Equatable, Hashable, Sendable {
     public enum ValidationError: Error, Equatable, LocalizedError {
         case modifierRequired
         case keyRequired

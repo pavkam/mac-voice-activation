@@ -449,26 +449,27 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.speech.mode == .passiveWake)
     }
 
-    @MainActor @Test func pushToTalk_WhenReleased_UsesItsOwnCommandTemplate() async throws {
-        let wakeProfile = try WakeProfile(
+    @MainActor @Test func pushToTalk_WhenProfileBindingIsPressed_UsesThatProfilesCommand() async throws {
+        let computer = try WakeProfile(
             wakePhrase: "computer",
             urlTemplate: "https://wake.example/?q={urlText}",
             accent: .blue)
-        let pushToTalkTemplate = try CommandTemplate(
-            executablePath: "/usr/bin/open",
-            argumentTemplates: ["https://push.example/?q={urlText}"])
-        let fixture = try Fixture(
-            profiles: [wakeProfile],
-            pushToTalkTemplate: pushToTalkTemplate)
+        let sneek = try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://notes.example/?q={urlText}",
+            accent: .purple)
+        let fixture = try Fixture(profiles: [computer, sneek])
 
-        fixture.coordinator.pushToTalkPressed()
+        fixture.coordinator.pushToTalkPressed(profileID: sneek.id)
         fixture.speech.emit("keyboard command")
         fixture.coordinator.pushToTalkReleased()
         await waitUntil {
             await fixture.runner.recordedTranscripts() == ["keyboard command"]
         }
 
-        #expect(await fixture.runner.recordedTemplates() == [pushToTalkTemplate])
+        #expect(await fixture.runner.recordedTemplates().first?.argumentTemplates == [
+            "https://notes.example/?q={urlText}",
+        ])
     }
 
     @MainActor @Test func pushToTalk_WhenCommandIsPartial_PublishesLiveText() throws {
@@ -566,8 +567,7 @@ struct VoiceActivationCoordinatorTests {
 
         init(
             timing: ActivationTiming = .standard,
-            profiles: [WakeProfile]? = nil,
-            pushToTalkTemplate: CommandTemplate? = nil) throws
+            profiles: [WakeProfile]? = nil) throws
         {
             let template = try CommandTemplate(
                 executablePath: "/usr/bin/printf",
@@ -577,10 +577,7 @@ struct VoiceActivationCoordinatorTests {
                 commandRunner: runner,
                 configuration: {
                     if let profiles {
-                        return ActivationConfiguration(
-                            profiles: profiles,
-                            localeID: "en-US",
-                            pushToTalkCommandTemplate: pushToTalkTemplate)
+                        return ActivationConfiguration(profiles: profiles, localeID: "en-US")
                     }
                     return ActivationConfiguration(
                         wakePhrase: "computer",

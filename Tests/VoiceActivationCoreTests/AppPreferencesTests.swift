@@ -8,9 +8,11 @@ struct AppPreferencesTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
+        var expectedProfile = WakeProfile.defaultValue
+        expectedProfile.pushToTalkHotKey = .defaultValue
 
         #expect(preferences.passiveEnabled)
-        #expect(preferences.wakeProfiles == [.defaultValue])
+        #expect(preferences.wakeProfiles == [expectedProfile])
         #expect(preferences.wakePhrase == "computer")
         #expect(preferences.pushToTalkHotKey == .defaultValue)
         #expect(preferences.executablePath == "/usr/bin/open")
@@ -84,16 +86,26 @@ struct AppPreferencesTests {
         #expect(profiles.first?.isEnabled == true)
     }
 
-    @Test func pushToTalkURLTemplate_WhenNotStored_MigratesFromFirstWakeProfile() throws {
+    @Test func wakeProfiles_WhenHotKeysWereGlobal_MigratesBindingToFirstProfile() throws {
         let suite = "VoiceActivationTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
-        preferences.wakeProfiles = [try WakeProfile(
-            wakePhrase: "sneek",
-            urlTemplate: "https://notes.example/?text={urlText}",
-            accent: .purple)]
+        let legacyProfiles = [
+            try WakeProfile(
+                wakePhrase: "computer",
+                urlTemplate: "https://search.example/?q={urlText}",
+                accent: .blue),
+            try WakeProfile(
+                wakePhrase: "sneek",
+                urlTemplate: "https://notes.example/?text={urlText}",
+                accent: .purple),
+        ]
+        defaults.set(try JSONEncoder().encode(legacyProfiles), forKey: "wakeProfiles")
 
-        #expect(preferences.pushToTalkURLTemplate == "https://notes.example/?text={urlText}")
+        let profiles = preferences.wakeProfiles
+
+        let expected: [PushToTalkHotKey?] = [.defaultValue, nil]
+        #expect(profiles.map(\.pushToTalkHotKey) == expected)
     }
 }
