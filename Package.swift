@@ -19,7 +19,11 @@ let package = Package(
             dependencies: [
                 "VoiceActivationCore",
             ],
-            exclude: ["Resources/Info.plist"]),
+            exclude: [
+                "Resources/CaptureEnd.wav",
+                "Resources/CaptureStart.wav",
+                "Resources/Info.plist",
+            ]),
         .testTarget(
             name: "VoiceActivationCoreTests",
             dependencies: [

@@ -12,13 +12,48 @@ protocol CaptureSoundPlaying: AnyObject {
 }
 
 @MainActor
-final class SystemCaptureSoundPlayer: CaptureSoundPlaying {
-    func play(_ event: CaptureSoundEvent) {
-        let name = switch event {
-        case .started: "Pop"
-        case .ended: "Tink"
+protocol CaptureSoundAssetPlaying: AnyObject {
+    func playBundled(named name: String) -> Bool
+    func playSystem(named name: String)
+}
+
+@MainActor
+final class AppCaptureSoundAssets: CaptureSoundAssetPlaying {
+    private var bundledSounds: [String: NSSound] = [:]
+
+    func playBundled(named name: String) -> Bool {
+        if let sound = bundledSounds[name] {
+            return sound.play()
         }
+        guard
+            let url = Bundle.main.url(forResource: name, withExtension: "wav"),
+            let sound = NSSound(contentsOf: url, byReference: true)
+        else { return false }
+        bundledSounds[name] = sound
+        return sound.play()
+    }
+
+    func playSystem(named name: String) {
         NSSound(named: NSSound.Name(name))?.play()
+    }
+}
+
+@MainActor
+final class SystemCaptureSoundPlayer: CaptureSoundPlaying {
+    private let assetPlayer: any CaptureSoundAssetPlaying
+
+    init(assetPlayer: any CaptureSoundAssetPlaying = AppCaptureSoundAssets()) {
+        self.assetPlayer = assetPlayer
+    }
+
+    func play(_ event: CaptureSoundEvent) {
+        let names = switch event {
+        case .started: (bundled: "CaptureStart", fallback: "Pop")
+        case .ended: (bundled: "CaptureEnd", fallback: "Tink")
+        }
+        if !assetPlayer.playBundled(named: names.bundled) {
+            assetPlayer.playSystem(named: names.fallback)
+        }
     }
 }
 

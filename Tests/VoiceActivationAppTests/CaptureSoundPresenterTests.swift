@@ -11,7 +11,45 @@ private final class CaptureSoundSpy: CaptureSoundPlaying {
     }
 }
 
+@MainActor
+private final class CaptureSoundAssetSpy: CaptureSoundAssetPlaying {
+    var bundledResult = true
+    private(set) var bundledNames: [String] = []
+    private(set) var systemNames: [String] = []
+
+    func playBundled(named name: String) -> Bool {
+        bundledNames.append(name)
+        return bundledResult
+    }
+
+    func playSystem(named name: String) {
+        systemNames.append(name)
+    }
+}
+
 struct CaptureSoundPresenterTests {
+    @MainActor @Test func play_WhenCustomCuesExist_UsesBundledStartAndEndSounds() {
+        let assets = CaptureSoundAssetSpy()
+        let player = SystemCaptureSoundPlayer(assetPlayer: assets)
+
+        player.play(.started)
+        player.play(.ended)
+
+        #expect(assets.bundledNames == ["CaptureStart", "CaptureEnd"])
+        #expect(assets.systemNames.isEmpty)
+    }
+
+    @MainActor @Test func play_WhenCustomCueIsMissing_UsesSystemFallback() {
+        let assets = CaptureSoundAssetSpy()
+        assets.bundledResult = false
+        let player = SystemCaptureSoundPlayer(assetPlayer: assets)
+
+        player.play(.started)
+        player.play(.ended)
+
+        #expect(assets.systemNames == ["Pop", "Tink"])
+    }
+
     @MainActor @Test func update_WhenCaptureStartsAndStops_PlaysBothCuesOnce() {
         let player = CaptureSoundSpy()
         let presenter = CaptureSoundPresenter(player: player)

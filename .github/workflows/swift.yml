@@ -54,5 +54,7 @@ jobs:
       - name: "🔍 Verify app bundle"
         run: |
           test -x .build/VoiceActivation.app/Contents/MacOS/VoiceActivation
+          test -f .build/VoiceActivation.app/Contents/Resources/CaptureStart.wav
+          test -f .build/VoiceActivation.app/Contents/Resources/CaptureEnd.wav
           plutil -lint .build/VoiceActivation.app/Contents/Info.plist
           codesign --verify --deep --strict .build/VoiceActivation.app

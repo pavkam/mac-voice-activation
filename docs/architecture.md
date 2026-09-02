@@ -120,9 +120,10 @@ non-zero exit status as an error. No shell parses the transcript.
   between bottom-centered compact and expanded geometry. A single retained
     SwiftUI hierarchy interpolates the microphone, capsule, transcript, and
   cancel control instead of swapping complete views. Its gradients derive from
-  the active profile. `CaptureSoundPresenter` observes state edges and plays one
-  cue on entry to capture and another on exit. The panel accepts pointer input
-  only so its cancel control can abort capture.
+  the active profile. `CaptureSoundPresenter` observes state edges and plays a
+  bundled rising cue on entry to capture and a descending cue on exit, falling
+  back to system sounds only if an asset cannot load. The panel accepts pointer
+  input only so its cancel control can abort capture.
 
 ## Privacy boundary
 
