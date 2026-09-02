@@ -169,7 +169,7 @@ struct VoiceActivationCoordinatorTests {
     }
 
     @MainActor @Test func commandCapture_WhenRetiredWakeSessionUpdates_IgnoresStaleTranscript() async throws {
-        let fixture = try Fixture(timing: .fast)
+        let fixture = try Fixture()
         fixture.coordinator.setPassiveEnabled(true)
         fixture.speech.emit("computer", isFinal: true)
 
