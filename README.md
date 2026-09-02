@@ -37,7 +37,8 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
 
 - Passive wake is on by default. Grant the requested permissions and the app
   listens for **“computer”** immediately. Each saved wake phrase has its own
-  menu toggle, so phrases can be enabled or disabled independently.
+  row in the polished menu-bar control panel, so phrases can be enabled or
+  disabled independently while their push-to-talk shortcuts remain visible.
 - Say `computer`, then the command text. The command is submitted after speech
   recognition finalizes or the transcript remains unchanged for 1.5 seconds.
 - Add as many wake profiles as needed. Each phrase has its own URL template and

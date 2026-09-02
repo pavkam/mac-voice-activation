@@ -10,6 +10,9 @@ and framework adapters.
 - `VoiceActivationApp` owns the SwiftUI menu and Settings window, Apple speech
   capture, privacy requests, Carbon global shortcuts, and Service Management
   login-item registration. It also owns the non-activating recording overlay.
+- `MenuContentView` renders the menu-bar extra as a material-backed control
+  panel with state-specific status presentation, compact profile controls,
+  inline shortcut hints, capture cancellation, and application actions.
 - `VoiceActivationCoreTests` covers pure coordinator, matcher, template,
   runner, and preference behavior.
 - `VoiceActivationAppTests` covers macOS adapter policies, audio callback

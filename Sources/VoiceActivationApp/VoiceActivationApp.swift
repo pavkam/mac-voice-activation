@@ -11,6 +11,7 @@ struct VoiceActivationApp: App {
             Image(systemName: StatusIcon.symbol(for: model.state))
                 .accessibilityLabel(model.state.label)
         }
+        .menuBarExtraStyle(.window)
 
         Window("Voice Activation Settings", id: SettingsWindowPresenter.windowID) {
             SettingsView(model: model)
