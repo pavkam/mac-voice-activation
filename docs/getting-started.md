@@ -67,7 +67,7 @@ to cancel immediately without waiting for speech recognition to finalize.
 You can also hold the push-to-talk shortcut shown in the menu, speak without a
 wake phrase, and release the keys to submit. The default is
 Control-Option-Space; click the shortcut in Settings to record another
-modifier-plus-key combination.
+modifier-plus-key combination, then select **Save Settings**.
 
 ## Development signing
 

@@ -68,10 +68,11 @@ putting it into Settings.
 ## Push-to-talk does not react
 
 The default shortcut is Control-Option-Space. The active combination appears in
-the menu and can be changed by clicking it in Settings. Another application may
-have registered the requested global shortcut first; Voice Activation reports
-that conflict and keeps the previous shortcut. Keep the keys held while speaking
-and release them to submit.
+the menu and can be changed by clicking it in Settings, recording a combination,
+and selecting **Save Settings**. Another application may have registered the
+requested global shortcut first; Voice Activation reports that conflict and keeps
+the previous shortcut. Keep the keys held while speaking and release them to
+submit.
 
 ## Listening stops after joining or leaving a call
 

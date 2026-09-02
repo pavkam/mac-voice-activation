@@ -44,7 +44,7 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   same word twice cancels immediately, even before recognition finalizes.
 - Hold the push-to-talk shortcut shown in the menu, speak without a wake phrase,
   then release. Change it by clicking the shortcut in Settings and pressing a
-  new modifier-plus-key combination.
+  new modifier-plus-key combination, then select **Save Settings**.
 - Open **Settings…** from the menu to change the wake phrase, locale,
   push-to-talk shortcut, executable, argument templates, and whether the app
   launches at login.

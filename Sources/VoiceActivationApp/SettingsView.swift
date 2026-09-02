@@ -28,6 +28,7 @@ struct SettingsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: model.wakePhrase) { saved = false }
         .onChange(of: model.localeID) { saved = false }
+        .onChange(of: model.pushToTalkHotKey) { saved = false }
         .onChange(of: model.executablePath) { saved = false }
         .onChange(of: model.argumentTemplatesText) { saved = false }
     }

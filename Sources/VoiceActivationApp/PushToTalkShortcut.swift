@@ -3,7 +3,17 @@ import Foundation
 import VoiceActivationCore
 
 @MainActor
-final class PushToTalkShortcut {
+protocol PushToTalkShortcutManaging: AnyObject {
+    func start(
+        hotKey: PushToTalkHotKey,
+        onPressed: @escaping () -> Void,
+        onReleased: @escaping () -> Void) throws
+
+    func stop()
+}
+
+@MainActor
+final class PushToTalkShortcut: PushToTalkShortcutManaging {
     enum RegistrationError: Error, LocalizedError {
         case eventHandler(OSStatus)
         case hotKey(OSStatus)

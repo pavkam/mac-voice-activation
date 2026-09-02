@@ -27,7 +27,7 @@ struct MenuContentView: View {
             .keyboardShortcut(.cancelAction)
         }
 
-        Text("Push to talk: \(model.pushToTalkHotKey.displayName)")
+        Text("Push to talk: \(model.activePushToTalkHotKey.displayName)")
 
         Divider()
 

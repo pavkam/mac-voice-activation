@@ -1,8 +1,8 @@
 # Configuration
 
-Open the menu-bar item and choose **Settings…**. Voice and command changes take
-effect after you select **Save Settings**. Startup and push-to-talk shortcut
-changes apply immediately.
+Open the menu-bar item and choose **Settings…**. Voice, command, and push-to-talk
+shortcut changes take effect after you select **Save Settings**. Startup changes
+apply immediately.
 
 ## Voice settings
 
@@ -16,8 +16,10 @@ changes apply immediately.
 - **Push to talk:** defaults to Control-Option-Space and does not require the
   wake phrase. Click the shortcut button, then press a new combination containing
   Control, Option, Shift, or Command plus another key. Press Escape to cancel
-  recording. If another application owns the combination, Voice Activation keeps
-  the previous shortcut and reports the conflict.
+  recording, or select **Save Settings** to apply the recorded combination. Until
+  then, the menu and global hotkey continue using the saved shortcut. If another
+  application owns the combination, Voice Activation keeps the previous shortcut
+  and reports the conflict.
 
 The wake phrase must end at a word boundary. `computer, open calendar` matches;
 `supercomputer open calendar` does not.

@@ -53,9 +53,10 @@ command`, or an error message.
   text, or at the 30-second absolute maximum.
 - **Push to talk:** a persisted, configurable Carbon global hotkey starts
   recognition that may use Apple's speech service. Releasing the shortcut
-  finishes capture. Settings records AppKit key events, converts them to the
-  Carbon key code and modifier mask, and restores the prior registration if the
-  requested combination is unavailable.
+  finishes capture. Settings records AppKit key events into a draft and converts
+  them to the Carbon key code and modifier mask only when settings are saved.
+  The prior registration remains active until that save succeeds and is restored
+  if the requested combination is unavailable.
 
 When the wake phrase and command arrive in one transcription, the coordinator
 uses the remaining text immediately. When the wake phrase is recognized alone,

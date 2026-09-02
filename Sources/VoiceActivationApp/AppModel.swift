@@ -12,13 +12,14 @@ final class AppModel {
     var wakePhrase: String
     var localeID: String
     var pushToTalkHotKey: PushToTalkHotKey
+    private(set) var activePushToTalkHotKey: PushToTalkHotKey
     var executablePath: String
     var argumentTemplatesText: String
     var settingsError: String?
 
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let speechSession: AppleSpeechSession
-    @ObservationIgnored private let shortcut = PushToTalkShortcut()
+    @ObservationIgnored private let shortcut: any PushToTalkShortcutManaging
     @ObservationIgnored private let overlayPresenter: RecordingOverlayPresenter
     @ObservationIgnored private var started = false
     @ObservationIgnored private var permissionGranted = false
@@ -34,23 +35,29 @@ final class AppModel {
 
     init(
         preferences: AppPreferences = AppPreferences(),
-        recordingOverlay: any RecordingOverlayDisplaying = RecordingOverlayController())
+        recordingOverlay: any RecordingOverlayDisplaying = RecordingOverlayController(),
+        shortcut: any PushToTalkShortcutManaging = PushToTalkShortcut(),
+        startsAutomatically: Bool = true)
     {
         self.preferences = preferences
+        self.shortcut = shortcut
         speechSession = AppleSpeechSession()
         overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
         passiveEnabled = preferences.passiveEnabled
         wakePhrase = preferences.wakePhrase
         localeID = preferences.localeID
         pushToTalkHotKey = preferences.pushToTalkHotKey
+        activePushToTalkHotKey = preferences.pushToTalkHotKey
         executablePath = preferences.executablePath
         argumentTemplatesText = preferences.argumentTemplates.joined(separator: "\n")
         overlayPresenter.onCancel = { [weak self] in
             self?.cancelCapture()
         }
 
-        Task { @MainActor [weak self] in
-            await self?.start()
+        if startsAutomatically {
+            Task { @MainActor [weak self] in
+                await self?.start()
+            }
         }
     }
 
@@ -79,12 +86,22 @@ final class AppModel {
             return false
         }
 
+        do {
+            try registerShortcut(pushToTalkHotKey)
+        } catch {
+            try? registerShortcut(activePushToTalkHotKey)
+            settingsError = error.localizedDescription
+            return false
+        }
+
         preferences.wakePhrase = wakePhrase
         preferences.localeID = localeID
+        preferences.pushToTalkHotKey = pushToTalkHotKey
         preferences.executablePath = executablePath
         preferences.argumentTemplates = arguments
         wakePhrase = preferences.wakePhrase
         localeID = preferences.localeID
+        activePushToTalkHotKey = preferences.pushToTalkHotKey
         executablePath = preferences.executablePath
         argumentTemplatesText = arguments.joined(separator: "\n")
         settingsError = nil
@@ -100,22 +117,7 @@ final class AppModel {
 
     func setPushToTalkHotKey(_ hotKey: PushToTalkHotKey) {
         guard hotKey != pushToTalkHotKey else { return }
-        let previousHotKey = pushToTalkHotKey
-        if hotkeyHeld {
-            hotkeyHeld = false
-            coordinator.cancelCapture()
-        }
-
-        do {
-            try registerShortcut(hotKey)
-        } catch {
-            try? registerShortcut(previousHotKey)
-            settingsError = error.localizedDescription
-            return
-        }
-
         pushToTalkHotKey = hotKey
-        preferences.pushToTalkHotKey = hotKey
         settingsError = nil
     }
 
@@ -128,7 +130,7 @@ final class AppModel {
         }
 
         do {
-            try registerShortcut(pushToTalkHotKey)
+            try registerShortcut(activePushToTalkHotKey)
         } catch {
             settingsError = error.localizedDescription
         }
@@ -147,7 +149,7 @@ final class AppModel {
             self?.updateRecordingOverlay()
         }
         do {
-            try registerShortcut(pushToTalkHotKey)
+            try registerShortcut(activePushToTalkHotKey)
         } catch {
             settingsError = error.localizedDescription
         }
