@@ -76,6 +76,20 @@ final class AppModel {
         }
     }
 
+    func setWakeProfileEnabled(_ id: UUID, enabled: Bool) {
+        guard let activeIndex = activeWakeProfiles.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        guard activeWakeProfiles[activeIndex].isEnabled != enabled else { return }
+
+        activeWakeProfiles[activeIndex].isEnabled = enabled
+        preferences.wakeProfiles = activeWakeProfiles
+        if let draftIndex = wakeProfiles.firstIndex(where: { $0.id == id }) {
+            wakeProfiles[draftIndex].isEnabled = enabled
+        }
+        coordinator.refreshConfiguration()
+    }
+
     @discardableResult
     func saveSettings() -> Bool {
         let profiles: [WakeProfile]

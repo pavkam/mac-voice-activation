@@ -10,11 +10,13 @@ validation errors keep it open so the invalid field can be corrected.
 - **Wake profiles:** each profile has a wake phrase, URL template, and animation
   color. Add or remove profiles as needed. Phrases must be unique and occur at
   the beginning of the recognized utterance. Matching ignores case, accents,
-  and character width; if phrases overlap, the longest match wins.
+  and character width; if phrases overlap, the longest match wins. The menu-bar
+  menu has a separate persistent toggle for every saved phrase. Disabled phrases
+  are excluded from recognition without affecting the other profiles.
 - **Speech locale:** defaults to the current macOS locale and accepts an Apple
   locale identifier such as `en-US` or `pt-PT`.
 - **Always listen:** enabled by default and keeps an on-device recognition
-  session active for every saved wake phrase.
+  session active for every enabled wake phrase.
 - **Push to talk:** defaults to Control-Option-Space and does not require the
   wake phrase. Click the shortcut button, then press a new combination containing
   Control, Option, Shift, or Command plus another key. Press Escape to cancel
@@ -23,9 +25,10 @@ validation errors keep it open so the invalid field can be corrected.
   application owns the combination, Voice Activation keeps the previous shortcut
   and reports the conflict.
 
-A wake phrase must end at a word boundary. `computer, open calendar` matches;
+A wake phrase must be enabled and end at a word boundary. `computer, open calendar` matches;
 `supercomputer open calendar` does not. Push-to-talk uses the first saved wake
-profile's URL and color because no spoken wake phrase selects one.
+profile's URL and color because no spoken wake phrase selects one. It prefers
+the first enabled profile but remains available when every phrase is disabled.
 
 Passive recognition fails closed when the selected locale does not support
 on-device recognition. Command capture and push-to-talk may use Apple's speech

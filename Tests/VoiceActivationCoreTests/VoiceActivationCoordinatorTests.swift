@@ -105,6 +105,25 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.speech.contextualStrings == ["computer", "sneek"])
     }
 
+    @MainActor @Test func setPassiveEnabled_WhenProfileIsDisabled_ExcludesItFromRecognition() throws {
+        let profiles = [
+            try WakeProfile(
+                wakePhrase: "computer",
+                urlTemplate: "https://example.com?q={urlText}",
+                accent: .blue),
+            try WakeProfile(
+                wakePhrase: "sneek",
+                urlTemplate: "https://example.com/note?q={urlText}",
+                accent: .purple,
+                isEnabled: false),
+        ]
+        let fixture = try Fixture(profiles: profiles)
+
+        fixture.coordinator.setPassiveEnabled(true)
+
+        #expect(fixture.speech.contextualStrings == ["computer"])
+    }
+
     @MainActor @Test func passiveUpdate_WhenProfileMatches_UsesItsURLAndAccent() async throws {
         let search = try WakeProfile(
             wakePhrase: "search",

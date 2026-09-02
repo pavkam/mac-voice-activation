@@ -6,17 +6,20 @@ struct WakeProfileDraft: Equatable, Identifiable {
     var wakePhrase: String
     var urlTemplate: String
     var accent: WakeProfileAccent
+    var isEnabled: Bool
 
     init(
         id: UUID = UUID(),
         wakePhrase: String,
         urlTemplate: String,
-        accent: WakeProfileAccent)
+        accent: WakeProfileAccent,
+        isEnabled: Bool = true)
     {
         self.id = id
         self.wakePhrase = wakePhrase
         self.urlTemplate = urlTemplate
         self.accent = accent
+        self.isEnabled = isEnabled
     }
 
     init(profile: WakeProfile) {
@@ -24,6 +27,7 @@ struct WakeProfileDraft: Equatable, Identifiable {
         wakePhrase = profile.wakePhrase
         urlTemplate = profile.argumentTemplates.first ?? ""
         accent = profile.accent
+        isEnabled = profile.isEnabled
     }
 
     func validatedProfile() throws -> WakeProfile {
@@ -31,6 +35,7 @@ struct WakeProfileDraft: Equatable, Identifiable {
             id: id,
             wakePhrase: wakePhrase,
             urlTemplate: urlTemplate,
-            accent: accent)
+            accent: accent,
+            isEnabled: isEnabled)
     }
 }

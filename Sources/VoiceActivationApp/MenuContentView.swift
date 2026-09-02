@@ -14,11 +14,17 @@ struct MenuContentView: View {
 
         Divider()
 
-        Toggle(
-            "Listen for \(model.activeWakeProfiles.count) wake phrase\(model.activeWakeProfiles.count == 1 ? "" : "s")",
-            isOn: Binding(
-                get: { model.passiveEnabled },
-                set: { model.setPassiveEnabled($0) }))
+        ForEach(model.activeWakeProfiles) { profile in
+            Toggle(
+                "Listen for “\(profile.wakePhrase)”",
+                isOn: Binding(
+                    get: {
+                        model.activeWakeProfiles
+                            .first(where: { $0.id == profile.id })?
+                            .isEnabled ?? false
+                    },
+                    set: { model.setWakeProfileEnabled(profile.id, enabled: $0) }))
+        }
 
         if model.state == .capturing {
             Button("Cancel Recording") {

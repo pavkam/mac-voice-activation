@@ -36,11 +36,13 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
 ## Use
 
 - Passive wake is on by default. Grant the requested permissions and the app
-  listens for **“computer”** immediately; the menu toggle disables it.
+  listens for **“computer”** immediately. Each saved wake phrase has its own
+  menu toggle, so phrases can be enabled or disabled independently.
 - Say `computer`, then the command text. The command is submitted after speech
   recognition finalizes or the transcript remains unchanged for 1.5 seconds.
 - Add as many wake profiles as needed. Each phrase has its own URL template and
   accent color; the matched color carries through the recording animation.
+  Newly added phrases are enabled by default.
 - While recording, a compact animated microphone floats above the current app,
   expands to show live transcription, offers a cancel button, and plays distinct
   sounds when capture starts and ends.

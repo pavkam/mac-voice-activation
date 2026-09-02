@@ -65,4 +65,22 @@ struct AppPreferencesTests {
 
         #expect(preferences.pushToTalkHotKey == .defaultValue)
     }
+
+    @Test func wakeProfiles_WhenStoredBeforeEnabledFlagExisted_MigrateAsEnabled() throws {
+        let suite = "VoiceActivationTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let id = UUID(uuidString: "F39F8151-6192-452E-8C96-36D29AB7335D")!
+        let legacyJSON = """
+        [{"id":"\(id.uuidString)","wakePhrase":"sneek","executablePath":"/usr/bin/open","argumentTemplates":["https://example.com?q={urlText}"],"accent":"purple"}]
+        """
+        defaults.set(legacyJSON.data(using: .utf8), forKey: "wakeProfiles")
+
+        let profiles = AppPreferences(defaults: defaults).wakeProfiles
+
+        #expect(profiles.count == 1)
+        #expect(profiles.first?.id == id)
+        #expect(profiles.first?.wakePhrase == "sneek")
+        #expect(profiles.first?.isEnabled == true)
+    }
 }

@@ -34,6 +34,7 @@ public enum WakePhraseMatcher {
 
     public static func match(in transcript: String, profiles: [WakeProfile]) -> Match? {
         profiles
+            .filter(\.isEnabled)
             .sorted { $0.wakePhrase.count > $1.wakePhrase.count }
             .lazy
             .compactMap { profile in

@@ -22,6 +22,20 @@ struct WakeProfileTests {
         #expect(match?.command == "deploy production")
     }
 
+    @Test func match_WhenMatchingProfileIsDisabled_IgnoresIt() throws {
+        let profile = try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://example.com?q={urlText}",
+            accent: .purple,
+            isEnabled: false)
+
+        let match = WakePhraseMatcher.match(
+            in: "sneek remember this",
+            profiles: [profile])
+
+        #expect(match == nil)
+    }
+
     @Test func init_WhenWakePhraseIsEmpty_RejectsProfile() {
         #expect(throws: WakeProfile.ValidationError.wakePhraseRequired) {
             try WakeProfile(

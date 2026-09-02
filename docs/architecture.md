@@ -47,7 +47,8 @@ command`, or an error message.
 ## Speech modes
 
 - **Passive wake:** the always-listen toggle starts on-device recognition. It
-  restarts after final results and recoverable failures.
+  supplies only individually enabled profiles as contextual vocabulary and
+  matching candidates, then restarts after final results and recoverable failures.
 - **Command capture:** a wake phrase finalized alone starts recognition that
   may use Apple's speech service. It finishes after 5 seconds without initial
   command text, on a final result, after 1.5 seconds of inactivity following

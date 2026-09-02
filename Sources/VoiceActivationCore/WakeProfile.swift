@@ -10,6 +10,15 @@ public enum WakeProfileAccent: String, CaseIterable, Codable, Equatable, Sendabl
 }
 
 public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case wakePhrase
+        case executablePath
+        case argumentTemplates
+        case accent
+        case isEnabled
+    }
+
     public enum ValidationError: Error, Equatable, LocalizedError {
         case wakePhraseRequired
         case missingTranscriptPlaceholder
@@ -36,19 +45,22 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
     public var executablePath: String
     public var argumentTemplates: [String]
     public var accent: WakeProfileAccent
+    public var isEnabled: Bool
 
     public init(
         id: UUID = UUID(),
         wakePhrase: String,
         urlTemplate: String,
-        accent: WakeProfileAccent) throws
+        accent: WakeProfileAccent,
+        isEnabled: Bool = true) throws
     {
         try self.init(
             id: id,
             wakePhrase: wakePhrase,
             executablePath: "/usr/bin/open",
             argumentTemplates: [urlTemplate],
-            accent: accent)
+            accent: accent,
+            isEnabled: isEnabled)
     }
 
     public init(
@@ -56,7 +68,8 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
         wakePhrase: String,
         executablePath: String,
         argumentTemplates: [String],
-        accent: WakeProfileAccent) throws
+        accent: WakeProfileAccent,
+        isEnabled: Bool = true) throws
     {
         let normalizedPhrase = wakePhrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedPhrase.isEmpty else {
@@ -76,6 +89,28 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
         self.executablePath = executablePath
         self.argumentTemplates = argumentTemplates
         self.accent = accent
+        self.isEnabled = isEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            id: container.decode(UUID.self, forKey: .id),
+            wakePhrase: container.decode(String.self, forKey: .wakePhrase),
+            executablePath: container.decode(String.self, forKey: .executablePath),
+            argumentTemplates: container.decode([String].self, forKey: .argumentTemplates),
+            accent: container.decode(WakeProfileAccent.self, forKey: .accent),
+            isEnabled: container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(wakePhrase, forKey: .wakePhrase)
+        try container.encode(executablePath, forKey: .executablePath)
+        try container.encode(argumentTemplates, forKey: .argumentTemplates)
+        try container.encode(accent, forKey: .accent)
+        try container.encode(isEnabled, forKey: .isEnabled)
     }
 
     public var commandTemplate: CommandTemplate {

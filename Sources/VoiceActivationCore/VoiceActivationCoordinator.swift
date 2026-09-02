@@ -90,7 +90,7 @@ public final class VoiceActivationCoordinator {
 
         do {
             let config = try configuration()
-            activeProfile = config.profiles.first
+            activeProfile = config.profiles.first(where: \.isEnabled) ?? config.profiles.first
             startSession(mode: .pushToTalk, localeID: config.localeID)
         } catch {
             state = .failed(error.localizedDescription)
@@ -145,7 +145,7 @@ public final class VoiceActivationCoordinator {
             startSession(
                 mode: .passiveWake,
                 localeID: config.localeID,
-                contextualStrings: config.profiles.map(\.wakePhrase))
+                contextualStrings: config.profiles.filter(\.isEnabled).map(\.wakePhrase))
         } catch {
             state = .failed(error.localizedDescription)
         }

@@ -100,6 +100,24 @@ struct AppModelTests {
         #expect(fixture.model.activeWakeProfiles.map(\.accent) == [.cyan, .purple])
     }
 
+    @MainActor @Test func setWakeProfileEnabled_WhenOneProfileChanges_PersistsOnlyThatProfile() throws {
+        let computer = try WakeProfile(
+            wakePhrase: "computer",
+            urlTemplate: "https://search.example/?q={urlText}",
+            accent: .blue)
+        let sneek = try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://notes.example/?text={urlText}",
+            accent: .purple)
+        let fixture = try Fixture(profiles: [computer, sneek])
+
+        fixture.model.setWakeProfileEnabled(sneek.id, enabled: false)
+
+        #expect(fixture.model.activeWakeProfiles.map(\.isEnabled) == [true, false])
+        #expect(fixture.model.wakeProfiles.map(\.isEnabled) == [true, false])
+        #expect(fixture.preferences.wakeProfiles.map(\.isEnabled) == [true, false])
+    }
+
     @MainActor @Test func shortcutRecording_WhenDraftIsNotSaved_RestoresActiveHotKey() throws {
         let fixture = try Fixture()
         let draft = try PushToTalkHotKey(
@@ -122,11 +140,14 @@ struct AppModelTests {
         let shortcut = ShortcutSpy()
         let model: AppModel
 
-        init() throws {
+        init(profiles: [WakeProfile]? = nil) throws {
             let suite = "VoiceActivationAppModelTests.\(UUID().uuidString)"
             let defaults = try #require(UserDefaults(suiteName: suite))
             defaults.removePersistentDomain(forName: suite)
             preferences = AppPreferences(defaults: defaults)
+            if let profiles {
+                preferences.wakeProfiles = profiles
+            }
             model = AppModel(
                 preferences: preferences,
                 recordingOverlay: AppModelOverlayStub(),

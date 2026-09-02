@@ -44,6 +44,7 @@ to a service.
 
 ## A custom wake phrase does not trigger
 
+- Open the menu and confirm that the toggle for that specific phrase is enabled.
 - Confirm **Save Settings** completed; saved phrases are supplied to Apple
   Speech as contextual vocabulary when passive listening restarts.
 - Speak the phrase at the beginning of the utterance and pause briefly while
