@@ -23,7 +23,8 @@ public protocol SpeechSessionProtocol: AnyObject {
     func start(
         mode: SpeechSessionMode,
         localeID: String,
-        onUpdate: @escaping (SpeechUpdate) -> Void) throws
+        onUpdate: @escaping (SpeechUpdate) -> Void,
+        onInterruption: @escaping () -> Void) throws
 
     func stop()
 }

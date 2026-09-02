@@ -146,15 +146,38 @@ public final class VoiceActivationCoordinator {
         generation &+= 1
         let activeGeneration = generation
         do {
-            try speechSession.start(mode: mode, localeID: localeID) { [weak self] update in
-                guard let self, self.generation == activeGeneration else { return }
-                self.handle(update, mode: mode)
-            }
+            try speechSession.start(
+                mode: mode,
+                localeID: localeID,
+                onUpdate: { [weak self] update in
+                    guard let self, self.generation == activeGeneration else { return }
+                    self.handle(update, mode: mode)
+                },
+                onInterruption: { [weak self] in
+                    guard let self, self.generation == activeGeneration else { return }
+                    self.handleInterruption(mode: mode)
+                })
         } catch {
             state = .failed(error.localizedDescription)
             if mode == .passiveWake || mode == .commandCapture {
                 schedulePassiveRestart()
             }
+        }
+    }
+
+    private func handleInterruption(mode: SpeechSessionMode) {
+        stopActiveSession()
+        capturedCommand = ""
+        currentTranscript = ""
+        if mode == .pushToTalk {
+            pushToTalkActive = false
+        }
+
+        if passiveEnabled {
+            state = .listening
+            schedulePassiveRestart()
+        } else {
+            state = .disabled
         }
     }
 

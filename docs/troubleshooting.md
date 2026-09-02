@@ -71,6 +71,17 @@ The shortcut is Control-Option-Space. Another application may have registered
 the same global shortcut first; remove that conflict and relaunch Voice
 Activation. Keep the keys held while speaking and release them to submit.
 
+## Listening stops after joining or leaving a call
+
+Meeting software and audio devices can change the microphone's channel layout or
+sample rate. macOS stops active audio engines when that happens. Voice Activation
+automatically rebuilds its passive listener after the input settles; the menu may
+briefly show **Listening** while that recovery completes.
+
+If listening does not resume after a few seconds, confirm the intended microphone
+is still selected in System Settings and that Voice Activation retains Microphone
+and Speech Recognition access.
+
 ## Launch at Login cannot be enabled
 
 - Move Voice Activation to `/Applications` and launch that copy before enabling

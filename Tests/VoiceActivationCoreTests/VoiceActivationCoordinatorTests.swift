@@ -5,22 +5,27 @@ import Testing
 @MainActor
 private final class FakeSpeechSession: SpeechSessionProtocol {
     private(set) var mode: SpeechSessionMode?
+    private(set) var startCount = 0
     private(set) var stopCount = 0
     private var handler: ((SpeechUpdate) -> Void)?
+    private var interruptionHandler: (() -> Void)?
     private var retiredHandlers: [(SpeechUpdate) -> Void] = []
     private var failingMode: SpeechSessionMode?
 
     func start(
         mode: SpeechSessionMode,
         localeID: String,
-        onUpdate: @escaping (SpeechUpdate) -> Void) throws
+        onUpdate: @escaping (SpeechUpdate) -> Void,
+        onInterruption: @escaping () -> Void) throws
     {
         if failingMode == mode {
             failingMode = nil
             throw FakeSpeechSessionError.startFailed
         }
+        startCount += 1
         self.mode = mode
         handler = onUpdate
+        interruptionHandler = onInterruption
     }
 
     func stop() {
@@ -30,6 +35,7 @@ private final class FakeSpeechSession: SpeechSessionProtocol {
             retiredHandlers.append(handler)
         }
         handler = nil
+        interruptionHandler = nil
     }
 
     func emit(_ transcript: String, isFinal: Bool = false) {
@@ -38,6 +44,10 @@ private final class FakeSpeechSession: SpeechSessionProtocol {
 
     func emitError(_ description: String) {
         handler?(SpeechUpdate(transcript: "", isFinal: false, errorDescription: description))
+    }
+
+    func interrupt() {
+        interruptionHandler?()
     }
 
     func emitFromRetiredSession(_ transcript: String, isFinal: Bool = false) {
@@ -75,6 +85,21 @@ struct VoiceActivationCoordinatorTests {
 
         #expect(fixture.coordinator.state == .listening)
         #expect(fixture.speech.mode == .passiveWake)
+    }
+
+    @MainActor @Test func passiveSession_WhenAudioInputChanges_RebuildsListeningSession() async throws {
+        let fixture = try Fixture(timing: .fast)
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.interrupt()
+        await waitUntil {
+            fixture.speech.startCount == 2
+                && fixture.speech.mode == .passiveWake
+                && fixture.coordinator.state == .listening
+        }
+
+        #expect(fixture.coordinator.currentTranscript.isEmpty)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
     }
 
     @MainActor @Test func passiveUpdate_WhenWakeAndCommandAreFinal_ExecutesCommandAndResumes() async throws {

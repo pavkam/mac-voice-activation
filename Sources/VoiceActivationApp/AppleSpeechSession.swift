@@ -22,13 +22,15 @@ final class AppleSpeechSession: SpeechSessionProtocol {
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private let configurationMonitor = AudioEngineConfigurationMonitor()
     private var hasInputTap = false
     private var generation = 0
 
     func start(
         mode: SpeechSessionMode,
         localeID: String,
-        onUpdate: @escaping (SpeechUpdate) -> Void) throws
+        onUpdate: @escaping (SpeechUpdate) -> Void,
+        onInterruption: @escaping () -> Void) throws
     {
         stop()
         generation &+= 1
@@ -60,6 +62,10 @@ final class AppleSpeechSession: SpeechSessionProtocol {
         hasInputTap = true
         recognitionRequest = request
         audioEngine = engine
+        configurationMonitor.start(observing: engine) { [weak self] in
+            guard let self, self.generation == activeGeneration else { return }
+            onInterruption()
+        }
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let transcript = result?.bestTranscription.formattedString ?? ""
@@ -85,6 +91,7 @@ final class AppleSpeechSession: SpeechSessionProtocol {
 
     func stop() {
         generation &+= 1
+        configurationMonitor.stop()
         recognitionTask?.cancel()
         recognitionTask = nil
         recognitionRequest?.endAudio()
