@@ -94,8 +94,11 @@ non-zero exit status as an error. No shell parses the transcript.
 - `RecordingOverlayPresenter` maps capture state to a
   `RecordingOverlayController`. Its borderless `NSPanel` joins full-screen
   spaces, does not activate the app, and follows the screen containing the
-  pointer. The transparent panel is compact until transcript text arrives and
-  accepts pointer input only so its cancel control can abort capture.
+  pointer. The panel frame matches the visible surface exactly and animates
+  between bottom-centered compact and expanded geometry. A single retained
+  SwiftUI hierarchy interpolates the microphone, capsule, transcript, and
+  cancel control instead of swapping complete views. The panel accepts pointer
+  input only so its cancel control can abort capture.
 
 ## Privacy boundary
 

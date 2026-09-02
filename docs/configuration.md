@@ -82,9 +82,10 @@ My Voice Shortcut
 
 - A compact recording orb appears near the bottom center of the active screen
   while command capture or push-to-talk is active. It expands into a
-  translucent live-transcript capsule after words arrive and never takes
-  keyboard focus from the current app. Click its close button to discard the
-  current capture.
+  translucent live-transcript capsule with a continuous morph after words
+  arrive and never takes keyboard focus from the current app. The capsule is
+  clipped to its visible border without an outer shadow gutter. Click its close
+  button to discard the current capture.
 - A wake phrase that finalizes by itself starts a fresh command-capture session,
   allowing a natural pause before the command.
 - A completed command consisting only of `cancel`, `stop`, or `dismiss`

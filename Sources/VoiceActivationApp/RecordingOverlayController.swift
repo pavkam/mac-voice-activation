@@ -3,8 +3,6 @@ import SwiftUI
 
 @MainActor
 final class RecordingOverlayController: RecordingOverlayDisplaying {
-    private static let compactSize = NSSize(width: 150, height: 142)
-    private static let expandedSize = NSSize(width: 488, height: 142)
     private let model = RecordingOverlayModel()
     private let panel: NSPanel
     private var activeVisibleFrame: NSRect?
@@ -16,7 +14,7 @@ final class RecordingOverlayController: RecordingOverlayDisplaying {
 
     init() {
         panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: Self.compactSize),
+            contentRect: NSRect(origin: .zero, size: RecordingOverlayLayout.compactSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)
@@ -33,12 +31,26 @@ final class RecordingOverlayController: RecordingOverlayDisplaying {
     }
 
     func show(transcript: String) {
+        let previousTranscript = model.transcript
+        let panelWasVisible = panel.isVisible
+        let shouldAnimate = RecordingOverlayLayout.shouldAnimate(
+            from: previousTranscript,
+            to: transcript,
+            panelIsVisible: panelWasVisible)
+        let shouldUpdateFrame = RecordingOverlayLayout.shouldUpdateFrame(
+            from: previousTranscript,
+            to: transcript,
+            panelIsVisible: panelWasVisible)
+
         model.transcript = transcript
         model.isRecording = true
-        if !panel.isVisible {
+        if !panelWasVisible {
             activeVisibleFrame = activeScreenVisibleFrame()
         }
-        resizeAndPosition(for: transcript)
+
+        if shouldUpdateFrame {
+            resizeAndPosition(for: transcript, animated: shouldAnimate)
+        }
         panel.orderFrontRegardless()
     }
 
@@ -56,14 +68,19 @@ final class RecordingOverlayController: RecordingOverlayDisplaying {
         return screen?.visibleFrame
     }
 
-    private func resizeAndPosition(for transcript: String) {
+    private func resizeAndPosition(for transcript: String, animated: Bool) {
         guard let visibleFrame = activeVisibleFrame else { return }
-        let size = transcript.isEmpty ? Self.compactSize : Self.expandedSize
-        panel.setContentSize(size)
+        let frame = RecordingOverlayLayout.frame(for: transcript, in: visibleFrame)
 
-        let origin = NSPoint(
-            x: visibleFrame.midX - (size.width / 2),
-            y: visibleFrame.minY + 42)
-        panel.setFrameOrigin(origin)
+        guard animated else {
+            panel.setFrame(frame, display: true)
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = RecordingOverlayLayout.transitionDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }
     }
 }

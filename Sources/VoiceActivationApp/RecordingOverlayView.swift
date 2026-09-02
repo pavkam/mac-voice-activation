@@ -4,81 +4,87 @@ struct RecordingOverlayView: View {
     @Bindable var model: RecordingOverlayModel
 
     var body: some View {
-        Group {
-            if model.transcript.isEmpty {
-                compactOverlay
-                    .transition(.scale(scale: 0.86).combined(with: .opacity))
-            } else {
-                expandedOverlay
-                    .transition(.scale(scale: 0.94).combined(with: .opacity))
-            }
-        }
-        .animation(.snappy(duration: 0.3), value: model.transcript.isEmpty)
-    }
+        ZStack {
+            capsuleBackground
+                .opacity(isExpanded ? 1 : 0)
+                .scaleEffect(
+                    x: isExpanded ? 1 : 0.28,
+                    y: isExpanded ? 1 : 0.78,
+                    anchor: .center)
 
-    private var compactOverlay: some View {
-        ZStack(alignment: .topTrailing) {
-            microphoneOrb(size: 92)
-                .padding(13)
+            HStack(spacing: isExpanded ? 16 : 0) {
+                microphoneOrb(size: isExpanded ? 72 : 92)
+                    .fixedSize()
 
-            cancelButton
-        }
-        .frame(width: 126, height: 118)
-        .padding(12)
-    }
-
-    private var expandedOverlay: some View {
-        HStack(spacing: 16) {
-            microphoneOrb(size: 72)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Listening")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                    .tracking(1.2)
-
-                Text(model.transcript)
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .contentTransition(.interpolate)
-                    .animation(.snappy(duration: 0.2), value: model.transcript)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            cancelButton
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 14)
-        .frame(width: 464, height: 118)
-        .background {
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    LinearGradient(
-                        colors: [
-                            .cyan.opacity(0.16),
-                            .blue.opacity(0.12),
-                            .purple.opacity(0.16),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing)
-                        .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+                if isExpanded {
+                    transcriptContent
+                        .transition(.move(edge: .leading).combined(with: .opacity))
                 }
+            }
+            .padding(.horizontal, isExpanded ? 16 : 13)
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: isExpanded ? .leading : .center)
+
+            cancelButton
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity,
+                    alignment: isExpanded ? .trailing : .topTrailing)
+                .padding(isExpanded ? 14 : 5)
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [.white.opacity(0.5), .blue.opacity(0.2)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing),
-                    lineWidth: 1)
+        .animation(
+            .smooth(duration: RecordingOverlayLayout.transitionDuration),
+            value: isExpanded)
+    }
+
+    private var isExpanded: Bool {
+        !model.transcript.isEmpty
+    }
+
+    private var transcriptContent: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Listening")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .tracking(1.2)
+
+            Text(model.transcript)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .contentTransition(.interpolate)
+                .animation(.snappy(duration: 0.2), value: model.transcript)
         }
-        .shadow(color: .blue.opacity(0.13), radius: 24, y: 10)
-        .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
-        .padding(12)
+        .padding(.trailing, 40)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var capsuleBackground: some View {
+        RoundedRectangle(cornerRadius: 32, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay {
+                LinearGradient(
+                    colors: [
+                        .cyan.opacity(0.16),
+                        .blue.opacity(0.12),
+                        .purple.opacity(0.16),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing)
+                    .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [.white.opacity(0.5), .blue.opacity(0.2)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing),
+                        lineWidth: 1)
+            }
     }
 
     private func microphoneOrb(size: CGFloat) -> some View {
@@ -91,7 +97,7 @@ struct RecordingOverlayView: View {
                     colors: [.cyan, .blue, .indigo, .purple, .cyan],
                     center: .center))
                 .padding(5)
-                .shadow(color: .blue.opacity(0.45), radius: 16)
+                .shadow(color: .blue.opacity(0.42), radius: 10)
 
             Circle()
                 .stroke(.cyan.opacity(0.42), lineWidth: 3)
