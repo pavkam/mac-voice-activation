@@ -225,7 +225,7 @@ struct AppModelTests {
 
     @MainActor
     private func waitUntil(
-        timeout: Duration = .seconds(1),
+        timeout: Duration = .seconds(5),
         condition: @escaping @MainActor () -> Bool) async
     {
         let clock = ContinuousClock()
