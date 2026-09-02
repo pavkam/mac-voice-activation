@@ -42,9 +42,12 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   expands to show live transcription, and offers a cancel button.
 - Say only `cancel`, `stop`, or `dismiss` to discard the capture. Repeating the
   same word twice cancels immediately, even before recognition finalizes.
-- Hold **Control-Option-Space**, speak without a wake phrase, then release.
+- Hold the push-to-talk shortcut shown in the menu, speak without a wake phrase,
+  then release. Change it by clicking the shortcut in Settings and pressing a
+  new modifier-plus-key combination.
 - Open **Settings…** from the menu to change the wake phrase, locale,
-  executable, argument templates, and whether the app launches at login.
+  push-to-talk shortcut, executable, argument templates, and whether the app
+  launches at login.
 
 Passive listening requires on-device recognition for the selected locale and
 fails closed if the Mac does not support it. Push-to-talk may use Apple's speech

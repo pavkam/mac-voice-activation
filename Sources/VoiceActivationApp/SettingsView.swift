@@ -127,11 +127,10 @@ struct SettingsView: View {
                 Label("Push to talk", systemImage: "keyboard")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("⌃⌥Space")
-                    .font(.system(.body, design: .rounded).weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                HotKeyRecorderView(
+                    hotKey: model.pushToTalkHotKey,
+                    onChange: model.setPushToTalkHotKey,
+                    onRecordingChange: model.setPushToTalkShortcutRecording)
             }
         }
     }

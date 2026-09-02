@@ -51,8 +51,11 @@ command`, or an error message.
   may use Apple's speech service. It finishes after 5 seconds without initial
   command text, on a final result, after 1.5 seconds of inactivity following
   text, or at the 30-second absolute maximum.
-- **Push to talk:** Control-Option-Space starts recognition that may use Apple's
-  speech service. Releasing the shortcut finishes capture.
+- **Push to talk:** a persisted, configurable Carbon global hotkey starts
+  recognition that may use Apple's speech service. Releasing the shortcut
+  finishes capture. Settings records AppKit key events, converts them to the
+  Carbon key code and modifier mask, and restores the prior registration if the
+  requested combination is unavailable.
 
 When the wake phrase and command arrive in one transcription, the coordinator
 uses the remaining text immediately. When the wake phrase is recognized alone,

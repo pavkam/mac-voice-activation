@@ -1,8 +1,23 @@
 import Carbon.HIToolbox
 import Foundation
+import VoiceActivationCore
 
 @MainActor
 final class PushToTalkShortcut {
+    enum RegistrationError: Error, LocalizedError {
+        case eventHandler(OSStatus)
+        case hotKey(OSStatus)
+
+        var errorDescription: String? {
+            switch self {
+            case let .eventHandler(status):
+                "Could not prepare the push-to-talk shortcut (error \(status))."
+            case let .hotKey(status):
+                "That shortcut is unavailable. Choose another combination (error \(status))."
+            }
+        }
+    }
+
     private static let signature: OSType = 0x56414354
 
     private var eventHandler: EventHandlerRef?
@@ -10,7 +25,11 @@ final class PushToTalkShortcut {
     private var onPressed: (() -> Void)?
     private var onReleased: (() -> Void)?
 
-    func start(onPressed: @escaping () -> Void, onReleased: @escaping () -> Void) {
+    func start(
+        hotKey configuration: PushToTalkHotKey,
+        onPressed: @escaping () -> Void,
+        onReleased: @escaping () -> Void) throws
+    {
         stop()
         self.onPressed = onPressed
         self.onReleased = onReleased
@@ -24,7 +43,7 @@ final class PushToTalkShortcut {
                 eventKind: UInt32(kEventHotKeyReleased)),
         ]
         let owner = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(
+        let handlerStatus = InstallEventHandler(
             GetApplicationEventTarget(),
             { _, event, userData in
                 guard let event, let userData else { return OSStatus(eventNotHandledErr) }
@@ -45,15 +64,23 @@ final class PushToTalkShortcut {
             &eventTypes,
             owner,
             &eventHandler)
+        guard handlerStatus == noErr else {
+            stop()
+            throw RegistrationError.eventHandler(handlerStatus)
+        }
 
         let identifier = EventHotKeyID(signature: Self.signature, id: 1)
-        RegisterEventHotKey(
-            UInt32(kVK_Space),
-            UInt32(controlKey | optionKey),
+        let registrationStatus = RegisterEventHotKey(
+            configuration.keyCode,
+            Self.carbonModifiers(for: configuration.modifiers),
             identifier,
             GetApplicationEventTarget(),
             0,
             &hotKey)
+        guard registrationStatus == noErr else {
+            stop()
+            throw RegistrationError.hotKey(registrationStatus)
+        }
     }
 
     func stop() {
@@ -67,5 +94,14 @@ final class PushToTalkShortcut {
         eventHandler = nil
         onPressed = nil
         onReleased = nil
+    }
+
+    static func carbonModifiers(for modifiers: HotKeyModifiers) -> UInt32 {
+        var value: UInt32 = 0
+        if modifiers.contains(.control) { value |= UInt32(controlKey) }
+        if modifiers.contains(.option) { value |= UInt32(optionKey) }
+        if modifiers.contains(.shift) { value |= UInt32(shiftKey) }
+        if modifiers.contains(.command) { value |= UInt32(cmdKey) }
+        return value
     }
 }

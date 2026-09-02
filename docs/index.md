@@ -18,7 +18,7 @@ executable without passing speech through a shell.
 
 - Passive listening is enabled by default and uses on-device recognition.
 - The default wake phrase is `computer`.
-- Control-Option-Space provides push-to-talk without a wake phrase.
+- A configurable global shortcut provides push-to-talk without a wake phrase.
 - An animated translucent overlay shows recording state and partial words.
 - Launch at Login registers the app through macOS Service Management.
 - Spoken text is inserted into explicit process arguments through `{text}` or

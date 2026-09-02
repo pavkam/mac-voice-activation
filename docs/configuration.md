@@ -1,7 +1,8 @@
 # Configuration
 
-Open the menu-bar item and choose **Settings…**. Changes take effect after you
-select **Save Settings**.
+Open the menu-bar item and choose **Settings…**. Voice and command changes take
+effect after you select **Save Settings**. Startup and push-to-talk shortcut
+changes apply immediately.
 
 ## Voice settings
 
@@ -12,8 +13,11 @@ select **Save Settings**.
   locale identifier such as `en-US` or `pt-PT`.
 - **Always listen:** enabled by default and keeps an on-device recognition
   session active for the wake phrase.
-- **Push to talk:** Control-Option-Space is a fixed global shortcut and does not
-  require the wake phrase.
+- **Push to talk:** defaults to Control-Option-Space and does not require the
+  wake phrase. Click the shortcut button, then press a new combination containing
+  Control, Option, Shift, or Command plus another key. Press Escape to cancel
+  recording. If another application owns the combination, Voice Activation keeps
+  the previous shortcut and reports the conflict.
 
 The wake phrase must end at a word boundary. `computer, open calendar` matches;
 `supercomputer open calendar` does not.

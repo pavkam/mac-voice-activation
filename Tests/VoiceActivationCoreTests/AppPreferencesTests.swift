@@ -11,6 +11,7 @@ struct AppPreferencesTests {
 
         #expect(preferences.passiveEnabled)
         #expect(preferences.wakePhrase == "computer")
+        #expect(preferences.pushToTalkHotKey == .defaultValue)
         #expect(preferences.executablePath == "/usr/bin/open")
         #expect(preferences.argumentTemplates == ["https://www.google.com/search?q={urlText}"])
     }
@@ -23,15 +24,37 @@ struct AppPreferencesTests {
         writer.passiveEnabled = true
         writer.wakePhrase = "  hey mac  "
         writer.localeID = "en-GB"
+        writer.pushToTalkHotKey = try PushToTalkHotKey(
+            keyCode: 40,
+            modifiers: [.command, .shift],
+            keyLabel: "K")
         writer.executablePath = "/usr/bin/printf"
         writer.argumentTemplates = ["--", "{text}"]
 
         let reader = AppPreferences(defaults: defaults)
+        let expectedHotKey = try PushToTalkHotKey(
+            keyCode: 40,
+            modifiers: [.command, .shift],
+            keyLabel: "K")
 
         #expect(reader.passiveEnabled)
         #expect(reader.wakePhrase == "hey mac")
         #expect(reader.localeID == "en-GB")
+        #expect(reader.pushToTalkHotKey == expectedHotKey)
         #expect(reader.executablePath == "/usr/bin/printf")
         #expect(reader.argumentTemplates == ["--", "{text}"])
+    }
+
+    @Test func pushToTalkHotKey_WhenStoredValuesAreInvalid_ReturnsDefault() throws {
+        let suite = "VoiceActivationTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(40, forKey: "pushToTalkKeyCode")
+        defaults.set(0, forKey: "pushToTalkModifiers")
+        defaults.set("K", forKey: "pushToTalkKeyLabel")
+
+        let preferences = AppPreferences(defaults: defaults)
+
+        #expect(preferences.pushToTalkHotKey == .defaultValue)
     }
 }

@@ -5,6 +5,9 @@ public final class AppPreferences {
         static let passiveEnabled = "passiveEnabled"
         static let wakePhrase = "wakePhrase"
         static let localeID = "localeID"
+        static let pushToTalkKeyCode = "pushToTalkKeyCode"
+        static let pushToTalkModifiers = "pushToTalkModifiers"
+        static let pushToTalkKeyLabel = "pushToTalkKeyLabel"
         static let executablePath = "executablePath"
         static let argumentTemplates = "argumentTemplates"
     }
@@ -37,6 +40,29 @@ public final class AppPreferences {
     public var executablePath: String {
         get { normalized(defaults.string(forKey: Key.executablePath), fallback: "/usr/bin/open") }
         set { defaults.set(normalized(newValue, fallback: "/usr/bin/open"), forKey: Key.executablePath) }
+    }
+
+    public var pushToTalkHotKey: PushToTalkHotKey {
+        get {
+            guard
+                defaults.object(forKey: Key.pushToTalkKeyCode) != nil,
+                defaults.object(forKey: Key.pushToTalkModifiers) != nil,
+                let keyLabel = defaults.string(forKey: Key.pushToTalkKeyLabel),
+                let hotKey = try? PushToTalkHotKey(
+                    keyCode: UInt32(defaults.integer(forKey: Key.pushToTalkKeyCode)),
+                    modifiers: HotKeyModifiers(
+                        rawValue: UInt32(defaults.integer(forKey: Key.pushToTalkModifiers))),
+                    keyLabel: keyLabel)
+            else {
+                return .defaultValue
+            }
+            return hotKey
+        }
+        set {
+            defaults.set(Int(newValue.keyCode), forKey: Key.pushToTalkKeyCode)
+            defaults.set(Int(newValue.modifiers.rawValue), forKey: Key.pushToTalkModifiers)
+            defaults.set(newValue.keyLabel, forKey: Key.pushToTalkKeyLabel)
+        }
     }
 
     public var argumentTemplates: [String] {

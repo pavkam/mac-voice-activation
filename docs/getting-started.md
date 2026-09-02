@@ -64,8 +64,10 @@ the menu to discard the current capture without running its command.
 You can also say only `cancel`, `stop`, or `dismiss`. Repeat the same word twice
 to cancel immediately without waiting for speech recognition to finalize.
 
-You can also hold Control-Option-Space, speak without a wake phrase, and release
-the keys to submit.
+You can also hold the push-to-talk shortcut shown in the menu, speak without a
+wake phrase, and release the keys to submit. The default is
+Control-Option-Space; click the shortcut in Settings to record another
+modifier-plus-key combination.
 
 ## Development signing
 

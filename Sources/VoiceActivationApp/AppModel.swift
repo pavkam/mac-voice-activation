@@ -11,6 +11,7 @@ final class AppModel {
     var passiveEnabled: Bool
     var wakePhrase: String
     var localeID: String
+    var pushToTalkHotKey: PushToTalkHotKey
     var executablePath: String
     var argumentTemplatesText: String
     var settingsError: String?
@@ -22,6 +23,7 @@ final class AppModel {
     @ObservationIgnored private var started = false
     @ObservationIgnored private var permissionGranted = false
     @ObservationIgnored private var hotkeyHeld = false
+    @ObservationIgnored private var recordingShortcut = false
     @ObservationIgnored private lazy var coordinator = VoiceActivationCoordinator(
         speechSession: speechSession,
         commandRunner: CommandRunner(),
@@ -40,6 +42,7 @@ final class AppModel {
         passiveEnabled = preferences.passiveEnabled
         wakePhrase = preferences.wakePhrase
         localeID = preferences.localeID
+        pushToTalkHotKey = preferences.pushToTalkHotKey
         executablePath = preferences.executablePath
         argumentTemplatesText = preferences.argumentTemplates.joined(separator: "\n")
         overlayPresenter.onCancel = { [weak self] in
@@ -95,6 +98,42 @@ final class AppModel {
         overlayPresenter.update(state: .disabled, transcript: "")
     }
 
+    func setPushToTalkHotKey(_ hotKey: PushToTalkHotKey) {
+        guard hotKey != pushToTalkHotKey else { return }
+        let previousHotKey = pushToTalkHotKey
+        if hotkeyHeld {
+            hotkeyHeld = false
+            coordinator.cancelCapture()
+        }
+
+        do {
+            try registerShortcut(hotKey)
+        } catch {
+            try? registerShortcut(previousHotKey)
+            settingsError = error.localizedDescription
+            return
+        }
+
+        pushToTalkHotKey = hotKey
+        preferences.pushToTalkHotKey = hotKey
+        settingsError = nil
+    }
+
+    func setPushToTalkShortcutRecording(_ recording: Bool) {
+        guard recording != recordingShortcut else { return }
+        recordingShortcut = recording
+        if recording {
+            shortcut.stop()
+            return
+        }
+
+        do {
+            try registerShortcut(pushToTalkHotKey)
+        } catch {
+            settingsError = error.localizedDescription
+        }
+    }
+
     private func start() async {
         guard !started else { return }
         started = true
@@ -107,13 +146,22 @@ final class AppModel {
             self?.currentTranscript = $0
             self?.updateRecordingOverlay()
         }
-        shortcut.start(
-            onPressed: { [weak self] in self?.pushToTalkPressed() },
-            onReleased: { [weak self] in self?.pushToTalkReleased() })
+        do {
+            try registerShortcut(pushToTalkHotKey)
+        } catch {
+            settingsError = error.localizedDescription
+        }
 
         if passiveEnabled, await ensurePermissions() {
             coordinator.setPassiveEnabled(true)
         }
+    }
+
+    private func registerShortcut(_ hotKey: PushToTalkHotKey) throws {
+        try shortcut.start(
+            hotKey: hotKey,
+            onPressed: { [weak self] in self?.pushToTalkPressed() },
+            onReleased: { [weak self] in self?.pushToTalkReleased() })
     }
 
     private func pushToTalkPressed() {
