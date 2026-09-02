@@ -2,7 +2,8 @@
 
 Open the menu-bar item and choose **Settings…**. Wake-profile, locale, and
 push-to-talk changes take effect after you select **Save Settings**. Startup
-changes apply immediately.
+changes apply immediately. A successful save closes the Settings window;
+validation errors keep it open so the invalid field can be corrected.
 
 ## Voice settings
 

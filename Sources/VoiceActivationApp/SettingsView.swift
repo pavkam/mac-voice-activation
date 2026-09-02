@@ -3,6 +3,7 @@ import VoiceActivationCore
 
 struct SettingsView: View {
     @Bindable var model: AppModel
+    @Environment(\.dismissWindow) private var dismissWindow
     @State private var launchAtLogin = LaunchAtLoginSetting()
     @State private var saved = false
 
@@ -177,7 +178,11 @@ struct SettingsView: View {
             Spacer()
 
             Button("Save Settings") {
-                saved = model.saveSettings()
+                saved = SettingsSaveHandler.perform(
+                    save: model.saveSettings,
+                    close: {
+                        dismissWindow(id: SettingsWindowPresenter.windowID)
+                    })
             }
             .keyboardShortcut(.defaultAction)
             .controlSize(.large)
