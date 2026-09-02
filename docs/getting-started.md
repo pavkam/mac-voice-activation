@@ -54,9 +54,10 @@ The default configuration opens a Google search:
 
 1. Wait until the menu-bar status says **Listening**.
 2. Say `computer`.
-3. After the status changes to **Capturing**, say a search query.
-4. Stop speaking; the command is submitted when recognition finalizes or the
-   transcript is unchanged for 1.5 seconds.
+3. When the recording overlay appears, say a search query. Partial command text
+   appears below its animated microphone.
+4. Stop speaking; the overlay closes and the command is submitted when
+   recognition finalizes or the transcript is unchanged for 1.5 seconds.
 
 You can also hold Control-Option-Space, speak without a wake phrase, and release
 the keys to submit.

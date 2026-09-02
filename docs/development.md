@@ -63,6 +63,11 @@ App adapter tests use an injected login-item service to verify successful and
 failed Service Management registration without changing the developer Mac's
 real login items.
 
+Overlay tests keep the AppKit window behind a display boundary and verify that
+capturing shows partial text while every non-capturing state hides the panel.
+Coordinator tests separately prove live text publication for wake and
+push-to-talk capture.
+
 Run one suite while iterating:
 
 ```bash

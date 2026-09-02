@@ -7,6 +7,7 @@ import VoiceActivationCore
 final class AppModel {
     var state: ActivationState = .disabled
     var lastTranscript = ""
+    var currentTranscript = ""
     var passiveEnabled: Bool
     var wakePhrase: String
     var localeID: String
@@ -17,6 +18,7 @@ final class AppModel {
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let speechSession: AppleSpeechSession
     @ObservationIgnored private let shortcut = PushToTalkShortcut()
+    @ObservationIgnored private let overlayPresenter: RecordingOverlayPresenter
     @ObservationIgnored private var started = false
     @ObservationIgnored private var permissionGranted = false
     @ObservationIgnored private var hotkeyHeld = false
@@ -28,9 +30,13 @@ final class AppModel {
             return try self.savedConfiguration()
         })
 
-    init(preferences: AppPreferences = AppPreferences()) {
+    init(
+        preferences: AppPreferences = AppPreferences(),
+        recordingOverlay: any RecordingOverlayDisplaying = RecordingOverlayController())
+    {
         self.preferences = preferences
         speechSession = AppleSpeechSession()
+        overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
         passiveEnabled = preferences.passiveEnabled
         wakePhrase = preferences.wakePhrase
         localeID = preferences.localeID
@@ -83,13 +89,21 @@ final class AppModel {
     func shutdown() {
         shortcut.stop()
         coordinator.stop()
+        overlayPresenter.update(state: .disabled, transcript: "")
     }
 
     private func start() async {
         guard !started else { return }
         started = true
-        coordinator.onStateChange = { [weak self] in self?.state = $0 }
+        coordinator.onStateChange = { [weak self] in
+            self?.state = $0
+            self?.updateRecordingOverlay()
+        }
         coordinator.onTranscriptChange = { [weak self] in self?.lastTranscript = $0 }
+        coordinator.onCurrentTranscriptChange = { [weak self] in
+            self?.currentTranscript = $0
+            self?.updateRecordingOverlay()
+        }
         shortcut.start(
             onPressed: { [weak self] in self?.pushToTalkPressed() },
             onReleased: { [weak self] in self?.pushToTalkReleased() })
@@ -138,6 +152,10 @@ final class AppModel {
         argumentTemplatesText
             .components(separatedBy: .newlines)
             .filter { !$0.isEmpty }
+    }
+
+    private func updateRecordingOverlay() {
+        overlayPresenter.update(state: state, transcript: currentTranscript)
     }
 
     private enum ModelError: Error {

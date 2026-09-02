@@ -37,6 +37,16 @@ to a service.
 - Check the menu's error text after capture. Recognition failures automatically
   restart passive listening after a short delay.
 
+## The recording overlay is missing
+
+- The overlay appears only after the wake phrase matches or while the
+  push-to-talk shortcut is held; passive wake listening does not display it.
+- Confirm the menu status changes to **Capturing**.
+- On multiple displays, the overlay uses the screen containing the pointer when
+  capture begins and remains there until that capture ends.
+- The overlay intentionally ignores clicks and never activates Voice
+  Activation, so keyboard input remains with the current app.
+
 ## The command does not run
 
 Check Settings for these validation requirements:

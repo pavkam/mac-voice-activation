@@ -80,6 +80,9 @@ My Voice Shortcut
 
 ## Capture timing
 
+- A click-through recording overlay appears near the bottom center of the
+  active screen while command capture or push-to-talk is active. It displays
+  partial command text and never takes keyboard focus from the current app.
 - A wake phrase that finalizes by itself starts a fresh command-capture session,
   allowing a natural pause before the command.
 - After command text arrives, 1.5 seconds without a transcript change submits

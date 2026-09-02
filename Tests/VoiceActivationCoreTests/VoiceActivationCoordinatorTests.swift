@@ -102,6 +102,20 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.speech.mode == .commandCapture)
     }
 
+    @MainActor @Test func passiveUpdate_WhenCommandIsPartial_PublishesLiveCommandText() throws {
+        let fixture = try Fixture()
+        var publishedTranscripts: [String] = []
+        fixture.coordinator.onCurrentTranscriptChange = {
+            publishedTranscripts.append($0)
+        }
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("computer open cal")
+
+        #expect(fixture.coordinator.currentTranscript == "open cal")
+        #expect(publishedTranscripts.last == "open cal")
+    }
+
     @MainActor @Test func passiveUpdate_WhenCommandFollowsFinalWake_ExecutesCommand() async throws {
         let fixture = try Fixture()
         fixture.coordinator.setPassiveEnabled(true)
@@ -196,6 +210,25 @@ struct VoiceActivationCoordinatorTests {
 
         #expect(fixture.coordinator.lastTranscript == "show deployments")
         #expect(fixture.speech.mode == .passiveWake)
+    }
+
+    @MainActor @Test func pushToTalk_WhenCommandIsPartial_PublishesLiveText() throws {
+        let fixture = try Fixture()
+
+        fixture.coordinator.pushToTalkPressed()
+        fixture.speech.emit("show deploy")
+
+        #expect(fixture.coordinator.currentTranscript == "show deploy")
+    }
+
+    @MainActor @Test func pushToTalk_WhenReleased_ClearsLiveText() throws {
+        let fixture = try Fixture()
+        fixture.coordinator.pushToTalkPressed()
+        fixture.speech.emit("show deploy")
+
+        fixture.coordinator.pushToTalkReleased()
+
+        #expect(fixture.coordinator.currentTranscript.isEmpty)
     }
 
     @MainActor @Test func pushToTalk_WhenTranscriptIsEmpty_DoesNotExecuteAndResumes() async throws {

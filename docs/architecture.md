@@ -9,7 +9,7 @@ and framework adapters.
   templates, process execution, and preferences.
 - `VoiceActivationApp` owns the SwiftUI menu and Settings window, Apple speech
   capture, privacy requests, Carbon global shortcut, and Service Management
-  login-item registration.
+  login-item registration. It also owns the non-activating recording overlay.
 - `VoiceActivationCoreTests` covers pure coordinator, matcher, template,
   runner, and preference behavior.
 - `VoiceActivationAppTests` covers macOS adapter policies, audio callback
@@ -18,7 +18,8 @@ and framework adapters.
 `AppModel` is the main-actor bridge between SwiftUI and
 `VoiceActivationCoordinator`. The coordinator owns exactly one active speech
 session and invalidates callbacks from retired sessions with a generation
-identifier.
+identifier. It publishes the current command transcription separately from the
+last command so UI can show partial words without changing command history.
 
 ## State flow
 
@@ -81,12 +82,17 @@ non-zero exit status as an error. No shell parses the transcript.
   a short cooldown.
 - `LaunchAtLoginSetting` reads and changes `SMAppService.mainApp` registration;
   macOS remains the source of truth instead of a duplicated preference.
+- `RecordingOverlayPresenter` maps capture state to a
+  `RecordingOverlayController`. Its borderless `NSPanel` joins full-screen
+  spaces, ignores mouse events, does not activate the app, and follows the
+  screen containing the pointer.
 
 ## Privacy boundary
 
 Passive wake recognition sets `requiresOnDeviceRecognition` and refuses to run
 when the locale lacks on-device support. Interactive command capture can use
-Apple's speech service. Audio is not stored; only the most recent command text
-is retained in memory for menu feedback.
+Apple's speech service. Audio is not stored. Partial text exists in memory only
+during the current capture; the most recent submitted command remains for menu
+feedback.
 
 Next: [development and verification](development.md).

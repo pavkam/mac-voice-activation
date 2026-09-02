@@ -38,6 +38,8 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   listens for **“computer”** immediately; the menu toggle disables it.
 - Say `computer`, then the command text. The command is submitted after speech
   recognition finalizes or the transcript remains unchanged for 1.5 seconds.
+- While recording, a translucent animated microphone floats above the current
+  app and shows the live command transcription.
 - Hold **Control-Option-Space**, speak without a wake phrase, then release.
 - Open **Settings…** from the menu to change the wake phrase, locale,
   executable, argument templates, and whether the app launches at login.

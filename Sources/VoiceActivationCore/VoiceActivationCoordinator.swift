@@ -3,14 +3,23 @@ import Foundation
 @MainActor
 public final class VoiceActivationCoordinator {
     public private(set) var state: ActivationState = .disabled {
-        didSet { onStateChange?(state) }
+        didSet {
+            onStateChange?(state)
+            if state != .capturing {
+                currentTranscript = ""
+            }
+        }
     }
     public private(set) var lastTranscript = "" {
         didSet { onTranscriptChange?(lastTranscript) }
     }
+    public private(set) var currentTranscript = "" {
+        didSet { onCurrentTranscriptChange?(currentTranscript) }
+    }
 
     public var onStateChange: ((ActivationState) -> Void)?
     public var onTranscriptChange: ((String) -> Void)?
+    public var onCurrentTranscriptChange: ((String) -> Void)?
 
     private let speechSession: any SpeechSessionProtocol
     private let commandRunner: any CommandRunning
@@ -69,6 +78,7 @@ public final class VoiceActivationCoordinator {
         pushToTalkActive = true
         stopActiveSession()
         capturedCommand = ""
+        currentTranscript = ""
         state = .capturing
 
         do {
@@ -104,6 +114,7 @@ public final class VoiceActivationCoordinator {
     private func startPassiveListening() {
         stopActiveSession()
         capturedCommand = ""
+        currentTranscript = ""
 
         do {
             let config = try configuration()
@@ -144,6 +155,7 @@ public final class VoiceActivationCoordinator {
         case .pushToTalk:
             capturedCommand = update.transcript
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            currentTranscript = capturedCommand
         case .commandCapture:
             handleCommandCapture(update)
         case .passiveWake:
@@ -170,6 +182,7 @@ public final class VoiceActivationCoordinator {
         }
 
         capturedCommand = command
+        currentTranscript = command
         state = .capturing
 
         guard !command.isEmpty else {
@@ -191,6 +204,7 @@ public final class VoiceActivationCoordinator {
 
     private func startCommandCapture(localeID: String) {
         stopActiveSession()
+        currentTranscript = ""
         state = .capturing
         startSession(mode: .commandCapture, localeID: localeID)
         scheduleCaptureHardStop()
@@ -199,6 +213,7 @@ public final class VoiceActivationCoordinator {
     private func handleCommandCapture(_ update: SpeechUpdate) {
         capturedCommand = update.transcript
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        currentTranscript = capturedCommand
 
         guard !capturedCommand.isEmpty else {
             if update.isFinal {
