@@ -44,8 +44,8 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   accent color; the matched color carries through the recording animation.
   Newly added phrases are enabled by default.
 - While recording, a compact animated microphone floats above the current app,
-  expands to show live transcription, offers a cancel button, and plays distinct
-  sounds when capture starts and ends.
+  expands to show a rolling tail of the live transcription, offers a cancel
+  button, and plays distinct sounds when capture starts and ends.
 - Say only `cancel`, `stop`, or `dismiss` to discard the capture. Repeating the
   same word twice cancels immediately, even before recognition finalizes.
 - Give any wake profile its own push-to-talk shortcut. Hold that shortcut, speak

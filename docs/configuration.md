@@ -79,9 +79,10 @@ my-app://command?prompt={urlText}
 - A compact recording orb appears near the bottom center of the active screen
   while command capture or push-to-talk is active. It expands into a
   translucent live-transcript capsule with a continuous morph after words
-  arrive and never takes keyboard focus from the current app. The capsule is
-  clipped to its visible border without an outer shadow gutter. Click its close
-  button to discard the current capture.
+  arrive. Long transcripts rotate out their oldest words so the newest speech
+  remains visible. The overlay never takes keyboard focus from the current app.
+  The capsule is clipped to its visible border without an outer shadow gutter.
+  Click its close button to discard the current capture.
 - The orb and capsule use the matched profile's accent color. Distinct sounds
   play once when capture starts and once when it leaves capture for any reason.
 - A wake phrase recognized by itself starts a fresh command-capture session,

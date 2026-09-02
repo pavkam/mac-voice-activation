@@ -51,7 +51,7 @@ struct RecordingOverlayView: View {
                 .textCase(.uppercase)
                 .tracking(1.2)
 
-            Text(model.transcript)
+            Text(RecordingTranscriptTail.format(model.transcript))
                 .font(.system(size: 17, weight: .semibold, design: .rounded))
                 .foregroundStyle(.primary)
                 .lineLimit(2)

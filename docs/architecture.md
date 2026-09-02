@@ -118,12 +118,15 @@ non-zero exit status as an error. No shell parses the transcript.
   spaces, does not activate the app, and follows the screen containing the
   pointer. The panel frame matches the visible surface exactly and animates
   between bottom-centered compact and expanded geometry. A single retained
-    SwiftUI hierarchy interpolates the microphone, capsule, transcript, and
+  SwiftUI hierarchy interpolates the microphone, capsule, transcript, and
   cancel control instead of swapping complete views. Its gradients derive from
-  the active profile. `CaptureSoundPresenter` observes state edges and plays a
-  bundled rising cue on entry to capture and a descending cue on exit, falling
-  back to system sounds only if an asset cannot load. The panel accepts pointer
-  input only so its cancel control can abort capture.
+  the active profile. The view keeps the full transcript in application state
+  while rendering a word-aware tail, ensuring newly recognized speech remains
+  visible without changing command input. `CaptureSoundPresenter` observes
+  state edges and plays a bundled rising cue on entry to capture and a
+  descending cue on exit, falling back to system sounds only if an asset cannot
+  load. The panel accepts pointer input only so its cancel control can abort
+  capture.
 
 ## Privacy boundary
 
