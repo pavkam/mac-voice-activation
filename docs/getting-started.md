@@ -61,6 +61,8 @@ The default configuration opens a Google search:
 
 Click the close button on the recording orb or choose **Cancel Recording** from
 the menu to discard the current capture without running its command.
+You can also say only `cancel`, `stop`, or `dismiss`. Repeat the same word twice
+to cancel immediately without waiting for speech recognition to finalize.
 
 You can also hold Control-Option-Space, speak without a wake phrase, and release
 the keys to submit.

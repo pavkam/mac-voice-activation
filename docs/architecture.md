@@ -31,7 +31,7 @@ stateDiagram-v2
     Disabled --> Capturing: Push-to-talk pressed
     Listening --> Capturing: Push-to-talk pressed
     Capturing --> Executing: Non-empty transcript
-    Capturing --> Listening: Empty transcript or timeout
+    Capturing --> Listening: Empty transcript, timeout, or cancellation
     Executing --> Listening: Command finishes
     Listening --> Failed: Recognition or configuration error
     Capturing --> Failed: Recognition or configuration error
@@ -58,6 +58,11 @@ When the wake phrase and command arrive in one transcription, the coordinator
 uses the remaining text immediately. When the wake phrase finalizes alone, it
 starts a dedicated command session so pausing after `computer` does not discard
 the next utterance.
+
+The coordinator recognizes `cancel`, `stop`, and `dismiss` as cancellation
+words. A lone word cancels only at a completion boundary so a partial `stop`
+can still grow into `stop the music`. Two adjacent copies of the same word
+cancel immediately in passive command capture or push-to-talk.
 
 ## Command execution
 

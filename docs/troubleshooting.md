@@ -34,6 +34,9 @@ to a service.
 - Speak after the status changes to **Capturing**.
 - Capture without any command text returns to passive listening after 5
   seconds. Repeated empty recognition results cannot extend this deadline.
+- A completed command containing only `cancel`, `stop`, or `dismiss` is
+  intentionally discarded. The same happens immediately if one of those words
+  is repeated twice in a row.
 - Check the menu's error text after capture. Recognition failures automatically
   restart passive listening after a short delay.
 

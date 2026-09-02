@@ -92,6 +92,18 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.speech.mode == .passiveWake)
     }
 
+    @MainActor @Test func passiveUpdate_WhenFinalCommandIsCancellationWord_CancelsCapture() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("computer cancel", isFinal: true)
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.coordinator.currentTranscript.isEmpty)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
     @MainActor @Test func passiveUpdate_WhenWakePhraseFinalizesAlone_KeepsCapturing() throws {
         let fixture = try Fixture()
         fixture.coordinator.setPassiveEnabled(true)
@@ -226,6 +238,45 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.coordinator.lastTranscript == "open calendar")
     }
 
+    @MainActor @Test func commandCapture_WhenCancellationWordRepeatsInPartial_CancelsImmediately() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("computer", isFinal: true)
+
+        fixture.speech.emit("cancel cancel")
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
+    @MainActor @Test func commandCapture_WhenFinalCommandIsCancellationWord_CancelsCapture() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("computer", isFinal: true)
+
+        fixture.speech.emit("stop", isFinal: true)
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
+    @MainActor @Test func commandCapture_WhenPartialStopBecomesNormalCommand_ExecutesCommand() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("computer", isFinal: true)
+
+        fixture.speech.emit("stop")
+        #expect(fixture.coordinator.state == .capturing)
+        fixture.speech.emit("stop the music", isFinal: true)
+        await waitUntil {
+            await fixture.runner.recordedTranscripts() == ["stop the music"]
+        }
+
+        #expect(fixture.coordinator.lastTranscript == "stop the music")
+    }
+
     @MainActor @Test func commandCapture_WhenRetiredWakeSessionUpdates_IgnoresStaleTranscript() async throws {
         let fixture = try Fixture()
         fixture.coordinator.setPassiveEnabled(true)
@@ -316,6 +367,31 @@ struct VoiceActivationCoordinatorTests {
         #expect(await fixture.runner.recordedTranscripts().isEmpty)
         #expect(fixture.coordinator.state == .listening)
         #expect(fixture.speech.mode == .passiveWake)
+    }
+
+    @MainActor @Test func pushToTalk_WhenReleasedWithCancellationWord_CancelsCapture() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.coordinator.pushToTalkPressed()
+        fixture.speech.emit("dismiss")
+
+        fixture.coordinator.pushToTalkReleased()
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
+    @MainActor @Test func pushToTalk_WhenCancellationWordRepeats_CancelsBeforeRelease() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.coordinator.pushToTalkPressed()
+
+        fixture.speech.emit("stop stop")
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
     }
 
     @MainActor

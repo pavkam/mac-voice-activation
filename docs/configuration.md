@@ -87,6 +87,10 @@ My Voice Shortcut
   current capture.
 - A wake phrase that finalizes by itself starts a fresh command-capture session,
   allowing a natural pause before the command.
+- A completed command consisting only of `cancel`, `stop`, or `dismiss`
+  discards the capture. Repeating the same cancellation word twice in a row
+  discards it immediately, including while recognition is still partial. A
+  longer command such as `stop the music` runs normally.
 - After command text arrives, 1.5 seconds without a transcript change submits
   the best transcription.
 - Capture without any command text returns to passive listening after 5

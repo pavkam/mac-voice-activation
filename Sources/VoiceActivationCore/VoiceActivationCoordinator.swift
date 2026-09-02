@@ -95,8 +95,14 @@ public final class VoiceActivationCoordinator {
 
     public func pushToTalkReleased() {
         guard pushToTalkActive else { return }
-        pushToTalkActive = false
         let transcript = capturedCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
+            cancelCapture()
+            return
+        }
+
+        pushToTalkActive = false
         stopActiveSession()
 
         guard !transcript.isEmpty else {
@@ -166,6 +172,12 @@ public final class VoiceActivationCoordinator {
             capturedCommand = update.transcript
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             currentTranscript = capturedCommand
+            if CaptureCancellationMatcher.matches(
+                capturedCommand,
+                isComplete: update.isFinal)
+            {
+                cancelCapture()
+            }
         case .commandCapture:
             handleCommandCapture(update)
         case .passiveWake:
@@ -194,6 +206,11 @@ public final class VoiceActivationCoordinator {
         capturedCommand = command
         currentTranscript = command
         state = .capturing
+
+        if CaptureCancellationMatcher.matches(command, isComplete: update.isFinal) {
+            cancelCapture()
+            return
+        }
 
         guard !command.isEmpty else {
             if update.isFinal {
@@ -232,6 +249,14 @@ public final class VoiceActivationCoordinator {
         capturedCommand = update.transcript
             .trimmingCharacters(in: .whitespacesAndNewlines)
         currentTranscript = capturedCommand
+
+        if CaptureCancellationMatcher.matches(
+            capturedCommand,
+            isComplete: update.isFinal)
+        {
+            cancelCapture()
+            return
+        }
 
         guard !capturedCommand.isEmpty else {
             if update.isFinal {
@@ -301,6 +326,12 @@ public final class VoiceActivationCoordinator {
 
     private func finishPassiveCapture() {
         let transcript = capturedCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
+            cancelCapture()
+            return
+        }
+
         stopActiveSession()
         guard !transcript.isEmpty else {
             resumePassiveIfNeeded()

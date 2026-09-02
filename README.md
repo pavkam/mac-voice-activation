@@ -40,6 +40,8 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   recognition finalizes or the transcript remains unchanged for 1.5 seconds.
 - While recording, a compact animated microphone floats above the current app,
   expands to show live transcription, and offers a cancel button.
+- Say only `cancel`, `stop`, or `dismiss` to discard the capture. Repeating the
+  same word twice cancels immediately, even before recognition finalizes.
 - Hold **Control-Option-Space**, speak without a wake phrase, then release.
 - Open **Settings…** from the menu to change the wake phrase, locale,
   executable, argument templates, and whether the app launches at login.
