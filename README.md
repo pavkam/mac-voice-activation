@@ -78,4 +78,7 @@ make test
 make app
 ```
 
-Architecture and implementation notes live under `docs/superpowers/`.
+## Documentation
+
+See the [documentation index](docs/index.md) for installation, configuration,
+architecture, troubleshooting, and development guides.
