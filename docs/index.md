@@ -19,7 +19,8 @@ URL belonging to the matched profile without passing speech through a shell.
 - Passive listening is enabled by default and uses on-device recognition.
 - The default wake profile is `computer`, a Google search URL, and blue.
 - Multiple wake profiles can route speech to different URLs and overlay colors.
-- A configurable global shortcut provides push-to-talk without a wake phrase.
+- A configurable global shortcut and URL provide push-to-talk independently of
+  every wake phrase.
 - An animated translucent overlay and start/end sounds show capture state.
 - Launch at Login registers the app through macOS Service Management.
 - Spoken text is inserted into explicit process arguments through `{text}` or

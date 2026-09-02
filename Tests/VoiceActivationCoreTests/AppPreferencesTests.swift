@@ -83,4 +83,17 @@ struct AppPreferencesTests {
         #expect(profiles.first?.wakePhrase == "sneek")
         #expect(profiles.first?.isEnabled == true)
     }
+
+    @Test func pushToTalkURLTemplate_WhenNotStored_MigratesFromFirstWakeProfile() throws {
+        let suite = "VoiceActivationTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        preferences.wakeProfiles = [try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://notes.example/?text={urlText}",
+            accent: .purple)]
+
+        #expect(preferences.pushToTalkURLTemplate == "https://notes.example/?text={urlText}")
+    }
 }

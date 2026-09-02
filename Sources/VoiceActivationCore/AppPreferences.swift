@@ -9,6 +9,7 @@ public final class AppPreferences {
         static let pushToTalkKeyCode = "pushToTalkKeyCode"
         static let pushToTalkModifiers = "pushToTalkModifiers"
         static let pushToTalkKeyLabel = "pushToTalkKeyLabel"
+        static let pushToTalkURLTemplate = "pushToTalkURLTemplate"
         static let executablePath = "executablePath"
         static let argumentTemplates = "argumentTemplates"
     }
@@ -82,6 +83,22 @@ public final class AppPreferences {
             defaults.set(Int(newValue.keyCode), forKey: Key.pushToTalkKeyCode)
             defaults.set(Int(newValue.modifiers.rawValue), forKey: Key.pushToTalkModifiers)
             defaults.set(newValue.keyLabel, forKey: Key.pushToTalkKeyLabel)
+        }
+    }
+
+    public var pushToTalkURLTemplate: String {
+        get {
+            normalized(
+                defaults.string(forKey: Key.pushToTalkURLTemplate),
+                fallback: wakeProfiles.first?.argumentTemplates.first
+                    ?? "https://www.google.com/search?q={urlText}")
+        }
+        set {
+            defaults.set(
+                normalized(
+                    newValue,
+                    fallback: "https://www.google.com/search?q={urlText}"),
+                forKey: Key.pushToTalkURLTemplate)
         }
     }
 

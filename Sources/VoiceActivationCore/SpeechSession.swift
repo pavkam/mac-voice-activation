@@ -33,10 +33,17 @@ public protocol SpeechSessionProtocol: AnyObject {
 public struct ActivationConfiguration: Equatable, Sendable {
     public let profiles: [WakeProfile]
     public let localeID: String
+    public let pushToTalkCommandTemplate: CommandTemplate
 
-    public init(profiles: [WakeProfile], localeID: String) {
+    public init(
+        profiles: [WakeProfile],
+        localeID: String,
+        pushToTalkCommandTemplate: CommandTemplate? = nil)
+    {
         self.profiles = profiles.isEmpty ? [.defaultValue] : profiles
         self.localeID = localeID
+        self.pushToTalkCommandTemplate = pushToTalkCommandTemplate
+            ?? (try! self.profiles[0].commandTemplate)
     }
 
     public init(wakePhrase: String, localeID: String, commandTemplate: CommandTemplate) {
@@ -48,5 +55,6 @@ public struct ActivationConfiguration: Equatable, Sendable {
             argumentTemplates: commandTemplate.argumentTemplates,
             accent: .blue)]
         self.localeID = localeID
+        pushToTalkCommandTemplate = commandTemplate
     }
 }

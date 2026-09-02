@@ -13,6 +13,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     voiceSection
+                    pushToTalkSection
                     startupSection
                     privacyNote
                 }
@@ -30,6 +31,7 @@ struct SettingsView: View {
         .onChange(of: model.wakeProfiles) { saved = false }
         .onChange(of: model.localeID) { saved = false }
         .onChange(of: model.pushToTalkHotKey) { saved = false }
+        .onChange(of: model.pushToTalkURLTemplate) { saved = false }
     }
 
     private var header: some View {
@@ -138,16 +140,49 @@ struct SettingsView: View {
                         set: { model.setPassiveEnabled($0) }))
                     .labelsHidden()
             }
+        }
+    }
 
+    private var pushToTalkSection: some View {
+        SettingsCard(
+            title: "Push to talk",
+            subtitle: "Run a separate command without saying a wake phrase.",
+            systemImage: "keyboard")
+        {
             HStack {
-                Label("Push to talk", systemImage: "keyboard")
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Keyboard shortcut")
+                        .fontWeight(.medium)
+                    Text("Hold to record, then release to run the push-to-talk command.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Spacer()
+
                 HotKeyRecorderView(
                     hotKey: model.pushToTalkHotKey,
                     onChange: model.setPushToTalkHotKey,
                     onRecordingChange: model.setPushToTalkShortcutRecording)
             }
+
+            Divider()
+
+            settingsField(
+                "Push-to-talk URL",
+                hint: "https://example.com/?q={urlText}",
+                text: $model.pushToTalkURLTemplate,
+                monospaced: true)
+
+            HStack(spacing: 6) {
+                templateToken("{urlText}")
+                Text("inserts URL-encoded speech")
+                Text("•")
+                templateToken("{text}")
+                Text("inserts literal speech")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

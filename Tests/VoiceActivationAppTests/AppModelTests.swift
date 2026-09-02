@@ -61,6 +61,19 @@ struct AppModelTests {
         #expect(fixture.shortcut.startedHotKeys == [draft])
     }
 
+    @MainActor @Test func saveSettings_WhenPushToTalkURLChanges_PersistsSeparateURL() throws {
+        let fixture = try Fixture()
+        fixture.model.pushToTalkURLTemplate = "https://keyboard.example/?q={urlText}"
+
+        let saved = fixture.model.saveSettings()
+
+        #expect(saved)
+        #expect(fixture.preferences.pushToTalkURLTemplate == "https://keyboard.example/?q={urlText}")
+        #expect(fixture.preferences.wakeProfiles[0].argumentTemplates == [
+            "https://www.google.com/search?q={urlText}",
+        ])
+    }
+
     @MainActor @Test func saveSettings_WhenProfileIsInvalid_DoesNotApplyHotKey() throws {
         let fixture = try Fixture()
         let draft = try PushToTalkHotKey(

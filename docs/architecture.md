@@ -73,11 +73,12 @@ words. A lone word cancels only at a completion boundary so a partial `stop`
 can still grow into `stop the music`. Two adjacent copies of the same word
 cancel immediately in passive command capture or push-to-talk.
 
-`WakePhraseMatcher` checks every saved profile and chooses the longest matching
-phrase. The profile owns its URL template and accent color. Push-to-talk selects
-the first saved profile. Passive recognition supplies every saved phrase to
-Apple Speech as contextual vocabulary so uncommon names and intentional
-spellings are not treated as ordinary dictation.
+`WakePhraseMatcher` checks every enabled profile and chooses the longest matching
+phrase. The profile owns its URL template and accent color. Push-to-talk owns a
+separate command template and does not select or depend on a wake profile.
+Passive recognition supplies every enabled phrase to Apple Speech as contextual
+vocabulary so uncommon names and intentional spellings are not treated as
+ordinary dictation.
 
 ## Command execution
 

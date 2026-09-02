@@ -49,8 +49,8 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
 - Say only `cancel`, `stop`, or `dismiss` to discard the capture. Repeating the
   same word twice cancels immediately, even before recognition finalizes.
 - Hold the push-to-talk shortcut shown in the menu, speak without a wake phrase,
-  then release. Change it by clicking the shortcut in Settings and pressing a
-  new modifier-plus-key combination, then select **Save Settings**.
+  then release. Push-to-talk has its own URL template, independent of every wake
+  profile. Change its URL or shortcut in Settings, then select **Save Settings**.
 - Open **Settings…** from the menu to add or remove wake profiles, change their
   URLs and colors, set the locale and shortcut, or enable launch at login.
 

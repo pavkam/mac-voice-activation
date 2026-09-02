@@ -31,6 +31,7 @@ public final class VoiceActivationCoordinator {
     private let timing: ActivationTiming
     private var passiveEnabled = false
     private var pushToTalkActive = false
+    private var activeCommandTemplate: CommandTemplate?
     private var capturedCommand = ""
     private var generation = 0
     private var captureGeneration = 0
@@ -90,7 +91,8 @@ public final class VoiceActivationCoordinator {
 
         do {
             let config = try configuration()
-            activeProfile = config.profiles.first(where: \.isEnabled) ?? config.profiles.first
+            activeProfile = nil
+            activeCommandTemplate = config.pushToTalkCommandTemplate
             startSession(mode: .pushToTalk, localeID: config.localeID)
         } catch {
             state = .failed(error.localizedDescription)
@@ -138,6 +140,7 @@ public final class VoiceActivationCoordinator {
         capturedCommand = ""
         currentTranscript = ""
         activeProfile = nil
+        activeCommandTemplate = nil
 
         do {
             let config = try configuration()
@@ -246,6 +249,7 @@ public final class VoiceActivationCoordinator {
         }
 
         activeProfile = match.profile
+        activeCommandTemplate = try? match.profile.commandTemplate
         capturedCommand = match.command
         currentTranscript = match.command
         state = .capturing
@@ -407,8 +411,8 @@ public final class VoiceActivationCoordinator {
     private func execute(_ transcript: String) {
         let template: CommandTemplate
         do {
-            if let activeProfile {
-                template = try activeProfile.commandTemplate
+            if let activeCommandTemplate {
+                template = activeCommandTemplate
             } else {
                 template = try configuration().profiles[0].commandTemplate
             }

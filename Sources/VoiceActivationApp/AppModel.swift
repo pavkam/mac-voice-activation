@@ -13,6 +13,7 @@ final class AppModel {
     private(set) var activeWakeProfiles: [WakeProfile]
     var localeID: String
     var pushToTalkHotKey: PushToTalkHotKey
+    var pushToTalkURLTemplate: String
     private(set) var activePushToTalkHotKey: PushToTalkHotKey
     var settingsError: String?
 
@@ -51,6 +52,7 @@ final class AppModel {
         wakeProfiles = preferences.wakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
         pushToTalkHotKey = preferences.pushToTalkHotKey
+        pushToTalkURLTemplate = preferences.pushToTalkURLTemplate
         activePushToTalkHotKey = preferences.pushToTalkHotKey
         overlayPresenter.onCancel = { [weak self] in
             self?.cancelCapture()
@@ -93,6 +95,7 @@ final class AppModel {
     @discardableResult
     func saveSettings() -> Bool {
         let profiles: [WakeProfile]
+        let pushToTalkTemplate: CommandTemplate
         do {
             guard !wakeProfiles.isEmpty else { throw ModelError.profileRequired }
             profiles = try wakeProfiles.map { try $0.validatedProfile() }
@@ -102,6 +105,9 @@ final class AppModel {
             guard Set(phrases).count == phrases.count else {
                 throw ModelError.duplicateWakePhrase
             }
+            pushToTalkTemplate = try CommandTemplate(
+                executablePath: "/usr/bin/open",
+                argumentTemplates: [pushToTalkURLTemplate])
         } catch {
             settingsError = error.localizedDescription
             return false
@@ -118,10 +124,12 @@ final class AppModel {
         preferences.wakeProfiles = profiles
         preferences.localeID = localeID
         preferences.pushToTalkHotKey = pushToTalkHotKey
+        preferences.pushToTalkURLTemplate = pushToTalkTemplate.argumentTemplates[0]
         activeWakeProfiles = preferences.wakeProfiles
         wakeProfiles = activeWakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
         activePushToTalkHotKey = preferences.pushToTalkHotKey
+        pushToTalkURLTemplate = preferences.pushToTalkURLTemplate
         settingsError = nil
         coordinator.refreshConfiguration()
         return true
@@ -223,7 +231,10 @@ final class AppModel {
     private func savedConfiguration() throws -> ActivationConfiguration {
         ActivationConfiguration(
             profiles: preferences.wakeProfiles,
-            localeID: preferences.localeID)
+            localeID: preferences.localeID,
+            pushToTalkCommandTemplate: try CommandTemplate(
+                executablePath: "/usr/bin/open",
+                argumentTemplates: [preferences.pushToTalkURLTemplate]))
     }
 
     private func updateRecordingOverlay() {

@@ -33,6 +33,8 @@ struct MenuContentView: View {
             .keyboardShortcut(.cancelAction)
         }
 
+        Divider()
+
         Text("Push to talk: \(model.activePushToTalkHotKey.displayName)")
 
         Divider()
