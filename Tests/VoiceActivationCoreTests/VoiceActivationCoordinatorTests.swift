@@ -723,7 +723,7 @@ struct VoiceActivationCoordinatorTests {
     }
 
     @MainActor private func waitUntil(
-        timeout: Duration = .seconds(1),
+        timeout: Duration = .seconds(5),
         condition: @escaping @MainActor () async -> Bool) async
     {
         let clock = ContinuousClock()

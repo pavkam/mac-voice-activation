@@ -12,25 +12,49 @@ private final class MenuOverlayStub: RecordingOverlayDisplaying {
 }
 
 struct MenuContentViewTests {
+    @MainActor @Test func render_WhenMenuHostProposesNoHeight_KeepsProfileRowsVisible() throws {
+        let oneProfileRenderer = ImageRenderer(content: MenuContentView(model: try model(profileCount: 1)))
+        let twoProfileRenderer = ImageRenderer(content: MenuContentView(model: try model(profileCount: 2)))
+        oneProfileRenderer.proposedSize = ProposedViewSize(width: 356, height: 0)
+        twoProfileRenderer.proposedSize = ProposedViewSize(width: 356, height: 0)
+
+        let oneProfileImage = try #require(oneProfileRenderer.cgImage)
+        let twoProfileImage = try #require(twoProfileRenderer.cgImage)
+
+        #expect(twoProfileImage.height >= oneProfileImage.height + 40)
+    }
+
+    @Test func profileListHeight_WhenTwoProfilesExist_ShowsBothRows() {
+        #expect(MenuProfileListLayout.height(profileCount: 2) == 107)
+    }
+
+    @Test func profileListHeight_WhenProfilesExceedViewport_CapsHeight() {
+        #expect(MenuProfileListLayout.height(profileCount: 20) == 360)
+    }
+
     @MainActor @Test func render_WhenManyProfilesExist_KeepsPanelHeightBounded() throws {
-        let suite = "VoiceActivationMenuLayoutTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defaults.removePersistentDomain(forName: suite)
-        let preferences = AppPreferences(defaults: defaults)
-        preferences.wakeProfiles = try (1...20).map { index in
-            try WakeProfile(
-                wakePhrase: "profile \(index)",
-                urlTemplate: "https://example.com/?q={urlText}",
-                accent: WakeProfileAccent.allCases[index % WakeProfileAccent.allCases.count])
-        }
-        let model = AppModel(
-            preferences: preferences,
-            recordingOverlay: MenuOverlayStub(),
-            startsAutomatically: false)
+        let model = try model(profileCount: 20)
         let renderer = ImageRenderer(content: MenuContentView(model: model))
 
         let image = try #require(renderer.cgImage)
 
         #expect(image.height <= 600)
+    }
+
+    @MainActor private func model(profileCount: Int) throws -> AppModel {
+        let suite = "VoiceActivationMenuLayoutTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        preferences.wakeProfiles = try (1...profileCount).map { index in
+            try WakeProfile(
+                wakePhrase: "profile \(index)",
+                urlTemplate: "https://example.com/?q={urlText}",
+                accent: WakeProfileAccent.allCases[index % WakeProfileAccent.allCases.count])
+        }
+        return AppModel(
+            preferences: preferences,
+            recordingOverlay: MenuOverlayStub(),
+            startsAutomatically: false)
     }
 }

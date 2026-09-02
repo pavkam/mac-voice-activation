@@ -109,7 +109,8 @@ struct MenuContentView: View {
                     }
                 }
             }
-            .frame(maxHeight: 360)
+            .frame(height: MenuProfileListLayout.height(
+                profileCount: model.activeWakeProfiles.count))
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 14)
