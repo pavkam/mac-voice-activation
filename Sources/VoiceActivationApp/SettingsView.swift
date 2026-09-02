@@ -234,8 +234,12 @@ struct SettingsView: View {
 
                 Picker("Color", selection: profile.accent) {
                     ForEach(WakeProfileAccent.allCases, id: \.self) { accent in
-                        Label(accent.displayName, systemImage: "circle.fill")
-                            .foregroundStyle(accent.swiftUIColor)
+                        Label {
+                            Text(accent.displayName)
+                        } icon: {
+                            Image(nsImage: WakeProfileAccentSwatch.image(for: accent))
+                                .renderingMode(.original)
+                        }
                             .tag(accent)
                     }
                 }
