@@ -114,6 +114,51 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.speech.mode == .commandCapture)
     }
 
+    @MainActor @Test func passiveUpdate_WhenWakePhraseIsPartialAlone_CapturesCommandAfterPause() async throws {
+        let fixture = try Fixture(timing: .wakeHandoff)
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("computer")
+
+        #expect(fixture.coordinator.state == .capturing)
+        await waitUntil(timeout: .milliseconds(200)) {
+            fixture.speech.mode == .commandCapture
+        }
+
+        fixture.speech.emit("open calendar", isFinal: true)
+        await waitUntil {
+            await fixture.runner.recordedTranscripts() == ["open calendar"]
+        }
+
+        #expect(fixture.coordinator.lastTranscript == "open calendar")
+    }
+
+    @MainActor @Test func passiveUpdate_WhenCommandImmediatelyFollowsPartialWake_ExecutesOnlyCommand() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("computer")
+        fixture.speech.emit("computer open calendar", isFinal: true)
+        await waitUntil {
+            await fixture.runner.recordedTranscripts() == ["open calendar"]
+        }
+
+        #expect(fixture.coordinator.lastTranscript == "open calendar")
+    }
+
+    @MainActor @Test func passiveUpdate_WhenPartialWakeIsRevised_CancelsPendingHandoff() async throws {
+        let fixture = try Fixture(timing: .wakeHandoff)
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("computer")
+        fixture.speech.emit("completely different")
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
     @MainActor @Test func passiveUpdate_WhenCommandIsPartial_PublishesLiveCommandText() throws {
         let fixture = try Fixture()
         var publishedTranscripts: [String] = []
@@ -433,6 +478,7 @@ struct VoiceActivationCoordinatorTests {
 
 private extension ActivationTiming {
     static let fast = ActivationTiming(
+        wakeHandoffDelay: .milliseconds(5),
         captureInitialSilence: .milliseconds(200),
         captureInactivity: .milliseconds(20),
         captureMaximum: .milliseconds(40),
@@ -440,6 +486,7 @@ private extension ActivationTiming {
         executionCooldown: .milliseconds(10))
 
     static let startFailure = ActivationTiming(
+        wakeHandoffDelay: .milliseconds(5),
         captureInitialSilence: .milliseconds(20),
         captureInactivity: .milliseconds(20),
         captureMaximum: .milliseconds(200),
@@ -447,6 +494,7 @@ private extension ActivationTiming {
         executionCooldown: .milliseconds(10))
 
     static let initialSilence = ActivationTiming(
+        wakeHandoffDelay: .milliseconds(5),
         captureInitialSilence: .milliseconds(20),
         captureInactivity: .milliseconds(200),
         captureMaximum: .milliseconds(200),
@@ -454,6 +502,7 @@ private extension ActivationTiming {
         executionCooldown: .milliseconds(10))
 
     static let initialSilenceThenInactivity = ActivationTiming(
+        wakeHandoffDelay: .milliseconds(5),
         captureInitialSilence: .milliseconds(80),
         captureInactivity: .milliseconds(160),
         captureMaximum: .milliseconds(500),
@@ -461,9 +510,18 @@ private extension ActivationTiming {
         executionCooldown: .milliseconds(10))
 
     static let repeatingEmptyFinals = ActivationTiming(
+        wakeHandoffDelay: .milliseconds(5),
         captureInitialSilence: .milliseconds(500),
         captureInactivity: .milliseconds(500),
         captureMaximum: .milliseconds(200),
+        passiveRestart: .milliseconds(10),
+        executionCooldown: .milliseconds(10))
+
+    static let wakeHandoff = ActivationTiming(
+        wakeHandoffDelay: .milliseconds(20),
+        captureInitialSilence: .milliseconds(200),
+        captureInactivity: .milliseconds(20),
+        captureMaximum: .milliseconds(500),
         passiveRestart: .milliseconds(10),
         executionCooldown: .milliseconds(10))
 }

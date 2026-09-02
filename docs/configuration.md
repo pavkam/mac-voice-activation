@@ -86,8 +86,11 @@ My Voice Shortcut
   arrive and never takes keyboard focus from the current app. The capsule is
   clipped to its visible border without an outer shadow gutter. Click its close
   button to discard the current capture.
-- A wake phrase that finalizes by itself starts a fresh command-capture session,
-  allowing a natural pause before the command.
+- A wake phrase recognized by itself starts a fresh command-capture session,
+  allowing a natural pause before the command. A brief grace period preserves
+  command words spoken in the same utterance; otherwise the dedicated listener
+  starts well before Apple's wake utterance would time out and remains available
+  throughout the five-second initial-silence window.
 - A completed command consisting only of `cancel`, `stop`, or `dismiss`
   discards the capture. Repeating the same cancellation word twice in a row
   discards it immediately, including while recognition is still partial. A

@@ -55,9 +55,12 @@ command`, or an error message.
   speech service. Releasing the shortcut finishes capture.
 
 When the wake phrase and command arrive in one transcription, the coordinator
-uses the remaining text immediately. When the wake phrase finalizes alone, it
-starts a dedicated command session so pausing after `computer` does not discard
-the next utterance.
+uses the remaining text immediately. When the wake phrase is recognized alone,
+it starts a dedicated command session so pausing after `computer` does not
+discard the next utterance. A partial result containing only the wake phrase
+schedules that session after a short grace period instead of waiting for Apple
+to close the wake utterance. Command words arriving during the grace period
+cancel the handoff and continue through the existing passive result.
 
 The coordinator recognizes `cancel`, `stop`, and `dismiss` as cancellation
 words. A lone word cancels only at a completion boundary so a partial `stop`
@@ -84,6 +87,9 @@ non-zero exit status as an error. No shell parses the transcript.
   engine, remove its input tap, and cancel the recognition task.
 - Recognition callbacks carry a session generation and are ignored after that
   session is stopped.
+- A bare partial wake phrase schedules a command-capture handoff after a short
+  grace period. Same-utterance command text cancels it; late final callbacks
+  from a retired wake session are ignored.
 - Empty final recognition results restart the command recognizer within the
   existing capture window; they do not reset its initial-silence or absolute
   deadlines.

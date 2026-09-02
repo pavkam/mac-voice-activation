@@ -31,7 +31,9 @@ to a service.
 ## Capture ends without running a command
 
 - Begin with the wake phrase; text before it does not match.
-- Speak after the status changes to **Capturing**.
+- Speak after the status changes to **Capturing**. You may pause after the wake
+  phrase; the dedicated command listener remains active for five seconds before
+  timing out.
 - Capture without any command text returns to passive listening after 5
   seconds. Repeated empty recognition results cannot extend this deadline.
 - A completed command containing only `cancel`, `stop`, or `dismiss` is

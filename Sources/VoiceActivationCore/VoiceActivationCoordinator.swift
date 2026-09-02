@@ -30,6 +30,7 @@ public final class VoiceActivationCoordinator {
     private var capturedCommand = ""
     private var generation = 0
     private var captureGeneration = 0
+    private var wakeHandoffTask: Task<Void, Never>?
     private var initialSilenceTask: Task<Void, Never>?
     private var inactivityTask: Task<Void, Never>?
     private var hardStopTask: Task<Void, Never>?
@@ -199,6 +200,10 @@ public final class VoiceActivationCoordinator {
             in: update.transcript,
             wakePhrase: config.wakePhrase)
         else {
+            if wakeHandoffTask != nil {
+                cancelWakeHandoff()
+                state = .listening
+            }
             if update.isFinal { startPassiveListening() }
             return
         }
@@ -216,12 +221,12 @@ public final class VoiceActivationCoordinator {
             if update.isFinal {
                 startCommandCapture(localeID: config.localeID)
             } else {
-                scheduleCaptureInitialSilence()
-                scheduleCaptureHardStop()
+                scheduleWakeHandoff(localeID: config.localeID)
             }
             return
         }
 
+        cancelWakeHandoff()
         cancelCaptureInitialSilence()
         scheduleCaptureInactivity()
         scheduleCaptureHardStop()
@@ -238,6 +243,27 @@ public final class VoiceActivationCoordinator {
         startSession(mode: .commandCapture, localeID: localeID)
         scheduleCaptureInitialSilence()
         scheduleCaptureHardStop()
+    }
+
+    private func scheduleWakeHandoff(localeID: String) {
+        guard wakeHandoffTask == nil else { return }
+        let activeGeneration = generation
+        wakeHandoffTask = Task { [weak self, timing] in
+            try? await Task.sleep(for: timing.wakeHandoffDelay)
+            guard
+                !Task.isCancelled,
+                let self,
+                self.generation == activeGeneration,
+                self.capturedCommand.isEmpty
+            else { return }
+            self.wakeHandoffTask = nil
+            self.startCommandCapture(localeID: localeID)
+        }
+    }
+
+    private func cancelWakeHandoff() {
+        wakeHandoffTask?.cancel()
+        wakeHandoffTask = nil
     }
 
     private func restartCommandCapture(localeID: String) {
@@ -393,6 +419,7 @@ public final class VoiceActivationCoordinator {
 
     private func stopActiveSession() {
         captureGeneration &+= 1
+        cancelWakeHandoff()
         cancelCaptureInitialSilence()
         inactivityTask?.cancel()
         inactivityTask = nil
