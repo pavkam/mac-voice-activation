@@ -275,6 +275,36 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.coordinator.currentTranscript.isEmpty)
     }
 
+    @MainActor @Test func cancelCapture_WhenWakeCaptureIsActive_DiscardsCommandAndResumes() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("computer open calendar")
+
+        fixture.coordinator.cancelCapture()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.coordinator.currentTranscript.isEmpty)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
+    @MainActor @Test func cancelCapture_WhenPushToTalkIsActive_DiscardsCommandAndResumes() async throws {
+        let fixture = try Fixture()
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.coordinator.pushToTalkPressed()
+        fixture.speech.emit("open calendar")
+
+        fixture.coordinator.cancelCapture()
+        fixture.coordinator.pushToTalkReleased()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.coordinator.currentTranscript.isEmpty)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
     @MainActor @Test func pushToTalk_WhenTranscriptIsEmpty_DoesNotExecuteAndResumes() async throws {
         let fixture = try Fixture()
         fixture.coordinator.setPassiveEnabled(true)

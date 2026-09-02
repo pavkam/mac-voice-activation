@@ -44,8 +44,9 @@ to a service.
 - Confirm the menu status changes to **Capturing**.
 - On multiple displays, the overlay uses the screen containing the pointer when
   capture begins and remains there until that capture ends.
-- The overlay intentionally ignores clicks and never activates Voice
-  Activation, so keyboard input remains with the current app.
+- The overlay never activates Voice Activation, so keyboard input remains with
+  the current app. Its close button remains clickable and discards the current
+  transcript without running a command.
 
 ## The command does not run
 

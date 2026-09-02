@@ -88,8 +88,9 @@ non-zero exit status as an error. No shell parses the transcript.
   macOS remains the source of truth instead of a duplicated preference.
 - `RecordingOverlayPresenter` maps capture state to a
   `RecordingOverlayController`. Its borderless `NSPanel` joins full-screen
-  spaces, ignores mouse events, does not activate the app, and follows the
-  screen containing the pointer.
+  spaces, does not activate the app, and follows the screen containing the
+  pointer. The transparent panel is compact until transcript text arrives and
+  accepts pointer input only so its cancel control can abort capture.
 
 ## Privacy boundary
 

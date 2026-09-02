@@ -6,6 +6,7 @@ import VoiceActivationCore
 private final class RecordingOverlayDisplaySpy: RecordingOverlayDisplaying {
     private(set) var shownTranscripts: [String] = []
     private(set) var hideCount = 0
+    var onCancel: (() -> Void)?
 
     func show(transcript: String) {
         shownTranscripts.append(transcript)
@@ -13,6 +14,10 @@ private final class RecordingOverlayDisplaySpy: RecordingOverlayDisplaying {
 
     func hide() {
         hideCount += 1
+    }
+
+    func requestCancel() {
+        onCancel?()
     }
 }
 
@@ -27,6 +32,21 @@ struct RecordingOverlayPresenterTests {
 
         #expect(display.shownTranscripts == ["open calendar"])
         #expect(display.hideCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func cancel_WhenDisplayRequestsCancellation_InvokesHandler() {
+        let display = RecordingOverlayDisplaySpy()
+        let presenter = RecordingOverlayPresenter(display: display)
+        var cancellationCount = 0
+        presenter.onCancel = {
+            cancellationCount += 1
+        }
+
+        display.requestCancel()
+
+        #expect(cancellationCount == 1)
     }
 
     @MainActor

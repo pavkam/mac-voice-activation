@@ -42,6 +42,9 @@ final class AppModel {
         localeID = preferences.localeID
         executablePath = preferences.executablePath
         argumentTemplatesText = preferences.argumentTemplates.joined(separator: "\n")
+        overlayPresenter.onCancel = { [weak self] in
+            self?.cancelCapture()
+        }
 
         Task { @MainActor [weak self] in
             await self?.start()
@@ -126,6 +129,11 @@ final class AppModel {
         guard hotkeyHeld else { return }
         hotkeyHeld = false
         coordinator.pushToTalkReleased()
+    }
+
+    func cancelCapture() {
+        hotkeyHeld = false
+        coordinator.cancelCapture()
     }
 
     private func ensurePermissions() async -> Bool {

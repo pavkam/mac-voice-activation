@@ -106,6 +106,14 @@ public final class VoiceActivationCoordinator {
         execute(transcript)
     }
 
+    public func cancelCapture() {
+        guard state == .capturing else { return }
+        pushToTalkActive = false
+        capturedCommand = ""
+        stopActiveSession()
+        resumePassiveIfNeeded()
+    }
+
     public func stop() {
         passiveEnabled = false
         pushToTalkActive = false

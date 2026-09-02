@@ -20,6 +20,13 @@ struct MenuContentView: View {
                 get: { model.passiveEnabled },
                 set: { model.setPassiveEnabled($0) }))
 
+        if model.state == .capturing {
+            Button("Cancel Recording") {
+                model.cancelCapture()
+            }
+            .keyboardShortcut(.cancelAction)
+        }
+
         Text("Push to talk: ⌃⌥Space")
 
         Divider()

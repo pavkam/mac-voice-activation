@@ -59,6 +59,9 @@ The default configuration opens a Google search:
 4. Stop speaking; the overlay closes and the command is submitted when
    recognition finalizes or the transcript is unchanged for 1.5 seconds.
 
+Click the close button on the recording orb or choose **Cancel Recording** from
+the menu to discard the current capture without running its command.
+
 You can also hold Control-Option-Space, speak without a wake phrase, and release
 the keys to submit.
 
