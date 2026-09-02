@@ -8,8 +8,8 @@ struct MenuContentView: View {
     var body: some View {
         Text(model.state.label)
         if !model.lastTranscript.isEmpty {
-            Text("Last: \(model.lastTranscript)")
-                .lineLimit(2)
+            Text("Last: \(MenuTranscriptSummary.format(model.lastTranscript))")
+                .lineLimit(1)
         }
 
         Divider()
