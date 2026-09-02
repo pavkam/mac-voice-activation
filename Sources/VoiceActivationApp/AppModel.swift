@@ -15,18 +15,21 @@ final class AppModel {
     var settingsError: String?
 
     @ObservationIgnored private let preferences: AppPreferences
-    @ObservationIgnored private let speechSession: AppleSpeechSession
+    @ObservationIgnored private let speechSession: any SpeechSessionProtocol
+    @ObservationIgnored private let commandRunner: any CommandRunning
+    @ObservationIgnored private let permissionRequest: @MainActor () async -> Bool
     @ObservationIgnored private let shortcut: any PushToTalkShortcutManaging
     @ObservationIgnored private let overlayPresenter: RecordingOverlayPresenter
     @ObservationIgnored private let soundPresenter: CaptureSoundPresenter
     @ObservationIgnored private var started = false
     @ObservationIgnored private var permissionGranted = false
+    @ObservationIgnored private var permissionTask: Task<Bool, Never>?
     @ObservationIgnored private var hotkeyHeld = false
     @ObservationIgnored private var recordingShortcut = false
     @ObservationIgnored private var activeProfile: WakeProfile?
     @ObservationIgnored private lazy var coordinator = VoiceActivationCoordinator(
         speechSession: speechSession,
-        commandRunner: CommandRunner(),
+        commandRunner: commandRunner,
         configuration: { [weak self] in
             guard let self else { throw ModelError.unavailable }
             return try self.savedConfiguration()
@@ -36,12 +39,17 @@ final class AppModel {
         preferences: AppPreferences = AppPreferences(),
         recordingOverlay: any RecordingOverlayDisplaying = RecordingOverlayController(),
         shortcut: any PushToTalkShortcutManaging = PushToTalkShortcut(),
+        speechSession: any SpeechSessionProtocol = AppleSpeechSession(),
+        commandRunner: any CommandRunning = CommandRunner(),
+        permissionRequest: @escaping @MainActor () async -> Bool = SpeechPermissions.request,
         soundPlayer: any CaptureSoundPlaying = SystemCaptureSoundPlayer(),
         startsAutomatically: Bool = true)
     {
         self.preferences = preferences
         self.shortcut = shortcut
-        speechSession = AppleSpeechSession()
+        self.speechSession = speechSession
+        self.commandRunner = commandRunner
+        self.permissionRequest = permissionRequest
         overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
         soundPresenter = CaptureSoundPresenter(player: soundPlayer)
         passiveEnabled = preferences.passiveEnabled
@@ -60,11 +68,18 @@ final class AppModel {
     }
 
     func setPassiveEnabled(_ enabled: Bool) {
+        guard passiveEnabled != enabled else { return }
         passiveEnabled = enabled
         preferences.passiveEnabled = enabled
         if enabled {
             Task { @MainActor [weak self] in
-                guard let self, await self.ensurePermissions() else { return }
+                guard let self, self.passiveEnabled else { return }
+                let permissionGranted = await self.ensurePermissions()
+                guard self.passiveEnabled else {
+                    self.state = .disabled
+                    return
+                }
+                guard permissionGranted else { return }
                 self.coordinator.setPassiveEnabled(true)
             }
         } else {
@@ -90,18 +105,8 @@ final class AppModel {
     func saveSettings() -> Bool {
         let profiles: [WakeProfile]
         do {
-            guard !wakeProfiles.isEmpty else { throw ModelError.profileRequired }
             profiles = try wakeProfiles.map { try $0.validatedProfile() }
-            let phrases = profiles.map { $0.wakePhrase.folding(
-                options: [.caseInsensitive, .diacriticInsensitive],
-                locale: .current) }
-            guard Set(phrases).count == phrases.count else {
-                throw ModelError.duplicateWakePhrase
-            }
-            let hotKeys = profiles.compactMap(\.pushToTalkHotKey)
-            guard Set(hotKeys).count == hotKeys.count else {
-                throw ModelError.duplicatePushToTalkHotKey
-            }
+            try WakeProfileCollectionValidator.validate(profiles)
         } catch {
             settingsError = error.localizedDescription
             return false
@@ -153,7 +158,7 @@ final class AppModel {
         }
     }
 
-    private func start() async {
+    func start() async {
         guard !started else { return }
         started = true
         coordinator.onStateChange = { [weak self] in
@@ -210,7 +215,16 @@ final class AppModel {
 
     private func ensurePermissions() async -> Bool {
         if permissionGranted { return true }
-        permissionGranted = await SpeechPermissions.request()
+        if let permissionTask {
+            return await permissionTask.value
+        }
+
+        let task = Task { @MainActor [permissionRequest] in
+            await permissionRequest()
+        }
+        permissionTask = task
+        permissionGranted = await task.value
+        permissionTask = nil
         if !permissionGranted {
             state = .failed("Microphone and Speech Recognition permissions are required.")
             passiveEnabled = false
@@ -234,21 +248,9 @@ final class AppModel {
 
     private enum ModelError: Error, LocalizedError {
         case unavailable
-        case profileRequired
-        case duplicateWakePhrase
-        case duplicatePushToTalkHotKey
 
         var errorDescription: String? {
-            switch self {
-            case .unavailable:
-                "Voice Activation is unavailable."
-            case .profileRequired:
-                "Add at least one wake profile."
-            case .duplicateWakePhrase:
-                "Wake phrases must be unique."
-            case .duplicatePushToTalkHotKey:
-                "Push-to-talk shortcuts must be unique."
-            }
+            "Voice Activation is unavailable."
         }
     }
 }

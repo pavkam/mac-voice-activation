@@ -86,6 +86,27 @@ private actor RecordingCommandRunner: CommandRunning {
     }
 }
 
+private actor ControlledCommandRunner: CommandRunning {
+    private var transcripts: [String] = []
+    private var continuations: [CheckedContinuation<CommandResult, Never>] = []
+
+    func run(template: CommandTemplate, transcript: String) async throws -> CommandResult {
+        transcripts.append(transcript)
+        return await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func recordedTranscripts() -> [String] {
+        transcripts
+    }
+
+    func completeNext() {
+        continuations.removeFirst().resume(returning: CommandResult(terminationStatus: 0))
+    }
+}
+
+@Suite(.serialized)
 struct VoiceActivationCoordinatorTests {
     @MainActor @Test func setPassiveEnabled_WhenProfilesConfigured_BiasesWakeRecognition() throws {
         let profiles = [
@@ -122,6 +143,21 @@ struct VoiceActivationCoordinatorTests {
         fixture.coordinator.setPassiveEnabled(true)
 
         #expect(fixture.speech.contextualStrings == ["computer"])
+    }
+
+    @MainActor @Test func setPassiveEnabled_WhenEveryProfileIsDisabled_DoesNotUseMicrophone() throws {
+        let profile = try WakeProfile(
+            wakePhrase: "computer",
+            urlTemplate: "https://example.com?q={urlText}",
+            accent: .blue,
+            isEnabled: false)
+        let fixture = try Fixture(profiles: [profile])
+
+        fixture.coordinator.setPassiveEnabled(true)
+
+        #expect(fixture.coordinator.state == .disabled)
+        #expect(fixture.speech.startCount == 0)
+        #expect(fixture.speech.mode == nil)
     }
 
     @MainActor @Test func passiveUpdate_WhenProfileMatches_UsesItsURLAndAccent() async throws {
@@ -472,6 +508,28 @@ struct VoiceActivationCoordinatorTests {
         ])
     }
 
+    @MainActor @Test func pushToTalk_WhenProfileBindingIsPressed_PublishesProfileBeforeCapture() throws {
+        let computer = try WakeProfile(
+            wakePhrase: "computer",
+            urlTemplate: "https://wake.example/?q={urlText}",
+            accent: .blue)
+        let sneek = try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://notes.example/?q={urlText}",
+            accent: .purple)
+        let fixture = try Fixture(profiles: [computer, sneek])
+        var profileWhenCaptureBegan: WakeProfile?
+        fixture.coordinator.onStateChange = { state in
+            if state == .capturing {
+                profileWhenCaptureBegan = fixture.coordinator.activeProfile
+            }
+        }
+
+        fixture.coordinator.pushToTalkPressed(profileID: sneek.id)
+
+        #expect(profileWhenCaptureBegan == sneek)
+    }
+
     @MainActor @Test func pushToTalk_WhenCommandIsPartial_PublishesLiveText() throws {
         let fixture = try Fixture()
 
@@ -557,6 +615,82 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.coordinator.state == .listening)
         #expect(fixture.speech.mode == .passiveWake)
         #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
+    @MainActor @Test func commandCompletion_WhenNewerCommandIsRunning_IgnoresOlderCompletion() async throws {
+        let speech = FakeSpeechSession()
+        let runner = ControlledCommandRunner()
+        let template = try CommandTemplate(
+            executablePath: "/usr/bin/printf",
+            argumentTemplates: ["{text}"])
+        let coordinator = VoiceActivationCoordinator(
+            speechSession: speech,
+            commandRunner: runner,
+            configuration: {
+                ActivationConfiguration(
+                    wakePhrase: "computer",
+                    localeID: "en-US",
+                    commandTemplate: template)
+            },
+            timing: .fast)
+        coordinator.setPassiveEnabled(true)
+        speech.emit("computer first", isFinal: true)
+        await waitUntil {
+            await runner.recordedTranscripts() == ["first"]
+        }
+
+        coordinator.pushToTalkPressed()
+        speech.emit("second")
+        coordinator.pushToTalkReleased()
+        await waitUntil {
+            await runner.recordedTranscripts() == ["first", "second"]
+        }
+        await runner.completeNext()
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(coordinator.state == .executing)
+        #expect(speech.mode == nil)
+
+        await runner.completeNext()
+        await waitUntil {
+            coordinator.state == .listening && speech.mode == .passiveWake
+        }
+    }
+
+    @MainActor @Test func passiveRestart_WhenPushToTalkCommandStarts_DoesNotPreemptCommand() async throws {
+        let speech = FakeSpeechSession()
+        let runner = ControlledCommandRunner()
+        let template = try CommandTemplate(
+            executablePath: "/usr/bin/printf",
+            argumentTemplates: ["{text}"])
+        let coordinator = VoiceActivationCoordinator(
+            speechSession: speech,
+            commandRunner: runner,
+            configuration: {
+                ActivationConfiguration(
+                    wakePhrase: "computer",
+                    localeID: "en-US",
+                    commandTemplate: template)
+            },
+            timing: .pendingPassiveRestart)
+        coordinator.setPassiveEnabled(true)
+        speech.emitError("recognizer interrupted")
+
+        coordinator.pushToTalkPressed()
+        speech.emit("new command")
+        coordinator.pushToTalkReleased()
+        await waitUntil {
+            await runner.recordedTranscripts() == ["new command"]
+        }
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(coordinator.state == .executing)
+        #expect(speech.mode == nil)
+
+        await runner.completeNext()
+        await waitUntil {
+            coordinator.state == .listening && speech.mode == .passiveWake
+        }
     }
 
     @MainActor
@@ -649,5 +783,13 @@ private extension ActivationTiming {
         captureInactivity: .milliseconds(20),
         captureMaximum: .milliseconds(500),
         passiveRestart: .milliseconds(10),
+        executionCooldown: .milliseconds(10))
+
+    static let pendingPassiveRestart = ActivationTiming(
+        wakeHandoffDelay: .milliseconds(5),
+        captureInitialSilence: .milliseconds(200),
+        captureInactivity: .milliseconds(20),
+        captureMaximum: .milliseconds(500),
+        passiveRestart: .milliseconds(20),
         executionCooldown: .milliseconds(10))
 }

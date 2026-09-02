@@ -35,6 +35,7 @@ public final class VoiceActivationCoordinator {
     private var capturedCommand = ""
     private var generation = 0
     private var captureGeneration = 0
+    private var executionGeneration = 0
     private var wakeHandoffTask: Task<Void, Never>?
     private var initialSilenceTask: Task<Void, Never>?
     private var inactivityTask: Task<Void, Never>?
@@ -88,19 +89,24 @@ public final class VoiceActivationCoordinator {
 
     public func pushToTalkPressed(profileID: UUID) {
         guard !pushToTalkActive else { return }
-        pushToTalkActive = true
-        stopActiveSession()
-        capturedCommand = ""
-        currentTranscript = ""
-        state = .capturing
 
         do {
             let config = try configuration()
             guard let profile = config.profiles.first(where: { $0.id == profileID }) else {
                 throw CoordinatorError.profileUnavailable
             }
+            let commandTemplate = try profile.commandTemplate
+
+            executionGeneration &+= 1
+            restartTask?.cancel()
+            restartTask = nil
+            pushToTalkActive = true
+            stopActiveSession()
+            capturedCommand = ""
+            currentTranscript = ""
             activeProfile = profile
-            activeCommandTemplate = try profile.commandTemplate
+            activeCommandTemplate = commandTemplate
+            state = .capturing
             startSession(mode: .pushToTalk, localeID: config.localeID)
         } catch {
             state = .failed(error.localizedDescription)
@@ -139,6 +145,7 @@ public final class VoiceActivationCoordinator {
     public func stop() {
         passiveEnabled = false
         pushToTalkActive = false
+        executionGeneration &+= 1
         stopActiveSession()
         state = .disabled
     }
@@ -152,11 +159,16 @@ public final class VoiceActivationCoordinator {
 
         do {
             let config = try configuration()
+            let enabledProfiles = config.profiles.filter(\.isEnabled)
+            guard !enabledProfiles.isEmpty else {
+                state = .disabled
+                return
+            }
             state = .listening
             startSession(
                 mode: .passiveWake,
                 localeID: config.localeID,
-                contextualStrings: config.profiles.filter(\.isEnabled).map(\.wakePhrase))
+                contextualStrings: enabledProfiles.map(\.wakePhrase))
         } catch {
             state = .failed(error.localizedDescription)
         }
@@ -430,15 +442,23 @@ public final class VoiceActivationCoordinator {
             return
         }
 
+        executionGeneration &+= 1
+        let activeExecutionGeneration = executionGeneration
         state = .executing
         lastTranscript = transcript
         Task { [weak self, commandRunner] in
             do {
                 _ = try await commandRunner.run(template: template, transcript: transcript)
-                guard let self else { return }
+                guard
+                    let self,
+                    self.executionGeneration == activeExecutionGeneration
+                else { return }
                 self.resumePassiveAfterCooldown()
             } catch {
-                guard let self else { return }
+                guard
+                    let self,
+                    self.executionGeneration == activeExecutionGeneration
+                else { return }
                 self.state = .failed(error.localizedDescription)
                 self.resumePassiveAfterCooldown()
             }

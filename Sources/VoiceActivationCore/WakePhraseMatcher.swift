@@ -10,6 +10,14 @@ public enum WakePhraseMatcher {
         .union(.punctuationCharacters)
         .union(.symbols)
 
+    static func canonicalWakePhrase(_ phrase: String) -> String {
+        phrase
+            .trimmingCharacters(in: leadingAndTrailing)
+            .folding(
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                locale: Locale(identifier: "en_US_POSIX"))
+    }
+
     public static func command(in transcript: String, wakePhrase: String) -> String? {
         let spoken = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let phrase = wakePhrase.trimmingCharacters(in: leadingAndTrailing)

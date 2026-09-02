@@ -21,9 +21,16 @@ and framework adapters.
 `AppModel` is the main-actor bridge between SwiftUI and
 `VoiceActivationCoordinator`. The coordinator owns exactly one active speech
 session and invalidates callbacks from retired sessions with a generation
-identifier. It carries the matched `WakeProfile` through capture so command
-routing and overlay color cannot drift apart, and publishes current command
-text separately from command history.
+identifier. Command executions have an independent generation so an older
+process completion cannot overwrite a newer capture or execution. It carries
+the matched `WakeProfile` through capture before publishing capture state, so
+command routing and overlay color cannot drift apart, and publishes current
+command text separately from command history.
+
+`WakeProfileCollectionValidator` owns cross-profile invariants. It shares wake
+phrase canonicalization with `WakePhraseMatcher`, preventing two visually
+different phrases from competing for the same recognized trigger, and rejects
+duplicate push-to-talk bindings before adapters mutate system registration.
 
 ## State flow
 
@@ -130,6 +137,8 @@ non-zero exit status as an error. No shell parses the transcript.
   descending cue on exit, falling back to system sounds only if an asset cannot
   load. The panel accepts pointer input only so its cancel control can abort
   capture.
+- The menu profile list is a bounded scrolling region, so user-defined profile
+  counts cannot grow the menu-bar panel beyond the available screen.
 
 ## Privacy boundary
 

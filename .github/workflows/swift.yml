@@ -33,14 +33,26 @@ jobs:
         run: swift package resolve
 
       - name: "🔨 Build application and tests"
-        run: swift build --build-tests -v
+        run: swift build --build-tests -Xswiftc -warnings-as-errors -v
 
       - name: "✅ Run tests"
-        run: swift test --skip-build --parallel
+        run: swift test --skip-build
+
+  thread-sanitizer:
+    name: "🧵 Thread sanitizer"
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v7
+
+      - name: "🧵 Run tests with Thread Sanitizer"
+        run: swift test --sanitize=thread
 
   package-app:
     name: "📦 Package app"
-    needs: build-and-test
+    needs: [build-and-test, thread-sanitizer]
     runs-on: macos-latest
     timeout-minutes: 15
 

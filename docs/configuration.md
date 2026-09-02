@@ -8,11 +8,12 @@ validation errors keep it open so the invalid field can be corrected.
 ## Voice settings
 
 - **Wake profiles:** each profile has a wake phrase, URL template, and animation
-  color. Add or remove profiles as needed. Phrases must be unique and occur at
-  the beginning of the recognized utterance. Matching ignores case, accents,
-  and character width; if phrases overlap, the longest match wins. The menu-bar
-  menu has a separate persistent toggle for every saved phrase. Disabled phrases
-  are excluded from recognition without affecting the other profiles.
+  color. Add or remove profiles as needed. Phrases must be unique after the same
+  case, width, accent, punctuation, and symbol normalization used by matching,
+  and occur at the beginning of the recognized utterance. If phrases overlap,
+  the longest match wins. The menu-bar menu has a separate persistent toggle
+  for every saved phrase. Disabled phrases are excluded from recognition
+  without affecting the other profiles.
 - **Speech locale:** defaults to the current macOS locale and accepts an Apple
   locale identifier such as `en-US` or `pt-PT`.
 - **Always listen:** enabled by default and keeps an on-device recognition
@@ -100,5 +101,8 @@ my-app://command?prompt={urlText}
   seconds. Active dictation has a 30-second absolute maximum.
 - Successful commands return to passive listening after a 250-millisecond
   cooldown.
+- Disabling every wake profile stops passive microphone capture even when the
+  global **Always listen** preference remains enabled. Enabling any profile
+  starts passive capture again. Profile push-to-talk shortcuts remain available.
 
 Next: [understand the runtime architecture](architecture.md).

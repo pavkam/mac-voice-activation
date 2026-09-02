@@ -100,11 +100,16 @@ struct MenuContentView: View {
                 .tracking(0.8)
                 .padding(.horizontal, 4)
 
-            ForEach(model.activeWakeProfiles) { profile in
-                MenuProfileRow(profile: profile) {
-                    model.setWakeProfileEnabled(profile.id, enabled: !profile.isEnabled)
+            ScrollView {
+                LazyVStack(spacing: 7) {
+                    ForEach(model.activeWakeProfiles) { profile in
+                        MenuProfileRow(profile: profile) {
+                            model.setWakeProfileEnabled(profile.id, enabled: !profile.isEnabled)
+                        }
+                    }
                 }
             }
+            .frame(maxHeight: 360)
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 14)

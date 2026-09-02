@@ -27,8 +27,14 @@ For the same debug sequence used by continuous integration:
 
 ```bash
 swift package resolve
-swift build --build-tests -v
-swift test --skip-build --parallel
+swift build --build-tests -Xswiftc -warnings-as-errors -v
+swift test --skip-build
+```
+
+Concurrency-sensitive changes must also pass Thread Sanitizer:
+
+```bash
+swift test --sanitize=thread
 ```
 
 ## App bundle

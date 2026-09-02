@@ -7,6 +7,7 @@ import VoiceActivationCore
 private final class ShortcutSpy: PushToTalkShortcutManaging {
     private(set) var startedProfiles: [[WakeProfile]] = []
     private(set) var stopCount = 0
+    private var onPressed: ((UUID) -> Void)?
 
     func start(
         profiles: [WakeProfile],
@@ -14,10 +15,15 @@ private final class ShortcutSpy: PushToTalkShortcutManaging {
         onReleased: @escaping (UUID) -> Void) throws
     {
         startedProfiles.append(profiles)
+        self.onPressed = onPressed
     }
 
     func stop() {
         stopCount += 1
+    }
+
+    func press(_ profileID: UUID) {
+        onPressed?(profileID)
     }
 }
 
@@ -29,7 +35,206 @@ private final class AppModelOverlayStub: RecordingOverlayDisplaying {
     func hide() {}
 }
 
+@MainActor
+private final class AppModelSpeechSessionSpy: SpeechSessionProtocol {
+    private(set) var startCount = 0
+
+    func start(
+        mode: SpeechSessionMode,
+        localeID: String,
+        contextualStrings: [String],
+        onUpdate: @escaping (SpeechUpdate) -> Void,
+        onInterruption: @escaping () -> Void) throws
+    {
+        startCount += 1
+    }
+
+    func stop() {}
+}
+
+@MainActor
+private final class PermissionRequestGate {
+    private var continuations: [CheckedContinuation<Bool, Never>] = []
+    private(set) var requestCount = 0
+    private(set) var completionCount = 0
+    var isWaiting: Bool { !continuations.isEmpty }
+
+    func request() async -> Bool {
+        requestCount += 1
+        let granted = await withCheckedContinuation { continuations.append($0) }
+        completionCount += 1
+        return granted
+    }
+
+    func resolve(_ granted: Bool) {
+        let pending = continuations
+        continuations = []
+        for continuation in pending {
+            continuation.resume(returning: granted)
+        }
+    }
+}
+
 struct AppModelTests {
+    @MainActor @Test func start_WhenPassiveListeningIsEnabled_WiresAndStartsDependencies() async throws {
+        let suite = "VoiceActivationStartupTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        let speech = AppModelSpeechSessionSpy()
+        let shortcut = ShortcutSpy()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: shortcut,
+            speechSession: speech,
+            permissionRequest: { true },
+            startsAutomatically: false)
+
+        await model.start()
+
+        #expect(model.state == .listening)
+        #expect(speech.startCount == 1)
+        #expect(shortcut.startedProfiles.count == 1)
+    }
+
+    @MainActor @Test func start_WhenCalledTwice_StartsDependenciesOnce() async throws {
+        let suite = "VoiceActivationStartupIdempotencyTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        let speech = AppModelSpeechSessionSpy()
+        let shortcut = ShortcutSpy()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: shortcut,
+            speechSession: speech,
+            permissionRequest: { true },
+            startsAutomatically: false)
+
+        await model.start()
+        await model.start()
+
+        #expect(speech.startCount == 1)
+        #expect(shortcut.startedProfiles.count == 1)
+    }
+
+    @MainActor @Test func passiveListening_WhenDisabledDuringPermissionRequest_StaysOff() async throws {
+        let suite = "VoiceActivationPermissionRaceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        preferences.passiveEnabled = false
+        let speech = AppModelSpeechSessionSpy()
+        let permission = PermissionRequestGate()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: ShortcutSpy(),
+            speechSession: speech,
+            permissionRequest: { await permission.request() },
+            startsAutomatically: false)
+
+        model.setPassiveEnabled(true)
+        await waitUntil { permission.isWaiting }
+        #expect(permission.isWaiting)
+        model.setPassiveEnabled(false)
+        permission.resolve(true)
+        await Task.yield()
+
+        #expect(!model.passiveEnabled)
+        #expect(!preferences.passiveEnabled)
+        #expect(speech.startCount == 0)
+    }
+
+    @MainActor @Test func passiveListening_WhenDisabledBeforePermissionDenial_DoesNotShowFailure() async throws {
+        let suite = "VoiceActivationLatePermissionDenialTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        preferences.passiveEnabled = false
+        let permission = PermissionRequestGate()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: ShortcutSpy(),
+            speechSession: AppModelSpeechSessionSpy(),
+            permissionRequest: { await permission.request() },
+            startsAutomatically: false)
+
+        model.setPassiveEnabled(true)
+        await waitUntil { permission.isWaiting }
+        model.setPassiveEnabled(false)
+        permission.resolve(false)
+        await waitUntil { permission.completionCount == 1 }
+
+        #expect(model.state == .disabled)
+    }
+
+    @MainActor @Test func passiveListening_WhenSettingDoesNotChange_DoesNotRequestPermissions() async throws {
+        let suite = "VoiceActivationIdempotentToggleTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        let permission = PermissionRequestGate()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: ShortcutSpy(),
+            speechSession: AppModelSpeechSessionSpy(),
+            permissionRequest: { await permission.request() },
+            startsAutomatically: false)
+
+        model.setPassiveEnabled(true)
+        await Task.yield()
+
+        #expect(permission.requestCount == 0)
+        if permission.isWaiting {
+            permission.resolve(false)
+        }
+    }
+
+    @MainActor @Test func permissions_WhenStartupAndPushToTalkOverlap_RequestsOnce() async throws {
+        let suite = "VoiceActivationPermissionCoalescingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        let permission = PermissionRequestGate()
+        let shortcut = ShortcutSpy()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: shortcut,
+            speechSession: AppModelSpeechSessionSpy(),
+            permissionRequest: { await permission.request() },
+            startsAutomatically: false)
+        let startup = Task { @MainActor in await model.start() }
+        await waitUntil { permission.isWaiting && !shortcut.startedProfiles.isEmpty }
+        let profileID = try #require(shortcut.startedProfiles.first?.first?.id)
+
+        shortcut.press(profileID)
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+
+        #expect(permission.requestCount == 1)
+        permission.resolve(true)
+        await startup.value
+    }
+
+    @MainActor
+    private func waitUntil(
+        timeout: Duration = .seconds(1),
+        condition: @escaping @MainActor () -> Bool) async
+    {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition(), clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
     @MainActor @Test func setPushToTalkHotKey_WhenRecorded_ChangesOnlyThatProfileDraft() throws {
         let fixture = try Fixture()
         let profileID = fixture.model.wakeProfiles[0].id
@@ -114,6 +319,26 @@ struct AppModelTests {
         #expect(fixture.shortcut.startedProfiles.last?.map(\.pushToTalkHotKey) == [
             searchHotKey, assistantHotKey,
         ])
+    }
+
+    @MainActor @Test func saveSettings_WhenPhrasesMatchAfterNormalization_RejectsProfiles() throws {
+        let fixture = try Fixture()
+        fixture.model.wakeProfiles = [
+            WakeProfileDraft(
+                wakePhrase: "Computer",
+                urlTemplate: "https://one.example/?q={urlText}",
+                accent: .blue),
+            WakeProfileDraft(
+                wakePhrase: "computer!",
+                urlTemplate: "https://two.example/?q={urlText}",
+                accent: .purple),
+        ]
+
+        let saved = fixture.model.saveSettings()
+
+        #expect(!saved)
+        #expect(fixture.model.settingsError == "Wake phrases must be unique.")
+        #expect(fixture.shortcut.startedProfiles.isEmpty)
     }
 
     @MainActor @Test func setWakeProfileEnabled_WhenOneProfileChanges_PersistsOnlyThatProfile() throws {
