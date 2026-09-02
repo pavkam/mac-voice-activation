@@ -29,6 +29,7 @@ final class AppleSpeechSession: SpeechSessionProtocol {
     func start(
         mode: SpeechSessionMode,
         localeID: String,
+        contextualStrings: [String],
         onUpdate: @escaping (SpeechUpdate) -> Void,
         onInterruption: @escaping () -> Void) throws
     {
@@ -44,7 +45,8 @@ final class AppleSpeechSession: SpeechSessionProtocol {
         try SpeechRequestPolicy.configure(
             request,
             mode: mode,
-            supportsOnDeviceRecognition: recognizer.supportsOnDeviceRecognition)
+            supportsOnDeviceRecognition: recognizer.supportsOnDeviceRecognition,
+            contextualStrings: contextualStrings)
 
         let engine = AVAudioEngine()
         let input = engine.inputNode

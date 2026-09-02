@@ -142,19 +142,27 @@ public final class VoiceActivationCoordinator {
         do {
             let config = try configuration()
             state = .listening
-            startSession(mode: .passiveWake, localeID: config.localeID)
+            startSession(
+                mode: .passiveWake,
+                localeID: config.localeID,
+                contextualStrings: config.profiles.map(\.wakePhrase))
         } catch {
             state = .failed(error.localizedDescription)
         }
     }
 
-    private func startSession(mode: SpeechSessionMode, localeID: String) {
+    private func startSession(
+        mode: SpeechSessionMode,
+        localeID: String,
+        contextualStrings: [String] = [])
+    {
         generation &+= 1
         let activeGeneration = generation
         do {
             try speechSession.start(
                 mode: mode,
                 localeID: localeID,
+                contextualStrings: contextualStrings,
                 onUpdate: { [weak self] update in
                     guard let self, self.generation == activeGeneration else { return }
                     self.handle(update, mode: mode)

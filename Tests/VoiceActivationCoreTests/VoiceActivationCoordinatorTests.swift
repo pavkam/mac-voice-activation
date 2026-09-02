@@ -7,6 +7,7 @@ private final class FakeSpeechSession: SpeechSessionProtocol {
     private(set) var mode: SpeechSessionMode?
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    private(set) var contextualStrings: [String] = []
     private var handler: ((SpeechUpdate) -> Void)?
     private var interruptionHandler: (() -> Void)?
     private var retiredHandlers: [(SpeechUpdate) -> Void] = []
@@ -15,6 +16,7 @@ private final class FakeSpeechSession: SpeechSessionProtocol {
     func start(
         mode: SpeechSessionMode,
         localeID: String,
+        contextualStrings: [String],
         onUpdate: @escaping (SpeechUpdate) -> Void,
         onInterruption: @escaping () -> Void) throws
     {
@@ -24,6 +26,7 @@ private final class FakeSpeechSession: SpeechSessionProtocol {
         }
         startCount += 1
         self.mode = mode
+        self.contextualStrings = contextualStrings
         handler = onUpdate
         interruptionHandler = onInterruption
     }
@@ -84,6 +87,24 @@ private actor RecordingCommandRunner: CommandRunning {
 }
 
 struct VoiceActivationCoordinatorTests {
+    @MainActor @Test func setPassiveEnabled_WhenProfilesConfigured_BiasesWakeRecognition() throws {
+        let profiles = [
+            try WakeProfile(
+                wakePhrase: "computer",
+                urlTemplate: "https://example.com?q={urlText}",
+                accent: .blue),
+            try WakeProfile(
+                wakePhrase: "sneek",
+                urlTemplate: "https://example.com/note?q={urlText}",
+                accent: .purple),
+        ]
+        let fixture = try Fixture(profiles: profiles)
+
+        fixture.coordinator.setPassiveEnabled(true)
+
+        #expect(fixture.speech.contextualStrings == ["computer", "sneek"])
+    }
+
     @MainActor @Test func passiveUpdate_WhenProfileMatches_UsesItsURLAndAccent() async throws {
         let search = try WakeProfile(
             wakePhrase: "search",

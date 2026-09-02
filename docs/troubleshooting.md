@@ -42,6 +42,15 @@ to a service.
 - Check the menu's error text after capture. Recognition failures automatically
   restart passive listening after a short delay.
 
+## A custom wake phrase does not trigger
+
+- Confirm **Save Settings** completed; saved phrases are supplied to Apple
+  Speech as contextual vocabulary when passive listening restarts.
+- Speak the phrase at the beginning of the utterance and pause briefly while
+  testing it.
+- Custom spellings are supported through contextual vocabulary, but acoustically
+  ambiguous phrases may still benefit from a longer, more distinctive phrase.
+
 ## The recording overlay is missing
 
 - The overlay appears only after the wake phrase matches or while the

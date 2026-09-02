@@ -14,10 +14,15 @@ struct SpeechRequestPolicyTests {
     @Test func configure_WhenPassive_RequiresOnDeviceAndPartialResults() throws {
         let request = SFSpeechAudioBufferRecognitionRequest()
 
-        try SpeechRequestPolicy.configure(request, mode: .passiveWake, supportsOnDeviceRecognition: true)
+        try SpeechRequestPolicy.configure(
+            request,
+            mode: .passiveWake,
+            supportsOnDeviceRecognition: true,
+            contextualStrings: ["computer", "sneek"])
 
         #expect(request.requiresOnDeviceRecognition)
         #expect(request.shouldReportPartialResults)
+        #expect(request.contextualStrings == ["computer", "sneek"])
     }
 
     @Test func configure_WhenPushToTalk_AllowsRecognizerDefault() throws {

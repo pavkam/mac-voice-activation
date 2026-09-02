@@ -13,7 +13,8 @@ enum SpeechRequestPolicy {
     static func configure(
         _ request: SFSpeechAudioBufferRecognitionRequest,
         mode: SpeechSessionMode,
-        supportsOnDeviceRecognition: Bool) throws
+        supportsOnDeviceRecognition: Bool,
+        contextualStrings: [String] = []) throws
     {
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
@@ -24,6 +25,7 @@ enum SpeechRequestPolicy {
                 throw PolicyError.onDeviceRecognitionUnavailable
             }
             request.requiresOnDeviceRecognition = true
+            request.contextualStrings = contextualStrings
         case .commandCapture, .pushToTalk:
             request.requiresOnDeviceRecognition = false
         }

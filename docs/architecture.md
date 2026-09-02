@@ -74,7 +74,9 @@ cancel immediately in passive command capture or push-to-talk.
 
 `WakePhraseMatcher` checks every saved profile and chooses the longest matching
 phrase. The profile owns its URL template and accent color. Push-to-talk selects
-the first saved profile.
+the first saved profile. Passive recognition supplies every saved phrase to
+Apple Speech as contextual vocabulary so uncommon names and intentional
+spellings are not treated as ordinary dictation.
 
 ## Command execution
 
