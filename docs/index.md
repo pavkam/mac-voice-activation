@@ -19,6 +19,7 @@ executable without passing speech through a shell.
 - Passive listening is enabled by default and uses on-device recognition.
 - The default wake phrase is `computer`.
 - Control-Option-Space provides push-to-talk without a wake phrase.
+- Launch at Login registers the app through macOS Service Management.
 - Spoken text is inserted into explicit process arguments through `{text}` or
   `{urlText}` placeholders.
 - The app has no Dock icon, server, account, audio archive, or shell-evaluation

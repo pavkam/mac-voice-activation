@@ -8,7 +8,8 @@ and framework adapters.
 - `VoiceActivationCore` owns wake matching, state transitions, command
   templates, process execution, and preferences.
 - `VoiceActivationApp` owns the SwiftUI menu and Settings window, Apple speech
-  capture, privacy requests, and Carbon global shortcut.
+  capture, privacy requests, Carbon global shortcut, and Service Management
+  login-item registration.
 - `VoiceActivationCoreTests` covers pure coordinator, matcher, template,
   runner, and preference behavior.
 - `VoiceActivationAppTests` covers macOS adapter policies, audio callback
@@ -78,6 +79,8 @@ non-zero exit status as an error. No shell parses the transcript.
   session is stopped.
 - Command execution runs asynchronously and returns to passive listening after
   a short cooldown.
+- `LaunchAtLoginSetting` reads and changes `SMAppService.mainApp` registration;
+  macOS remains the source of truth instead of a duplicated preference.
 
 ## Privacy boundary
 

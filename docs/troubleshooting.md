@@ -55,6 +55,16 @@ The shortcut is Control-Option-Space. Another application may have registered
 the same global shortcut first; remove that conflict and relaunch Voice
 Activation. Keep the keys held while speaking and release them to submit.
 
+## Launch at Login cannot be enabled
+
+- Move Voice Activation to `/Applications` and launch that copy before enabling
+  the option. Do not register the temporary bundle under `.build`.
+- Confirm the app bundle is code-signed with `codesign --verify --deep --strict`.
+- Open **System Settings › General › Login Items** and allow Voice Activation if
+  macOS says approval is required.
+- Return to Voice Activation Settings and toggle the option again. Registration
+  errors appear directly below the toggle.
+
 ## macOS asks for privacy access after every rebuild
 
 The default development build is ad-hoc signed. Its identity changes when the

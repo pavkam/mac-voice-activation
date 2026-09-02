@@ -59,6 +59,10 @@ timings to cover:
 - stale callback rejection; and
 - command execution and passive-listening resumption.
 
+App adapter tests use an injected login-item service to verify successful and
+failed Service Management registration without changing the developer Mac's
+real login items.
+
 Run one suite while iterating:
 
 ```bash

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var model: AppModel
+    @State private var launchAtLogin = LaunchAtLoginSetting()
     @State private var saved = false
 
     var body: some View {
@@ -10,6 +11,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     voiceSection
+                    startupSection
                     commandSection
                     privacyNote
                 }
@@ -52,6 +54,39 @@ struct SettingsView: View {
                 .padding(.horizontal, 11)
                 .padding(.vertical, 7)
                 .background(statusColor.opacity(0.12), in: Capsule())
+        }
+    }
+
+    private var startupSection: some View {
+        SettingsCard(
+            title: "Startup",
+            subtitle: "Keep Voice Activation ready after you sign in.",
+            systemImage: "power")
+        {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Launch at Login")
+                        .fontWeight(.medium)
+                    Text("Managed by macOS in System Settings › General › Login Items.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { launchAtLogin.isEnabled },
+                        set: { launchAtLogin.setEnabled($0) }))
+                    .labelsHidden()
+            }
+
+            if let error = launchAtLogin.errorMessage {
+                Label(error, systemImage: "exclamationmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
     }
 

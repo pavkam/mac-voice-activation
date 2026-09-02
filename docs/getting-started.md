@@ -70,7 +70,8 @@ again after the executable changes. To sign with an installed identity:
 SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
 ```
 
-For regular use, move the completed app bundle to Applications in Finder and
-launch that stable copy instead of rebuilding it in place.
+For regular use, move the completed app bundle to `/Applications` in Finder and
+launch that stable copy instead of rebuilding it in place. You can then enable
+**Launch at Login** in Settings without registering a disposable build path.
 
 Next: [configure commands and wake behavior](configuration.md).

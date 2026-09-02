@@ -22,6 +22,17 @@ Passive recognition fails closed when the selected locale does not support
 on-device recognition. Command capture and push-to-talk may use Apple's speech
 service when on-device recognition is unavailable.
 
+## Startup
+
+Enable **Launch at Login** to register the current app bundle as a macOS login
+item. The change applies immediately and does not depend on **Save Settings**.
+
+macOS remains the source of truth for this option. You can also inspect or
+change it under **System Settings › General › Login Items**. Install a stable,
+signed copy of Voice Activation in `/Applications` before enabling it; a login
+item that points into `.build` will stop working when that bundle is replaced
+or removed.
+
 ## Command settings
 
 The executable must be an absolute path to a runnable file. Each non-empty line

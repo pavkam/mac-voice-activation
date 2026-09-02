@@ -40,7 +40,7 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   recognition finalizes or the transcript remains unchanged for 1.5 seconds.
 - Hold **Control-Option-Space**, speak without a wake phrase, then release.
 - Open **Settings…** from the menu to change the wake phrase, locale,
-  executable, and argument templates.
+  executable, argument templates, and whether the app launches at login.
 
 Passive listening requires on-device recognition for the selected locale and
 fails closed if the Mac does not support it. Push-to-talk may use Apple's speech
