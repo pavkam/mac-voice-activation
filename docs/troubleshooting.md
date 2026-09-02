@@ -17,7 +17,7 @@
 
 ## The status remains Disabled
 
-Open the menu and enable **Listen for “computer”**. On first use, complete both
+Open the menu and enable listening. On first use, complete both
 the Microphone and Speech Recognition privacy prompts. If they were previously
 denied, enable them in System Settings, then quit and relaunch the app.
 
@@ -30,7 +30,7 @@ to a service.
 
 ## Capture ends without running a command
 
-- Begin with the wake phrase; text before it does not match.
+- Begin with one of the saved wake phrases; text before it does not match.
 - Speak after the status changes to **Capturing**. You may pause after the wake
   phrase; the dedicated command listener remains active for five seconds before
   timing out.
@@ -57,13 +57,20 @@ to a service.
 
 Check Settings for these validation requirements:
 
-- The executable path is absolute, exists, and is executable.
-- At least one argument contains `{text}` or `{urlText}`.
-- Every intended process argument occupies its own line.
+- At least one wake profile exists.
+- Every wake phrase is non-empty and unique.
+- Every profile URL contains `{text}` or `{urlText}`.
 
 A non-zero process exit becomes a visible error. Standard output and standard
-error are intentionally discarded, so test a new command in Terminal before
-putting it into Settings.
+error are intentionally discarded, so test a new URL with `open` in Terminal
+before putting it into Settings.
+
+## Capture sounds do not play
+
+Voice Activation uses macOS system sounds and obeys the current output volume.
+Confirm the Mac is not muted and that alert volume is audible in System Settings.
+The start cue plays only when capture begins; the end cue plays for submission,
+cancellation, timeout, and capture errors.
 
 ## Push-to-talk does not react
 

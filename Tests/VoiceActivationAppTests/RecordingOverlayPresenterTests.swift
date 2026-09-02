@@ -4,12 +4,12 @@ import VoiceActivationCore
 
 @MainActor
 private final class RecordingOverlayDisplaySpy: RecordingOverlayDisplaying {
-    private(set) var shownTranscripts: [String] = []
+    private(set) var shownValues: [(String, WakeProfileAccent)] = []
     private(set) var hideCount = 0
     var onCancel: (() -> Void)?
 
-    func show(transcript: String) {
-        shownTranscripts.append(transcript)
+    func show(transcript: String, accent: WakeProfileAccent) {
+        shownValues.append((transcript, accent))
     }
 
     func hide() {
@@ -28,9 +28,10 @@ struct RecordingOverlayPresenterTests {
         let display = RecordingOverlayDisplaySpy()
         let presenter = RecordingOverlayPresenter(display: display)
 
-        presenter.update(state: .capturing, transcript: "open calendar")
+        presenter.update(state: .capturing, transcript: "open calendar", accent: .purple)
 
-        #expect(display.shownTranscripts == ["open calendar"])
+        #expect(display.shownValues.first?.0 == "open calendar")
+        #expect(display.shownValues.first?.1 == .purple)
         #expect(display.hideCount == 0)
     }
 
@@ -60,9 +61,9 @@ struct RecordingOverlayPresenterTests {
         let display = RecordingOverlayDisplaySpy()
         let presenter = RecordingOverlayPresenter(display: display)
 
-        presenter.update(state: state, transcript: "ignored")
+        presenter.update(state: state, transcript: "ignored", accent: .blue)
 
-        #expect(display.shownTranscripts.isEmpty)
+        #expect(display.shownValues.isEmpty)
         #expect(display.hideCount == 1)
     }
 }

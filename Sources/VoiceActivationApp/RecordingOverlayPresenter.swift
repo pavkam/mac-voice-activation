@@ -4,7 +4,7 @@ import VoiceActivationCore
 protocol RecordingOverlayDisplaying: AnyObject {
     var onCancel: (() -> Void)? { get set }
 
-    func show(transcript: String)
+    func show(transcript: String, accent: WakeProfileAccent)
     func hide()
 }
 
@@ -20,9 +20,13 @@ final class RecordingOverlayPresenter {
         }
     }
 
-    func update(state: ActivationState, transcript: String) {
+    func update(
+        state: ActivationState,
+        transcript: String,
+        accent: WakeProfileAccent = .blue)
+    {
         if state == .capturing {
-            display.show(transcript: transcript)
+            display.show(transcript: transcript, accent: accent)
         } else {
             display.hide()
         }

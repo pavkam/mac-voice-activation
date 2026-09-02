@@ -68,9 +68,9 @@ struct RecordingOverlayView: View {
             .overlay {
                 LinearGradient(
                     colors: [
-                        .cyan.opacity(0.16),
-                        .blue.opacity(0.12),
-                        .purple.opacity(0.16),
+                        accentColor.opacity(0.18),
+                        accentColor.opacity(0.08),
+                        accentHighlight.opacity(0.16),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing)
@@ -80,7 +80,7 @@ struct RecordingOverlayView: View {
                 RoundedRectangle(cornerRadius: 32, style: .continuous)
                     .stroke(
                         LinearGradient(
-                            colors: [.white.opacity(0.5), .blue.opacity(0.2)],
+                            colors: [.white.opacity(0.5), accentColor.opacity(0.28)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing),
                         lineWidth: 1)
@@ -94,13 +94,13 @@ struct RecordingOverlayView: View {
 
             Circle()
                 .fill(AngularGradient(
-                    colors: [.cyan, .blue, .indigo, .purple, .cyan],
+                    colors: [accentColor, accentHighlight, accentColor.opacity(0.75), accentColor],
                     center: .center))
                 .padding(5)
-                .shadow(color: .blue.opacity(0.42), radius: 10)
+                .shadow(color: accentColor.opacity(0.46), radius: 10)
 
             Circle()
-                .stroke(.cyan.opacity(0.42), lineWidth: 3)
+                .stroke(accentColor.opacity(0.5), lineWidth: 3)
                 .scaleEffect(model.isRecording ? 1.14 : 0.88)
                 .opacity(model.isRecording ? 0.05 : 0.7)
                 .animation(
@@ -118,6 +118,21 @@ struct RecordingOverlayView: View {
                     isActive: model.isRecording)
         }
         .frame(width: size, height: size)
+    }
+
+    private var accentColor: Color {
+        model.accent.swiftUIColor
+    }
+
+    private var accentHighlight: Color {
+        switch model.accent {
+        case .cyan: .blue
+        case .blue: .indigo
+        case .purple: .pink
+        case .pink: .purple
+        case .orange: .pink
+        case .green: .cyan
+        }
     }
 
     private var cancelButton: some View {

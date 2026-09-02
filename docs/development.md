@@ -51,7 +51,7 @@ Tests use Swift Testing and are split at the production-module boundary. The
 coordinator suite uses a deterministic speech-session fake and short injected
 timings to cover:
 
-- wake and command transitions;
+- multi-profile wake matching, routing, and command transitions;
 - paused and continuous speech;
 - inactivity and maximum capture timeouts;
 - push-to-talk preemption;
@@ -64,7 +64,9 @@ failed Service Management registration without changing the developer Mac's
 real login items.
 
 Overlay tests keep the AppKit window behind a display boundary and verify that
-capturing shows partial text while every non-capturing state hides the panel.
+capturing shows partial text and the selected accent while every non-capturing
+state hides the panel. Sound-presenter tests prove exactly one cue per capture
+edge.
 Coordinator tests separately prove live text publication for wake and
 push-to-talk capture.
 

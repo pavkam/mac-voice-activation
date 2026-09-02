@@ -4,6 +4,7 @@ public final class AppPreferences {
     private enum Key {
         static let passiveEnabled = "passiveEnabled"
         static let wakePhrase = "wakePhrase"
+        static let wakeProfiles = "wakeProfiles"
         static let localeID = "localeID"
         static let pushToTalkKeyCode = "pushToTalkKeyCode"
         static let pushToTalkModifiers = "pushToTalkModifiers"
@@ -30,6 +31,25 @@ public final class AppPreferences {
     public var wakePhrase: String {
         get { normalized(defaults.string(forKey: Key.wakePhrase), fallback: "computer") }
         set { defaults.set(normalized(newValue, fallback: "computer"), forKey: Key.wakePhrase) }
+    }
+
+    public var wakeProfiles: [WakeProfile] {
+        get {
+            guard
+                let data = defaults.data(forKey: Key.wakeProfiles),
+                let profiles = try? JSONDecoder().decode([WakeProfile].self, from: data),
+                !profiles.isEmpty
+            else {
+                return [legacyWakeProfile()]
+            }
+            return profiles
+        }
+        set {
+            let profiles = newValue.isEmpty ? [WakeProfile.defaultValue] : newValue
+            if let data = try? JSONEncoder().encode(profiles) {
+                defaults.set(data, forKey: Key.wakeProfiles)
+            }
+        }
     }
 
     public var localeID: String {
@@ -76,5 +96,14 @@ public final class AppPreferences {
     private func normalized(_ value: String?, fallback: String) -> String {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    private func legacyWakeProfile() -> WakeProfile {
+        (try? WakeProfile(
+            id: WakeProfile.defaultValue.id,
+            wakePhrase: wakePhrase,
+            executablePath: executablePath,
+            argumentTemplates: argumentTemplates,
+            accent: .blue)) ?? .defaultValue
     }
 }

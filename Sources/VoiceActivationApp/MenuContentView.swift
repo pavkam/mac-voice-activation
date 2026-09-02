@@ -15,7 +15,7 @@ struct MenuContentView: View {
         Divider()
 
         Toggle(
-            "Listen for “\(model.wakePhrase)”",
+            "Listen for \(model.activeWakeProfiles.count) wake phrase\(model.activeWakeProfiles.count == 1 ? "" : "s")",
             isOn: Binding(
                 get: { model.passiveEnabled },
                 set: { model.setPassiveEnabled($0) }))

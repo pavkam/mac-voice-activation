@@ -59,6 +59,9 @@ The default configuration opens a Google search:
 4. Stop speaking; the overlay closes and the command is submitted when
    recognition finalizes or the transcript is unchanged for 1.5 seconds.
 
+A short start sound confirms that capture began. A different end sound confirms
+that capture stopped, whether it submits, times out, or is cancelled.
+
 Click the close button on the recording orb or choose **Cancel Recording** from
 the menu to discard the current capture without running its command.
 You can also say only `cancel`, `stop`, or `dismiss`. Repeat the same word twice
@@ -82,4 +85,4 @@ For regular use, move the completed app bundle to `/Applications` in Finder and
 launch that stable copy instead of rebuilding it in place. You can then enable
 **Launch at Login** in Settings without registering a disposable build path.
 
-Next: [configure commands and wake behavior](configuration.md).
+Next: [configure wake profiles and capture behavior](configuration.md).

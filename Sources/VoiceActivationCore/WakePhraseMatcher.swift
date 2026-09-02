@@ -1,6 +1,11 @@
 import Foundation
 
 public enum WakePhraseMatcher {
+    public struct Match: Equatable, Sendable {
+        public let profile: WakeProfile
+        public let command: String
+    }
+
     private static let leadingAndTrailing = CharacterSet.whitespacesAndNewlines
         .union(.punctuationCharacters)
         .union(.symbols)
@@ -25,5 +30,17 @@ public enum WakePhraseMatcher {
 
         return String(spoken[range.upperBound...])
             .trimmingCharacters(in: leadingAndTrailing)
+    }
+
+    public static func match(in transcript: String, profiles: [WakeProfile]) -> Match? {
+        profiles
+            .sorted { $0.wakePhrase.count > $1.wakePhrase.count }
+            .lazy
+            .compactMap { profile in
+                command(in: transcript, wakePhrase: profile.wakePhrase).map {
+                    Match(profile: profile, command: $0)
+                }
+            }
+            .first
     }
 }

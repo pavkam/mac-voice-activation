@@ -10,6 +10,7 @@ struct AppPreferencesTests {
         let preferences = AppPreferences(defaults: defaults)
 
         #expect(preferences.passiveEnabled)
+        #expect(preferences.wakeProfiles == [.defaultValue])
         #expect(preferences.wakePhrase == "computer")
         #expect(preferences.pushToTalkHotKey == .defaultValue)
         #expect(preferences.executablePath == "/usr/bin/open")
@@ -22,6 +23,12 @@ struct AppPreferencesTests {
         defaults.removePersistentDomain(forName: suite)
         let writer = AppPreferences(defaults: defaults)
         writer.passiveEnabled = true
+        writer.wakeProfiles = [
+            try WakeProfile(
+                wakePhrase: "assistant",
+                urlTemplate: "https://example.com?q={urlText}",
+                accent: .orange),
+        ]
         writer.wakePhrase = "  hey mac  "
         writer.localeID = "en-GB"
         writer.pushToTalkHotKey = try PushToTalkHotKey(
@@ -38,6 +45,7 @@ struct AppPreferencesTests {
             keyLabel: "K")
 
         #expect(reader.passiveEnabled)
+        #expect(reader.wakeProfiles == writer.wakeProfiles)
         #expect(reader.wakePhrase == "hey mac")
         #expect(reader.localeID == "en-GB")
         #expect(reader.pushToTalkHotKey == expectedHotKey)

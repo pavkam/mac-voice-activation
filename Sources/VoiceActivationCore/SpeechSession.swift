@@ -30,13 +30,22 @@ public protocol SpeechSessionProtocol: AnyObject {
 }
 
 public struct ActivationConfiguration: Equatable, Sendable {
-    public let wakePhrase: String
+    public let profiles: [WakeProfile]
     public let localeID: String
-    public let commandTemplate: CommandTemplate
+
+    public init(profiles: [WakeProfile], localeID: String) {
+        self.profiles = profiles.isEmpty ? [.defaultValue] : profiles
+        self.localeID = localeID
+    }
 
     public init(wakePhrase: String, localeID: String, commandTemplate: CommandTemplate) {
-        self.wakePhrase = wakePhrase
+        let normalizedPhrase = wakePhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        profiles = [try! WakeProfile(
+            id: WakeProfile.defaultValue.id,
+            wakePhrase: normalizedPhrase.isEmpty ? "computer" : normalizedPhrase,
+            executablePath: commandTemplate.executablePath,
+            argumentTemplates: commandTemplate.argumentTemplates,
+            accent: .blue)]
         self.localeID = localeID
-        self.commandTemplate = commandTemplate
     }
 }

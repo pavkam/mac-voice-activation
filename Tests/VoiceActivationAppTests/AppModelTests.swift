@@ -25,7 +25,7 @@ private final class ShortcutSpy: PushToTalkShortcutManaging {
 private final class AppModelOverlayStub: RecordingOverlayDisplaying {
     var onCancel: (() -> Void)?
 
-    func show(transcript: String) {}
+    func show(transcript: String, accent: WakeProfileAccent) {}
     func hide() {}
 }
 
@@ -61,14 +61,14 @@ struct AppModelTests {
         #expect(fixture.shortcut.startedHotKeys == [draft])
     }
 
-    @MainActor @Test func saveSettings_WhenCommandIsInvalid_DoesNotApplyHotKey() throws {
+    @MainActor @Test func saveSettings_WhenProfileIsInvalid_DoesNotApplyHotKey() throws {
         let fixture = try Fixture()
         let draft = try PushToTalkHotKey(
             keyCode: 40,
             modifiers: [.command, .shift],
             keyLabel: "K")
         fixture.model.setPushToTalkHotKey(draft)
-        fixture.model.executablePath = "relative-command"
+        fixture.model.wakeProfiles[0].urlTemplate = "https://example.com/static"
 
         let saved = fixture.model.saveSettings()
 
@@ -76,6 +76,28 @@ struct AppModelTests {
         #expect(fixture.model.activePushToTalkHotKey == .defaultValue)
         #expect(fixture.preferences.pushToTalkHotKey == .defaultValue)
         #expect(fixture.shortcut.startedHotKeys.isEmpty)
+    }
+
+    @MainActor @Test func saveSettings_WhenProfilesAreValid_PersistsEveryProfile() throws {
+        let fixture = try Fixture()
+        fixture.model.wakeProfiles = [
+            WakeProfileDraft(
+                wakePhrase: "search",
+                urlTemplate: "https://search.example/?q={urlText}",
+                accent: .cyan),
+            WakeProfileDraft(
+                wakePhrase: "ask assistant",
+                urlTemplate: "https://assistant.example/?prompt={urlText}",
+                accent: .purple),
+        ]
+
+        let saved = fixture.model.saveSettings()
+
+        #expect(saved)
+        #expect(fixture.preferences.wakeProfiles.map(\.wakePhrase) == [
+            "search", "ask assistant",
+        ])
+        #expect(fixture.model.activeWakeProfiles.map(\.accent) == [.cyan, .purple])
     }
 
     @MainActor @Test func shortcutRecording_WhenDraftIsNotSaved_RestoresActiveHotKey() throws {

@@ -16,10 +16,14 @@ public final class VoiceActivationCoordinator {
     public private(set) var currentTranscript = "" {
         didSet { onCurrentTranscriptChange?(currentTranscript) }
     }
+    public private(set) var activeProfile: WakeProfile? {
+        didSet { onActiveProfileChange?(activeProfile) }
+    }
 
     public var onStateChange: ((ActivationState) -> Void)?
     public var onTranscriptChange: ((String) -> Void)?
     public var onCurrentTranscriptChange: ((String) -> Void)?
+    public var onActiveProfileChange: ((WakeProfile?) -> Void)?
 
     private let speechSession: any SpeechSessionProtocol
     private let commandRunner: any CommandRunning
@@ -86,6 +90,7 @@ public final class VoiceActivationCoordinator {
 
         do {
             let config = try configuration()
+            activeProfile = config.profiles.first
             startSession(mode: .pushToTalk, localeID: config.localeID)
         } catch {
             state = .failed(error.localizedDescription)
@@ -132,6 +137,7 @@ public final class VoiceActivationCoordinator {
         stopActiveSession()
         capturedCommand = ""
         currentTranscript = ""
+        activeProfile = nil
 
         do {
             let config = try configuration()
@@ -219,9 +225,9 @@ public final class VoiceActivationCoordinator {
             return
         }
 
-        guard let command = WakePhraseMatcher.command(
+        guard let match = WakePhraseMatcher.match(
             in: update.transcript,
-            wakePhrase: config.wakePhrase)
+            profiles: config.profiles)
         else {
             if wakeHandoffTask != nil {
                 cancelWakeHandoff()
@@ -231,16 +237,17 @@ public final class VoiceActivationCoordinator {
             return
         }
 
-        capturedCommand = command
-        currentTranscript = command
+        activeProfile = match.profile
+        capturedCommand = match.command
+        currentTranscript = match.command
         state = .capturing
 
-        if CaptureCancellationMatcher.matches(command, isComplete: update.isFinal) {
+        if CaptureCancellationMatcher.matches(match.command, isComplete: update.isFinal) {
             cancelCapture()
             return
         }
 
-        guard !command.isEmpty else {
+        guard !match.command.isEmpty else {
             if update.isFinal {
                 startCommandCapture(localeID: config.localeID)
             } else {
@@ -392,7 +399,11 @@ public final class VoiceActivationCoordinator {
     private func execute(_ transcript: String) {
         let template: CommandTemplate
         do {
-            template = try configuration().commandTemplate
+            if let activeProfile {
+                template = try activeProfile.commandTemplate
+            } else {
+                template = try configuration().profiles[0].commandTemplate
+            }
         } catch {
             state = .failed(error.localizedDescription)
             resumePassiveAfterCooldown()

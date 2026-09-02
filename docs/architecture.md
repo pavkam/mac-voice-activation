@@ -18,8 +18,9 @@ and framework adapters.
 `AppModel` is the main-actor bridge between SwiftUI and
 `VoiceActivationCoordinator`. The coordinator owns exactly one active speech
 session and invalidates callbacks from retired sessions with a generation
-identifier. It publishes the current command transcription separately from the
-last command so UI can show partial words without changing command history.
+identifier. It carries the matched `WakeProfile` through capture so command
+routing and overlay color cannot drift apart, and publishes current command
+text separately from command history.
 
 ## State flow
 
@@ -58,7 +59,7 @@ command`, or an error message.
   The prior registration remains active until that save succeeds and is restored
   if the requested combination is unavailable.
 
-When the wake phrase and command arrive in one transcription, the coordinator
+When a wake phrase and command arrive in one transcription, the coordinator
 uses the remaining text immediately. When the wake phrase is recognized alone,
 it starts a dedicated command session so pausing after `computer` does not
 discard the next utterance. A partial result containing only the wake phrase
@@ -71,9 +72,14 @@ words. A lone word cancels only at a completion boundary so a partial `stop`
 can still grow into `stop the music`. Two adjacent copies of the same word
 cancel immediately in passive command capture or push-to-talk.
 
+`WakePhraseMatcher` checks every saved profile and chooses the longest matching
+phrase. The profile owns its URL template and accent color. Push-to-talk selects
+the first saved profile.
+
 ## Command execution
 
-`CommandTemplate` validates two invariants before settings are saved:
+Each profile constructs a `CommandTemplate` that validates two invariants before
+settings are saved:
 
 1. The executable path is absolute.
 2. At least one argument contains `{text}` or `{urlText}`.
@@ -106,9 +112,11 @@ non-zero exit status as an error. No shell parses the transcript.
   spaces, does not activate the app, and follows the screen containing the
   pointer. The panel frame matches the visible surface exactly and animates
   between bottom-centered compact and expanded geometry. A single retained
-  SwiftUI hierarchy interpolates the microphone, capsule, transcript, and
-  cancel control instead of swapping complete views. The panel accepts pointer
-  input only so its cancel control can abort capture.
+    SwiftUI hierarchy interpolates the microphone, capsule, transcript, and
+  cancel control instead of swapping complete views. Its gradients derive from
+  the active profile. `CaptureSoundPresenter` observes state edges and plays one
+  cue on entry to capture and another on exit. The panel accepts pointer input
+  only so its cancel control can abort capture.
 
 ## Privacy boundary
 

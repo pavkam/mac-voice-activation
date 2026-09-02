@@ -1,4 +1,5 @@
 import SwiftUI
+import VoiceActivationCore
 
 struct SettingsView: View {
     @Bindable var model: AppModel
@@ -12,7 +13,6 @@ struct SettingsView: View {
                     header
                     voiceSection
                     startupSection
-                    commandSection
                     privacyNote
                 }
                 .padding(28)
@@ -24,13 +24,11 @@ struct SettingsView: View {
                 .padding(.vertical, 16)
                 .background(.bar)
         }
-        .frame(width: 680, height: 610)
+        .frame(width: 720, height: 680)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: model.wakePhrase) { saved = false }
+        .onChange(of: model.wakeProfiles) { saved = false }
         .onChange(of: model.localeID) { saved = false }
         .onChange(of: model.pushToTalkHotKey) { saved = false }
-        .onChange(of: model.executablePath) { saved = false }
-        .onChange(of: model.argumentTemplatesText) { saved = false }
     }
 
     private var header: some View {
@@ -97,17 +95,33 @@ struct SettingsView: View {
             subtitle: "Choose what starts listening and how speech is recognized.",
             systemImage: "ear.badge.waveform")
         {
-            HStack(alignment: .top, spacing: 14) {
-                settingsField("Wake phrase", hint: "computer", text: $model.wakePhrase)
-                settingsField("Speech locale", hint: "en-US", text: $model.localeID)
-                    .frame(width: 170)
+            settingsField("Speech locale", hint: "en-US", text: $model.localeID)
+                .frame(width: 170)
+
+            Divider()
+
+            VStack(spacing: 12) {
+                ForEach($model.wakeProfiles) { $profile in
+                    wakeProfileEditor(profile: $profile)
+                }
+
+                Button {
+                    model.wakeProfiles.append(WakeProfileDraft(
+                        wakePhrase: "",
+                        urlTemplate: "https://www.google.com/search?q={urlText}",
+                        accent: nextAccent))
+                } label: {
+                    Label("Add wake profile", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Divider()
 
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Always listen for the wake phrase")
+                    Text("Always listen for wake phrases")
                         .fontWeight(.medium)
                     Text("Recognition stays on-device while passive listening is enabled.")
                         .font(.caption)
@@ -132,47 +146,6 @@ struct SettingsView: View {
                     hotKey: model.pushToTalkHotKey,
                     onChange: model.setPushToTalkHotKey,
                     onRecordingChange: model.setPushToTalkShortcutRecording)
-            }
-        }
-    }
-
-    private var commandSection: some View {
-        SettingsCard(
-            title: "Command",
-            subtitle: "The executable runs once a phrase has been captured.",
-            systemImage: "terminal")
-        {
-            settingsField(
-                "Executable",
-                hint: "/usr/bin/open",
-                text: $model.executablePath,
-                monospaced: true)
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Arguments")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                TextEditor(text: $model.argumentTemplatesText)
-                    .font(.system(.body, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .padding(7)
-                    .frame(minHeight: 82)
-                    .background(.background, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(.separator, lineWidth: 1)
-                    }
-
-                HStack(spacing: 6) {
-                    templateToken("{text}")
-                    Text("literal speech")
-                    Text("•")
-                    templateToken("{urlText}")
-                    Text("URL-encoded speech")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
         }
     }
@@ -246,6 +219,75 @@ struct SettingsView: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func wakeProfileEditor(profile: Binding<WakeProfileDraft>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(profile.wrappedValue.accent.swiftUIColor)
+                    .frame(width: 12, height: 12)
+                    .shadow(color: profile.wrappedValue.accent.swiftUIColor.opacity(0.5), radius: 4)
+
+                TextField("Wake phrase", text: profile.wakePhrase)
+                    .textFieldStyle(.roundedBorder)
+
+                Picker("Color", selection: profile.accent) {
+                    ForEach(WakeProfileAccent.allCases, id: \.self) { accent in
+                        Label(accent.displayName, systemImage: "circle.fill")
+                            .foregroundStyle(accent.swiftUIColor)
+                            .tag(accent)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 110)
+
+                Button(role: .destructive) {
+                    model.wakeProfiles.removeAll { $0.id == profile.wrappedValue.id }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.wakeProfiles.count == 1)
+                .help("Remove wake profile")
+            }
+
+            TextField("URL containing {urlText}", text: profile.urlTemplate)
+                .font(.system(.body, design: .monospaced))
+                .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: 6) {
+                templateToken("{urlText}")
+                Text("inserts URL-encoded speech")
+                Text("•")
+                templateToken("{text}")
+                Text("inserts literal speech")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(13)
+        .background(.background.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var nextAccent: WakeProfileAccent {
+        let accents = WakeProfileAccent.allCases
+        return accents[model.wakeProfiles.count % accents.count]
+    }
+}
+
+extension WakeProfileAccent {
+    var displayName: String { rawValue.capitalized }
+
+    var swiftUIColor: Color {
+        switch self {
+        case .cyan: .cyan
+        case .blue: .blue
+        case .purple: .purple
+        case .pink: .pink
+        case .orange: .orange
+        case .green: .green
+        }
     }
 }
 

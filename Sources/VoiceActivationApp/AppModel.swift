@@ -9,22 +9,23 @@ final class AppModel {
     var lastTranscript = ""
     var currentTranscript = ""
     var passiveEnabled: Bool
-    var wakePhrase: String
+    var wakeProfiles: [WakeProfileDraft]
+    private(set) var activeWakeProfiles: [WakeProfile]
     var localeID: String
     var pushToTalkHotKey: PushToTalkHotKey
     private(set) var activePushToTalkHotKey: PushToTalkHotKey
-    var executablePath: String
-    var argumentTemplatesText: String
     var settingsError: String?
 
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let speechSession: AppleSpeechSession
     @ObservationIgnored private let shortcut: any PushToTalkShortcutManaging
     @ObservationIgnored private let overlayPresenter: RecordingOverlayPresenter
+    @ObservationIgnored private let soundPresenter: CaptureSoundPresenter
     @ObservationIgnored private var started = false
     @ObservationIgnored private var permissionGranted = false
     @ObservationIgnored private var hotkeyHeld = false
     @ObservationIgnored private var recordingShortcut = false
+    @ObservationIgnored private var activeProfile: WakeProfile?
     @ObservationIgnored private lazy var coordinator = VoiceActivationCoordinator(
         speechSession: speechSession,
         commandRunner: CommandRunner(),
@@ -37,19 +38,20 @@ final class AppModel {
         preferences: AppPreferences = AppPreferences(),
         recordingOverlay: any RecordingOverlayDisplaying = RecordingOverlayController(),
         shortcut: any PushToTalkShortcutManaging = PushToTalkShortcut(),
+        soundPlayer: any CaptureSoundPlaying = SystemCaptureSoundPlayer(),
         startsAutomatically: Bool = true)
     {
         self.preferences = preferences
         self.shortcut = shortcut
         speechSession = AppleSpeechSession()
         overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
+        soundPresenter = CaptureSoundPresenter(player: soundPlayer)
         passiveEnabled = preferences.passiveEnabled
-        wakePhrase = preferences.wakePhrase
+        activeWakeProfiles = preferences.wakeProfiles
+        wakeProfiles = preferences.wakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
         pushToTalkHotKey = preferences.pushToTalkHotKey
         activePushToTalkHotKey = preferences.pushToTalkHotKey
-        executablePath = preferences.executablePath
-        argumentTemplatesText = preferences.argumentTemplates.joined(separator: "\n")
         overlayPresenter.onCancel = { [weak self] in
             self?.cancelCapture()
         }
@@ -76,11 +78,16 @@ final class AppModel {
 
     @discardableResult
     func saveSettings() -> Bool {
-        let arguments = parsedArgumentTemplates()
+        let profiles: [WakeProfile]
         do {
-            _ = try CommandTemplate(
-                executablePath: executablePath.trimmingCharacters(in: .whitespacesAndNewlines),
-                argumentTemplates: arguments)
+            guard !wakeProfiles.isEmpty else { throw ModelError.profileRequired }
+            profiles = try wakeProfiles.map { try $0.validatedProfile() }
+            let phrases = profiles.map { $0.wakePhrase.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current) }
+            guard Set(phrases).count == phrases.count else {
+                throw ModelError.duplicateWakePhrase
+            }
         } catch {
             settingsError = error.localizedDescription
             return false
@@ -94,16 +101,13 @@ final class AppModel {
             return false
         }
 
-        preferences.wakePhrase = wakePhrase
+        preferences.wakeProfiles = profiles
         preferences.localeID = localeID
         preferences.pushToTalkHotKey = pushToTalkHotKey
-        preferences.executablePath = executablePath
-        preferences.argumentTemplates = arguments
-        wakePhrase = preferences.wakePhrase
+        activeWakeProfiles = preferences.wakeProfiles
+        wakeProfiles = activeWakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
         activePushToTalkHotKey = preferences.pushToTalkHotKey
-        executablePath = preferences.executablePath
-        argumentTemplatesText = arguments.joined(separator: "\n")
         settingsError = nil
         coordinator.refreshConfiguration()
         return true
@@ -141,11 +145,16 @@ final class AppModel {
         started = true
         coordinator.onStateChange = { [weak self] in
             self?.state = $0
+            self?.soundPresenter.update(state: $0)
             self?.updateRecordingOverlay()
         }
         coordinator.onTranscriptChange = { [weak self] in self?.lastTranscript = $0 }
         coordinator.onCurrentTranscriptChange = { [weak self] in
             self?.currentTranscript = $0
+            self?.updateRecordingOverlay()
+        }
+        coordinator.onActiveProfileChange = { [weak self] in
+            self?.activeProfile = $0
             self?.updateRecordingOverlay()
         }
         do {
@@ -199,24 +208,31 @@ final class AppModel {
 
     private func savedConfiguration() throws -> ActivationConfiguration {
         ActivationConfiguration(
-            wakePhrase: preferences.wakePhrase,
-            localeID: preferences.localeID,
-            commandTemplate: try CommandTemplate(
-                executablePath: preferences.executablePath,
-                argumentTemplates: preferences.argumentTemplates))
-    }
-
-    private func parsedArgumentTemplates() -> [String] {
-        argumentTemplatesText
-            .components(separatedBy: .newlines)
-            .filter { !$0.isEmpty }
+            profiles: preferences.wakeProfiles,
+            localeID: preferences.localeID)
     }
 
     private func updateRecordingOverlay() {
-        overlayPresenter.update(state: state, transcript: currentTranscript)
+        overlayPresenter.update(
+            state: state,
+            transcript: currentTranscript,
+            accent: activeProfile?.accent ?? activeWakeProfiles.first?.accent ?? .blue)
     }
 
-    private enum ModelError: Error {
+    private enum ModelError: Error, LocalizedError {
         case unavailable
+        case profileRequired
+        case duplicateWakePhrase
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                "Voice Activation is unavailable."
+            case .profileRequired:
+                "Add at least one wake profile."
+            case .duplicateWakePhrase:
+                "Wake phrases must be unique."
+            }
+        }
     }
 }

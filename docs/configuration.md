@@ -1,18 +1,19 @@
 # Configuration
 
-Open the menu-bar item and choose **Settings…**. Voice, command, and push-to-talk
-shortcut changes take effect after you select **Save Settings**. Startup changes
-apply immediately.
+Open the menu-bar item and choose **Settings…**. Wake-profile, locale, and
+push-to-talk changes take effect after you select **Save Settings**. Startup
+changes apply immediately.
 
 ## Voice settings
 
-- **Wake phrase:** defaults to `computer` and must occur at the beginning of
-  the recognized utterance. Matching ignores case, accents, and character
-  width.
+- **Wake profiles:** each profile has a wake phrase, URL template, and animation
+  color. Add or remove profiles as needed. Phrases must be unique and occur at
+  the beginning of the recognized utterance. Matching ignores case, accents,
+  and character width; if phrases overlap, the longest match wins.
 - **Speech locale:** defaults to the current macOS locale and accepts an Apple
   locale identifier such as `en-US` or `pt-PT`.
 - **Always listen:** enabled by default and keeps an on-device recognition
-  session active for the wake phrase.
+  session active for every saved wake phrase.
 - **Push to talk:** defaults to Control-Option-Space and does not require the
   wake phrase. Click the shortcut button, then press a new combination containing
   Control, Option, Shift, or Command plus another key. Press Escape to cancel
@@ -21,8 +22,9 @@ apply immediately.
   application owns the combination, Voice Activation keeps the previous shortcut
   and reports the conflict.
 
-The wake phrase must end at a word boundary. `computer, open calendar` matches;
-`supercomputer open calendar` does not.
+A wake phrase must end at a word boundary. `computer, open calendar` matches;
+`supercomputer open calendar` does not. Push-to-talk uses the first saved wake
+profile's URL and color because no spoken wake phrase selects one.
 
 Passive recognition fails closed when the selected locale does not support
 on-device recognition. Command capture and push-to-talk may use Apple's speech
@@ -39,49 +41,33 @@ signed copy of Voice Activation in `/Applications` before enabling it; a login
 item that points into `.build` will stop working when that bundle is replaced
 or removed.
 
-## Command settings
+## Profile URLs
 
-The executable must be an absolute path to a runnable file. Each non-empty line
-in **Arguments** becomes one process argument, in order. At least one argument
-must contain a transcript placeholder.
+Every profile URL must contain a transcript placeholder. Voice Activation opens
+the resulting URL with `/usr/bin/open`.
 
 | Placeholder | Expansion |
 | --- | --- |
 | `{text}` | Inserts the transcript literally into the argument. |
 | `{urlText}` | Inserts an RFC 3986 percent-encoded query value. |
 
-Voice Activation starts the executable directly with `Process`. It never sends
-the command through `sh`, `zsh`, or another shell, so shell operators inside a
-transcript remain ordinary argument text.
+Voice Activation starts `/usr/bin/open` directly with `Process`. It never sends
+the command through a shell.
 
 ### Open a search URL
 
 ```text
-Executable: /usr/bin/open
-Arguments:
+Wake phrase: search
+URL:
 https://www.google.com/search?q={urlText}
 ```
 
 ### Open a custom URL scheme
 
 ```text
-Executable: /usr/bin/open
-Arguments:
+Wake phrase: ask assistant
+URL:
 my-app://command?prompt={urlText}
-```
-
-### Pass text to a macOS Shortcut
-
-Create a Shortcut that accepts text input, then configure one argument per
-line:
-
-```text
-Executable: /usr/bin/shortcuts
-Arguments:
-run
-My Voice Shortcut
--i
-{text}
 ```
 
 ## Capture timing
@@ -92,6 +78,8 @@ My Voice Shortcut
   arrive and never takes keyboard focus from the current app. The capsule is
   clipped to its visible border without an outer shadow gutter. Click its close
   button to discard the current capture.
+- The orb and capsule use the matched profile's accent color. Distinct sounds
+  play once when capture starts and once when it leaves capture for any reason.
 - A wake phrase recognized by itself starts a fresh command-capture session,
   allowing a natural pause before the command. A brief grace period preserves
   command words spoken in the same utterance; otherwise the dedicated listener

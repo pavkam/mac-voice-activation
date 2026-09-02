@@ -66,8 +66,10 @@ private enum FakeSpeechSessionError: Error {
 
 private actor RecordingCommandRunner: CommandRunning {
     private(set) var transcripts: [String] = []
+    private(set) var templates: [CommandTemplate] = []
 
     func run(template: CommandTemplate, transcript: String) async throws -> CommandResult {
+        templates.append(template)
         transcripts.append(transcript)
         return CommandResult(terminationStatus: 0)
     }
@@ -75,9 +77,39 @@ private actor RecordingCommandRunner: CommandRunning {
     func recordedTranscripts() -> [String] {
         transcripts
     }
+
+    func recordedTemplates() -> [CommandTemplate] {
+        templates
+    }
 }
 
 struct VoiceActivationCoordinatorTests {
+    @MainActor @Test func passiveUpdate_WhenProfileMatches_UsesItsURLAndAccent() async throws {
+        let search = try WakeProfile(
+            wakePhrase: "search",
+            urlTemplate: "https://search.example/?q={urlText}",
+            accent: .cyan)
+        let ask = try WakeProfile(
+            wakePhrase: "ask assistant",
+            urlTemplate: "https://assistant.example/new?prompt={urlText}",
+            accent: .purple)
+        let fixture = try Fixture(profiles: [search, ask])
+        var activeProfiles: [WakeProfile?] = []
+        fixture.coordinator.onActiveProfileChange = { activeProfiles.append($0) }
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("ask assistant summarize this", isFinal: true)
+        await waitUntil {
+            await fixture.runner.recordedTranscripts() == ["summarize this"]
+        }
+
+        let templates = await fixture.runner.recordedTemplates()
+        #expect(templates.first?.argumentTemplates == [
+            "https://assistant.example/new?prompt={urlText}",
+        ])
+        #expect(activeProfiles.contains(ask))
+    }
+
     @MainActor @Test func setPassiveEnabled_WhenEnabled_StartsPassiveListening() throws {
         let fixture = try Fixture()
 
@@ -470,7 +502,10 @@ struct VoiceActivationCoordinatorTests {
         let runner = RecordingCommandRunner()
         let coordinator: VoiceActivationCoordinator
 
-        init(timing: ActivationTiming = .standard) throws {
+        init(
+            timing: ActivationTiming = .standard,
+            profiles: [WakeProfile]? = nil) throws
+        {
             let template = try CommandTemplate(
                 executablePath: "/usr/bin/printf",
                 argumentTemplates: ["{text}"])
@@ -478,7 +513,10 @@ struct VoiceActivationCoordinatorTests {
                 speechSession: speech,
                 commandRunner: runner,
                 configuration: {
-                    ActivationConfiguration(
+                    if let profiles {
+                        return ActivationConfiguration(profiles: profiles, localeID: "en-US")
+                    }
+                    return ActivationConfiguration(
                         wakePhrase: "computer",
                         localeID: "en-US",
                         commandTemplate: template)

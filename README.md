@@ -1,9 +1,10 @@
 # Voice Activation
 
-A small macOS menu-bar app that listens for a wake phrase or a push-to-talk
-shortcut, transcribes the speech, and invokes one configured executable.
+A small macOS menu-bar app that listens for configurable wake phrases or a
+push-to-talk shortcut, transcribes speech, and opens the URL assigned to the
+matched phrase.
 
-It is intentionally focused: native speech recognition, a configurable command,
+It is intentionally focused: native speech recognition, colored wake profiles,
 push-to-talk, and a menu-bar lifecycle with no server or account dependency.
 
 ## Requirements
@@ -38,31 +39,32 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   listens for **“computer”** immediately; the menu toggle disables it.
 - Say `computer`, then the command text. The command is submitted after speech
   recognition finalizes or the transcript remains unchanged for 1.5 seconds.
+- Add as many wake profiles as needed. Each phrase has its own URL template and
+  accent color; the matched color carries through the recording animation.
 - While recording, a compact animated microphone floats above the current app,
-  expands to show live transcription, and offers a cancel button.
+  expands to show live transcription, offers a cancel button, and plays distinct
+  sounds when capture starts and ends.
 - Say only `cancel`, `stop`, or `dismiss` to discard the capture. Repeating the
   same word twice cancels immediately, even before recognition finalizes.
 - Hold the push-to-talk shortcut shown in the menu, speak without a wake phrase,
   then release. Change it by clicking the shortcut in Settings and pressing a
   new modifier-plus-key combination, then select **Save Settings**.
-- Open **Settings…** from the menu to change the wake phrase, locale,
-  push-to-talk shortcut, executable, argument templates, and whether the app
-  launches at login.
+- Open **Settings…** from the menu to add or remove wake profiles, change their
+  URLs and colors, set the locale and shortcut, or enable launch at login.
 
 Passive listening requires on-device recognition for the selected locale and
 fails closed if the Mac does not support it. Push-to-talk may use Apple's speech
 service when on-device recognition is unavailable.
 
-## Command templates
+## Wake profiles
 
 The default opens a Google search:
 
 ```text
-Executable: /usr/bin/open
-Argument:   https://www.google.com/search?q={urlText}
+Wake phrase: computer
+URL:         https://www.google.com/search?q={urlText}
+Color:       Blue
 ```
-
-Each non-empty line in the Arguments editor becomes one process argument.
 
 - `{text}` inserts the transcription literally into that argument.
 - `{urlText}` inserts an RFC 3986 percent-encoded query value.
@@ -70,11 +72,12 @@ Each non-empty line in the Arguments editor becomes one process argument.
 For a custom URL scheme:
 
 ```text
-Executable: /usr/bin/open
-Argument:   my-app://command?prompt={urlText}
+Wake phrase: ask assistant
+URL:         my-app://command?prompt={urlText}
+Color:       Purple
 ```
 
-The app launches the executable directly with `Process`. It never invokes a
+The app opens profile URLs directly with `/usr/bin/open`. It never invokes a
 shell, so punctuation in speech cannot become shell syntax.
 
 ## Development
