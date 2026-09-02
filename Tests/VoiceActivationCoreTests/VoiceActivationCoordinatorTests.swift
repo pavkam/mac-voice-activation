@@ -148,7 +148,7 @@ struct VoiceActivationCoordinatorTests {
         fixture.speech.failNextStart(for: .commandCapture)
 
         fixture.speech.emit("computer", isFinal: true)
-        await waitUntil(timeout: .milliseconds(80)) {
+        await waitUntil(timeout: .milliseconds(200)) {
             fixture.coordinator.state == .listening
                 && fixture.speech.mode == .passiveWake
         }
@@ -167,6 +167,50 @@ struct VoiceActivationCoordinatorTests {
         }
 
         #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
+    @MainActor @Test func commandCapture_WhenNoWordsArrive_ReturnsToPassiveAfterInitialSilence() async throws {
+        let fixture = try Fixture(timing: .initialSilence)
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("computer", isFinal: true)
+        await waitUntil(timeout: .milliseconds(200)) {
+            fixture.coordinator.state == .listening
+                && fixture.speech.mode == .passiveWake
+        }
+
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
+    @MainActor @Test func commandCapture_WhenEmptyFinalsRepeat_DoesNotResetMaximum() async throws {
+        let fixture = try Fixture(timing: .repeatingEmptyFinals)
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("computer", isFinal: true)
+
+        for _ in 0..<30 {
+            try await Task.sleep(for: .milliseconds(10))
+            fixture.speech.emit("", isFinal: true)
+        }
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.speech.mode == .passiveWake)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+
+    @MainActor @Test func commandCapture_WhenWordsArrive_CancelsInitialSilence() async throws {
+        let fixture = try Fixture(timing: .initialSilenceThenInactivity)
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("computer", isFinal: true)
+
+        try await Task.sleep(for: .milliseconds(10))
+        fixture.speech.emit("open calendar")
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(fixture.coordinator.state == .capturing)
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+        await waitUntil(timeout: .milliseconds(200)) {
+            await fixture.runner.recordedTranscripts() == ["open calendar"]
+        }
     }
 
     @MainActor @Test func commandCapture_WhenPartialCommandGoesQuiet_ExecutesAfterInactivity() async throws {
@@ -283,13 +327,36 @@ struct VoiceActivationCoordinatorTests {
 
 private extension ActivationTiming {
     static let fast = ActivationTiming(
+        captureInitialSilence: .milliseconds(200),
         captureInactivity: .milliseconds(20),
         captureMaximum: .milliseconds(40),
         passiveRestart: .milliseconds(10),
         executionCooldown: .milliseconds(10))
 
     static let startFailure = ActivationTiming(
+        captureInitialSilence: .milliseconds(20),
         captureInactivity: .milliseconds(20),
+        captureMaximum: .milliseconds(200),
+        passiveRestart: .milliseconds(10),
+        executionCooldown: .milliseconds(10))
+
+    static let initialSilence = ActivationTiming(
+        captureInitialSilence: .milliseconds(20),
+        captureInactivity: .milliseconds(200),
+        captureMaximum: .milliseconds(200),
+        passiveRestart: .milliseconds(10),
+        executionCooldown: .milliseconds(10))
+
+    static let initialSilenceThenInactivity = ActivationTiming(
+        captureInitialSilence: .milliseconds(80),
+        captureInactivity: .milliseconds(160),
+        captureMaximum: .milliseconds(500),
+        passiveRestart: .milliseconds(10),
+        executionCooldown: .milliseconds(10))
+
+    static let repeatingEmptyFinals = ActivationTiming(
+        captureInitialSilence: .milliseconds(500),
+        captureInactivity: .milliseconds(500),
         captureMaximum: .milliseconds(200),
         passiveRestart: .milliseconds(10),
         executionCooldown: .milliseconds(10))

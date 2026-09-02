@@ -87,7 +87,8 @@ My Voice Shortcut
   allowing a natural pause before the command.
 - After command text arrives, 1.5 seconds without a transcript change submits
   the best transcription.
-- Capture without a command returns to passive listening after 30 seconds.
+- Capture without any command text returns to passive listening after 5
+  seconds. Active dictation has a 30-second absolute maximum.
 - Successful commands return to passive listening after a 250-millisecond
   cooldown.
 

@@ -29,6 +29,8 @@ public final class VoiceActivationCoordinator {
     private var pushToTalkActive = false
     private var capturedCommand = ""
     private var generation = 0
+    private var captureGeneration = 0
+    private var initialSilenceTask: Task<Void, Never>?
     private var inactivityTask: Task<Void, Never>?
     private var hardStopTask: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
@@ -189,11 +191,13 @@ public final class VoiceActivationCoordinator {
             if update.isFinal {
                 startCommandCapture(localeID: config.localeID)
             } else {
+                scheduleCaptureInitialSilence()
                 scheduleCaptureHardStop()
             }
             return
         }
 
+        cancelCaptureInitialSilence()
         scheduleCaptureInactivity()
         scheduleCaptureHardStop()
 
@@ -207,7 +211,13 @@ public final class VoiceActivationCoordinator {
         currentTranscript = ""
         state = .capturing
         startSession(mode: .commandCapture, localeID: localeID)
+        scheduleCaptureInitialSilence()
         scheduleCaptureHardStop()
+    }
+
+    private func restartCommandCapture(localeID: String) {
+        stopSpeechSession()
+        startSession(mode: .commandCapture, localeID: localeID)
     }
 
     private func handleCommandCapture(_ update: SpeechUpdate) {
@@ -218,7 +228,7 @@ public final class VoiceActivationCoordinator {
         guard !capturedCommand.isEmpty else {
             if update.isFinal {
                 do {
-                    startCommandCapture(localeID: try configuration().localeID)
+                    restartCommandCapture(localeID: try configuration().localeID)
                 } catch {
                     stopActiveSession()
                     state = .failed(error.localizedDescription)
@@ -227,28 +237,56 @@ public final class VoiceActivationCoordinator {
             return
         }
 
+        cancelCaptureInitialSilence()
         scheduleCaptureInactivity()
         if update.isFinal {
             finishPassiveCapture()
         }
     }
 
+    private func scheduleCaptureInitialSilence() {
+        guard initialSilenceTask == nil else { return }
+        let activeCaptureGeneration = captureGeneration
+        initialSilenceTask = Task { [weak self, timing] in
+            try? await Task.sleep(for: timing.captureInitialSilence)
+            guard
+                !Task.isCancelled,
+                let self,
+                self.captureGeneration == activeCaptureGeneration
+            else { return }
+            self.finishPassiveCapture()
+        }
+    }
+
+    private func cancelCaptureInitialSilence() {
+        initialSilenceTask?.cancel()
+        initialSilenceTask = nil
+    }
+
     private func scheduleCaptureInactivity() {
-        let activeGeneration = generation
+        let activeCaptureGeneration = captureGeneration
         inactivityTask?.cancel()
         inactivityTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.captureInactivity)
-            guard !Task.isCancelled, let self, self.generation == activeGeneration else { return }
+            guard
+                !Task.isCancelled,
+                let self,
+                self.captureGeneration == activeCaptureGeneration
+            else { return }
             self.finishPassiveCapture()
         }
     }
 
     private func scheduleCaptureHardStop() {
         guard hardStopTask == nil else { return }
-        let activeGeneration = generation
+        let activeCaptureGeneration = captureGeneration
         hardStopTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.captureMaximum)
-            guard !Task.isCancelled, let self, self.generation == activeGeneration else { return }
+            guard
+                !Task.isCancelled,
+                let self,
+                self.captureGeneration == activeCaptureGeneration
+            else { return }
             self.finishPassiveCapture()
         }
     }
@@ -315,11 +353,17 @@ public final class VoiceActivationCoordinator {
     }
 
     private func stopActiveSession() {
-        generation &+= 1
+        captureGeneration &+= 1
+        cancelCaptureInitialSilence()
         inactivityTask?.cancel()
         inactivityTask = nil
         hardStopTask?.cancel()
         hardStopTask = nil
+        stopSpeechSession()
+    }
+
+    private func stopSpeechSession() {
+        generation &+= 1
         speechSession.stop()
     }
 }

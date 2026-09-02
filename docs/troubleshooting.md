@@ -32,8 +32,8 @@ to a service.
 
 - Begin with the wake phrase; text before it does not match.
 - Speak after the status changes to **Capturing**.
-- Capture without any command text returns to passive listening after 30
-  seconds.
+- Capture without any command text returns to passive listening after 5
+  seconds. Repeated empty recognition results cannot extend this deadline.
 - Check the menu's error text after capture. Recognition failures automatically
   restart passive listening after a short delay.
 

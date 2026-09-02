@@ -48,8 +48,9 @@ command`, or an error message.
 - **Passive wake:** the always-listen toggle starts on-device recognition. It
   restarts after final results and recoverable failures.
 - **Command capture:** a wake phrase finalized alone starts recognition that
-  may use Apple's speech service. It finishes on a final result, 1.5 seconds of
-  inactivity, or the 30-second maximum.
+  may use Apple's speech service. It finishes after 5 seconds without initial
+  command text, on a final result, after 1.5 seconds of inactivity following
+  text, or at the 30-second absolute maximum.
 - **Push to talk:** Control-Option-Space starts recognition that may use Apple's
   speech service. Releasing the shortcut finishes capture.
 
@@ -78,6 +79,9 @@ non-zero exit status as an error. No shell parses the transcript.
   engine, remove its input tap, and cancel the recognition task.
 - Recognition callbacks carry a session generation and are ignored after that
   session is stopped.
+- Empty final recognition results restart the command recognizer within the
+  existing capture window; they do not reset its initial-silence or absolute
+  deadlines.
 - Command execution runs asynchronously and returns to passive listening after
   a short cooldown.
 - `LaunchAtLoginSetting` reads and changes `SMAppService.mainApp` registration;
