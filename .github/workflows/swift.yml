@@ -1,0 +1,58 @@
+name: "🎙️ Swift CI"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: "🧪 Build & test"
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v7
+
+      - name: "🧭 Show toolchain"
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: "📦 Resolve dependencies"
+        run: swift package resolve
+
+      - name: "🔨 Build application and tests"
+        run: swift build --build-tests -v
+
+      - name: "✅ Run tests"
+        run: swift test --skip-build --parallel
+
+  package-app:
+    name: "📦 Package app"
+    needs: build-and-test
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v7
+
+      - name: "🧱 Build signed app bundle"
+        run: make app
+
+      - name: "🔍 Verify app bundle"
+        run: |
+          test -x .build/VoiceActivation.app/Contents/MacOS/VoiceActivation
+          plutil -lint .build/VoiceActivation.app/Contents/Info.plist
+          codesign --verify --deep --strict .build/VoiceActivation.app
