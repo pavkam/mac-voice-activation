@@ -1,0 +1,732 @@
+import Foundation
+
+public enum ACPClientError: Error, Equatable, LocalizedError, Sendable {
+    case connectionClosed
+    case incompatibleProtocol(selected: Int64)
+    case authenticationRequired(methods: [String])
+    case promptTooLarge(maximumBytes: Int)
+    case promptAlreadyActive
+    case malformedResponse(String)
+    case remoteError(code: Int64, message: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .connectionClosed:
+            "The agent connection closed unexpectedly."
+        case let .incompatibleProtocol(selected):
+            "The agent selected unsupported ACP protocol version \(selected)."
+        case let .authenticationRequired(methods):
+            if methods.isEmpty {
+                "Authenticate with the provider CLI, then try again."
+            } else {
+                "Authenticate with the provider CLI, then try again. Available methods: "
+                    + methods.joined(separator: ", ")
+            }
+        case let .promptTooLarge(maximumBytes):
+            "The prompt exceeds the \(maximumBytes)-byte UTF-8 limit."
+        case .promptAlreadyActive:
+            "An agent prompt is already active on this connection."
+        case let .malformedResponse(description):
+            "The agent sent an invalid ACP response: \(description)"
+        case let .remoteError(code, message):
+            "The agent request failed (\(code)): \(message)"
+        }
+    }
+}
+
+public actor ACPClientConnection {
+    public static let maximumPromptBytes = 8_192
+    public static let maximumDiagnosticBytes = 256
+
+    private static let maximumAdvertisedAuthenticationMethods = 8
+    private static let clientName = "voice-activation"
+    private static let clientTitle = "Voice Activation"
+    private static let clientVersion = "0.1.0"
+
+    private let transport: any ACPTransport
+    private let configuration: AgentHarnessConfiguration
+    private let eventDecoder = ACPEventDecoder()
+    private var receiveTask: Task<Void, Never>?
+    private var nextRequestID: Int64 = 1
+    private var pendingRequests: [ACPRequestID: PendingClientRequest] = [:]
+    private var pendingPermissions: [ACPRequestID: PendingPermission] = [:]
+    private var authenticationMethodNames: [String] = []
+    private var sessionID: String?
+    private var agentName: String?
+    private var eventHandler: (@Sendable (AgentRunEvent) async -> Void)?
+    private var isPromptActive = false
+    private var isPromptCancelling = false
+    private var terminalError: ACPClientError?
+    private var transportWasTerminated = false
+    private var writeIsActive = false
+    private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private init(
+        transport: any ACPTransport,
+        configuration: AgentHarnessConfiguration)
+    {
+        self.transport = transport
+        self.configuration = configuration
+    }
+
+    public static func connect(
+        transport: any ACPTransport,
+        configuration: AgentHarnessConfiguration) async throws -> ACPClientConnection
+    {
+        let connection = ACPClientConnection(
+            transport: transport,
+            configuration: configuration)
+        try await connection.start()
+        return connection
+    }
+
+    public func prompt(
+        _ prompt: String,
+        onEvent: @escaping @Sendable (AgentRunEvent) async -> Void) async throws -> AgentRunResult
+    {
+        guard prompt.utf8.count <= Self.maximumPromptBytes else {
+            throw ACPClientError.promptTooLarge(maximumBytes: Self.maximumPromptBytes)
+        }
+        try ensureOpen()
+        guard !isPromptActive else {
+            throw ACPClientError.promptAlreadyActive
+        }
+        guard let sessionID, let agentName else {
+            throw ACPClientError.malformedResponse("The session is not initialized.")
+        }
+
+        isPromptActive = true
+        isPromptCancelling = false
+        eventHandler = onEvent
+        defer {
+            isPromptActive = false
+            isPromptCancelling = false
+            eventHandler = nil
+        }
+
+        await onEvent(.connected(agentName: agentName, sessionID: sessionID))
+
+        do {
+            let result = try await sendRequest(
+                method: "session/prompt",
+                params: .object([
+                    "sessionId": .string(sessionID),
+                    "prompt": .array([
+                        .object([
+                            "type": .string("text"),
+                            "text": .string(prompt),
+                        ]),
+                    ]),
+                ]))
+            let object = try requiredObject(result, named: "session/prompt result")
+            let encodedReason = try requiredString(
+                object["stopReason"],
+                named: "stopReason")
+            guard let stopReason = AgentStopReason(rawValue: encodedReason) else {
+                throw ACPClientError.malformedResponse("Unknown stopReason.")
+            }
+            return AgentRunResult(stopReason: stopReason)
+        } catch {
+            let clientError = userSafeError(error)
+            await close()
+            throw clientError
+        }
+    }
+
+    public func resolvePermission(requestID: ACPRequestID, optionID: String?) async {
+        guard let permission = pendingPermissions.removeValue(forKey: requestID) else {
+            return
+        }
+
+        let result: ACPJSONValue
+        if let optionID, permission.options.contains(where: { $0.id == optionID }) {
+            result = permissionSelection(optionID: optionID)
+        } else {
+            result = permissionCancellation()
+        }
+        await sendResponse(id: requestID, result: result)
+    }
+
+    public func cancel() async {
+        guard isPromptActive, !isPromptCancelling, let sessionID else {
+            return
+        }
+
+        isPromptCancelling = true
+        await cancelPendingPermissions()
+        await sendNotification(
+            method: "session/cancel",
+            params: .object(["sessionId": .string(sessionID)]))
+    }
+
+    public func close() async {
+        if terminalError == nil {
+            await cancelPendingPermissions()
+            finalize(with: .connectionClosed)
+        }
+
+        let task = receiveTask
+        await terminateTransport()
+        task?.cancel()
+        _ = await task?.result
+        receiveTask = nil
+    }
+
+    private func start() async throws {
+        let output = await transport.output()
+        receiveTask = Task {
+            await self.receive(output)
+        }
+
+        do {
+            let initializeResult = try await sendRequest(
+                method: "initialize",
+                params: .object([
+                    "protocolVersion": .integer(1),
+                    "clientCapabilities": .object([:]),
+                    "clientInfo": .object([
+                        "name": .string(Self.clientName),
+                        "title": .string(Self.clientTitle),
+                        "version": .string(Self.clientVersion),
+                    ]),
+                ]))
+            try applyInitializeResult(initializeResult)
+
+            let newSessionResult: ACPJSONValue
+            do {
+                newSessionResult = try await sendRequest(
+                    method: "session/new",
+                    params: .object([
+                        "cwd": .string(configuration.workingDirectory),
+                        "mcpServers": .array([]),
+                    ]))
+            } catch let error as ACPClientError {
+                if case let .remoteError(code, _) = error, code == -32_000 {
+                    let methods = authenticationMethodNames
+                    await close()
+                    throw ACPClientError.authenticationRequired(methods: methods)
+                }
+                throw error
+            }
+
+            let newSessionObject = try requiredObject(
+                newSessionResult,
+                named: "session/new result")
+            let decodedSessionID = try requiredString(
+                newSessionObject["sessionId"],
+                named: "sessionId")
+            guard !decodedSessionID.isEmpty else {
+                throw ACPClientError.malformedResponse("sessionId is empty.")
+            }
+            sessionID = decodedSessionID
+        } catch {
+            let clientError = userSafeError(error)
+            await close()
+            throw clientError
+        }
+    }
+
+    private func applyInitializeResult(_ value: ACPJSONValue) throws {
+        let result = try requiredObject(value, named: "initialize result")
+        let protocolVersion = try requiredInteger(
+            result["protocolVersion"],
+            named: "protocolVersion")
+        guard protocolVersion == 1 else {
+            throw ACPClientError.incompatibleProtocol(selected: protocolVersion)
+        }
+
+        if let agentInfo = result["agentInfo"], agentInfo != .null {
+            let information = try requiredObject(agentInfo, named: "agentInfo")
+            let title = try optionalString(information["title"], named: "agentInfo.title")
+            let name = try optionalString(information["name"], named: "agentInfo.name")
+            agentName = title ?? name ?? configuration.displayName
+        } else {
+            agentName = configuration.displayName
+        }
+
+        guard let methodsValue = result["authMethods"] else {
+            authenticationMethodNames = []
+            return
+        }
+        let methods = try requiredArray(methodsValue, named: "authMethods")
+        authenticationMethodNames = try methods
+            .prefix(Self.maximumAdvertisedAuthenticationMethods)
+            .map { methodValue in
+                let method = try requiredObject(methodValue, named: "authMethods entry")
+                return boundedText(
+                    try requiredString(method["name"], named: "authMethods name"),
+                    maximumBytes: Self.maximumDiagnosticBytes)
+            }
+    }
+
+    private func sendRequest(
+        method: String,
+        params: ACPJSONValue?) async throws -> ACPJSONValue
+    {
+        try ensureOpen()
+        let id = ACPRequestID.integer(nextRequestID)
+        guard nextRequestID < Int64.max else {
+            throw ACPClientError.connectionClosed
+        }
+        nextRequestID += 1
+        pendingRequests[id] = PendingClientRequest()
+
+        do {
+            try await write(.request(id: id, method: method, params: params))
+        } catch {
+            pendingRequests.removeValue(forKey: id)
+            let failure = ACPClientError.connectionClosed
+            finalize(with: failure)
+            await terminateTransport()
+            throw failure
+        }
+
+        return try await waitForResponse(id: id)
+    }
+
+    private func waitForResponse(id: ACPRequestID) async throws -> ACPJSONValue {
+        try await withCheckedThrowingContinuation { continuation in
+            guard var pending = pendingRequests[id] else {
+                continuation.resume(throwing: terminalError ?? .connectionClosed)
+                return
+            }
+
+            if let result = pending.bufferedResult {
+                pendingRequests.removeValue(forKey: id)
+                resume(continuation, with: result)
+            } else {
+                pending.continuation = continuation
+                pendingRequests[id] = pending
+            }
+        }
+    }
+
+    private func receive(_ output: AsyncThrowingStream<Data, any Error>) async {
+        var framer = ACPLineFramer()
+
+        do {
+            for try await chunk in output {
+                if Task.isCancelled {
+                    return
+                }
+
+                for frame in try framer.append(chunk) {
+                    let message = try JSONDecoder().decode(ACPMessage.self, from: frame)
+                    try await handle(message)
+                }
+            }
+            try framer.finish()
+        } catch {
+            // Every transport, framing, and decoding failure shares one safe terminal result.
+        }
+
+        guard terminalError == nil else {
+            return
+        }
+        finalize(with: .connectionClosed)
+        await terminateTransport()
+    }
+
+    private func handle(_ message: ACPMessage) async throws {
+        switch message {
+        case let .response(id, result):
+            await completePendingRequest(id: id, result: .success(result))
+        case let .errorResponse(id, error):
+            let message = boundedText(
+                error.message,
+                maximumBytes: Self.maximumDiagnosticBytes)
+            await completePendingRequest(
+                id: id,
+                result: .failure(.remoteError(code: error.code, message: message)))
+        case let .request(id, method, params):
+            await handleRequest(id: id, method: method, params: params)
+        case let .notification(method, _):
+            if method == "session/update" {
+                if let event = try eventDecoder.event(from: message) {
+                    await emit(event)
+                }
+            } else {
+                await emit(.diagnostic(boundedText(
+                    "Unsupported ACP notification: \(method)",
+                    maximumBytes: Self.maximumDiagnosticBytes)))
+            }
+        }
+    }
+
+    private func completePendingRequest(
+        id: ACPRequestID,
+        result: PendingClientRequest.Result) async
+    {
+        guard var pending = pendingRequests[id], pending.bufferedResult == nil else {
+            await emit(.diagnostic(boundedText(
+                "Ignored unknown response for request \(requestIDDescription(id)).",
+                maximumBytes: Self.maximumDiagnosticBytes)))
+            return
+        }
+
+        if let continuation = pending.continuation {
+            pendingRequests.removeValue(forKey: id)
+            resume(continuation, with: result)
+        } else {
+            pending.bufferedResult = result
+            pendingRequests[id] = pending
+        }
+    }
+
+    private func handleRequest(
+        id: ACPRequestID,
+        method: String,
+        params: ACPJSONValue?) async
+    {
+        switch method {
+        case "session/request_permission":
+            do {
+                try await handlePermissionRequest(id: id, params: params)
+            } catch {
+                await sendErrorResponse(
+                    id: id,
+                    code: -32_602,
+                    message: "Invalid params")
+            }
+        case "cursor/ask_question", "cursor/create_plan":
+            await sendResponse(id: id, result: permissionCancellation())
+            await emit(.diagnostic(boundedText(
+                "Cancelled unsupported blocking extension: \(method)",
+                maximumBytes: Self.maximumDiagnosticBytes)))
+        default:
+            await sendErrorResponse(
+                id: id,
+                code: -32_601,
+                message: "Method not found")
+        }
+    }
+
+    private func handlePermissionRequest(
+        id: ACPRequestID,
+        params: ACPJSONValue?) async throws
+    {
+        let request = try decodePermissionRequest(id: id, params: params)
+        guard request.sessionID == sessionID, isPromptActive else {
+            await sendResponse(id: id, result: permissionCancellation())
+            return
+        }
+        guard pendingPermissions[id] == nil else {
+            await emit(.diagnostic(boundedText(
+                "Ignored duplicate permission request \(requestIDDescription(id)).",
+                maximumBytes: Self.maximumDiagnosticBytes)))
+            return
+        }
+        if isPromptCancelling {
+            await sendResponse(id: id, result: permissionCancellation())
+            return
+        }
+        switch configuration.permissionPolicy {
+        case .ask:
+            pendingPermissions[id] = PendingPermission(options: request.permission.options)
+            await emit(.permissionRequested(request.permission))
+        case .allowOnce:
+            let selection = request.permission.options.first(where: { $0.kind == .allowOnce })
+                ?? request.permission.options.first(where: { $0.kind == .allowAlways })
+            if let selection {
+                await sendResponse(id: id, result: permissionSelection(optionID: selection.id))
+            } else {
+                await sendResponse(id: id, result: permissionCancellation())
+            }
+        case .reject:
+            if let selection = request.permission.options.first(where: { $0.kind == .rejectOnce }) {
+                await sendResponse(id: id, result: permissionSelection(optionID: selection.id))
+            } else {
+                await sendResponse(id: id, result: permissionCancellation())
+            }
+        }
+    }
+
+    private func decodePermissionRequest(
+        id: ACPRequestID,
+        params: ACPJSONValue?) throws -> DecodedPermissionRequest
+    {
+        let parameters = try requiredObject(params, named: "permission params")
+        let permissionSessionID = try requiredString(
+            parameters["sessionId"],
+            named: "permission sessionId")
+        let toolValue = try requiredObject(
+            parameters["toolCall"],
+            named: "permission toolCall")
+        let toolCall = AgentToolCallUpdate(
+            id: try requiredString(toolValue["toolCallId"], named: "toolCallId"),
+            title: try optionalString(toolValue["title"], named: "toolCall title"),
+            kind: try optionalRawValue(toolValue["kind"], named: "toolCall kind"),
+            status: try optionalRawValue(toolValue["status"], named: "toolCall status"))
+        let options = try requiredArray(
+            parameters["options"],
+            named: "permission options")
+            .map { optionValue in
+                let option = try requiredObject(optionValue, named: "permission option")
+                return AgentPermissionOption(
+                    id: try requiredString(option["optionId"], named: "permission optionId"),
+                    label: try requiredString(option["name"], named: "permission name"),
+                    kind: try requiredRawValue(option["kind"], named: "permission kind"))
+            }
+
+        return DecodedPermissionRequest(
+            sessionID: permissionSessionID,
+            permission: AgentPermissionRequest(
+                requestID: id,
+                toolCall: toolCall,
+                options: options))
+    }
+
+    private func cancelPendingPermissions() async {
+        let permissions = pendingPermissions
+        pendingPermissions.removeAll()
+        for id in permissions.keys {
+            await sendResponse(id: id, result: permissionCancellation())
+        }
+    }
+
+    private func sendResponse(id: ACPRequestID, result: ACPJSONValue) async {
+        do {
+            try await write(.response(id: id, result: result))
+        } catch {
+            finalize(with: .connectionClosed)
+            await terminateTransport()
+        }
+    }
+
+    private func sendErrorResponse(id: ACPRequestID, code: Int64, message: String) async {
+        do {
+            try await write(.errorResponse(
+                id: id,
+                error: ACPJSONRPCError(code: code, message: message)))
+        } catch {
+            finalize(with: .connectionClosed)
+            await terminateTransport()
+        }
+    }
+
+    private func sendNotification(method: String, params: ACPJSONValue?) async {
+        do {
+            try await write(.notification(method: method, params: params))
+        } catch {
+            finalize(with: .connectionClosed)
+            await terminateTransport()
+        }
+    }
+
+    private func write(_ message: ACPMessage) async throws {
+        await acquireWritePermit()
+        defer { releaseWritePermit() }
+        try ensureOpen()
+
+        var data = try JSONEncoder().encode(message)
+        data.append(0x0A)
+        try await transport.send(data)
+    }
+
+    private func acquireWritePermit() async {
+        if !writeIsActive {
+            writeIsActive = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            writeWaiters.append(continuation)
+        }
+    }
+
+    private func releaseWritePermit() {
+        if writeWaiters.isEmpty {
+            writeIsActive = false
+        } else {
+            writeWaiters.removeFirst().resume()
+        }
+    }
+
+    private func emit(_ event: AgentRunEvent) async {
+        guard let eventHandler else {
+            return
+        }
+        await eventHandler(event)
+    }
+
+    private func ensureOpen() throws {
+        if let terminalError {
+            throw terminalError
+        }
+    }
+
+    private func finalize(with error: ACPClientError) {
+        guard terminalError == nil else {
+            return
+        }
+
+        terminalError = error
+        let requests = pendingRequests
+        pendingRequests.removeAll()
+        pendingPermissions.removeAll()
+        for pending in requests.values {
+            if let continuation = pending.continuation {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    private func terminateTransport() async {
+        guard !transportWasTerminated else {
+            return
+        }
+        transportWasTerminated = true
+        await transport.terminate()
+    }
+
+    private func userSafeError(_ error: any Error) -> ACPClientError {
+        if let clientError = error as? ACPClientError {
+            return clientError
+        }
+        return terminalError ?? .connectionClosed
+    }
+}
+
+private struct PendingClientRequest {
+    enum Result {
+        case success(ACPJSONValue)
+        case failure(ACPClientError)
+    }
+
+    var continuation: CheckedContinuation<ACPJSONValue, any Error>?
+    var bufferedResult: Result?
+}
+
+private struct PendingPermission {
+    let options: [AgentPermissionOption]
+}
+
+private struct DecodedPermissionRequest {
+    let sessionID: String
+    let permission: AgentPermissionRequest
+}
+
+private func resume(
+    _ continuation: CheckedContinuation<ACPJSONValue, any Error>,
+    with result: PendingClientRequest.Result)
+{
+    switch result {
+    case let .success(value):
+        continuation.resume(returning: value)
+    case let .failure(error):
+        continuation.resume(throwing: error)
+    }
+}
+
+private func permissionSelection(optionID: String) -> ACPJSONValue {
+    .object([
+        "outcome": .object([
+            "outcome": .string("selected"),
+            "optionId": .string(optionID),
+        ]),
+    ])
+}
+
+private func permissionCancellation() -> ACPJSONValue {
+    .object([
+        "outcome": .object(["outcome": .string("cancelled")]),
+    ])
+}
+
+private func requiredObject(
+    _ value: ACPJSONValue?,
+    named name: String) throws -> [String: ACPJSONValue]
+{
+    guard case let .object(object) = value else {
+        throw ACPClientError.malformedResponse("Invalid or missing \(name).")
+    }
+    return object
+}
+
+private func requiredArray(
+    _ value: ACPJSONValue?,
+    named name: String) throws -> [ACPJSONValue]
+{
+    guard case let .array(array) = value else {
+        throw ACPClientError.malformedResponse("Invalid or missing \(name).")
+    }
+    return array
+}
+
+private func requiredString(_ value: ACPJSONValue?, named name: String) throws -> String {
+    guard case let .string(string) = value else {
+        throw ACPClientError.malformedResponse("Invalid or missing \(name).")
+    }
+    return string
+}
+
+private func optionalString(_ value: ACPJSONValue?, named name: String) throws -> String? {
+    guard let value, value != .null else {
+        return nil
+    }
+    return try requiredString(value, named: name)
+}
+
+private func requiredInteger(_ value: ACPJSONValue?, named name: String) throws -> Int64 {
+    switch value {
+    case let .integer(integer):
+        integer
+    case let .unsignedInteger(integer) where integer <= Int64.max:
+        Int64(integer)
+    default:
+        throw ACPClientError.malformedResponse("Invalid or missing \(name).")
+    }
+}
+
+private func requiredRawValue<Value>(
+    _ value: ACPJSONValue?,
+    named name: String) throws -> Value
+where Value: RawRepresentable, Value.RawValue == String {
+    let encoded = try requiredString(value, named: name)
+    guard let decoded = Value(rawValue: encoded) else {
+        throw ACPClientError.malformedResponse("Invalid \(name).")
+    }
+    return decoded
+}
+
+private func optionalRawValue<Value>(
+    _ value: ACPJSONValue?,
+    named name: String) throws -> Value?
+where Value: RawRepresentable, Value.RawValue == String {
+    guard let value, value != .null else {
+        return nil
+    }
+    return try requiredRawValue(value, named: name)
+}
+
+private func boundedText(_ value: String, maximumBytes: Int) -> String {
+    let flattened = value
+        .components(separatedBy: .newlines)
+        .joined(separator: " ")
+    guard flattened.utf8.count > maximumBytes else {
+        return flattened
+    }
+
+    var result = ""
+    var bytes = 0
+    for character in flattened {
+        let characterBytes = String(character).utf8.count
+        guard bytes + characterBytes <= maximumBytes else {
+            break
+        }
+        result.append(character)
+        bytes += characterBytes
+    }
+    return result
+}
+
+private func requestIDDescription(_ id: ACPRequestID) -> String {
+    switch id {
+    case .null:
+        "null"
+    case let .integer(value):
+        String(value)
+    case .string:
+        "string ID"
+    }
+}
