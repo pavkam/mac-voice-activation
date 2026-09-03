@@ -86,6 +86,9 @@ actor FakeACPTransport: ACPTransport {
     }
 
     func terminate() async {
+        guard exitStatus == nil else {
+            return
+        }
         terminationCount += 1
         suspendedSendContinuation?.resume()
         suspendedSendContinuation = nil
