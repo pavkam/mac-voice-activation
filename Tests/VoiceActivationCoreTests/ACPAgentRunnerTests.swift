@@ -1206,6 +1206,10 @@ struct ACPAgentRunnerTests {
                 "prompt": .array([
                     .object([
                         "type": .string("text"),
+                        "text": .string(ACPClientConnection.markdownPresentationInstruction),
+                    ]),
+                    .object([
+                        "type": .string("text"),
                         "text": .string(text),
                     ]),
                 ]),

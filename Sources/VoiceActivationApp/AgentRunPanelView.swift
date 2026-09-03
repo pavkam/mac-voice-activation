@@ -36,9 +36,8 @@ struct AgentRunPanelView: View {
                         VStack(alignment: .leading, spacing: 14) {
                             requestCard(snapshot)
                             noticeCards(snapshot)
-                            response(snapshot)
                             plan(snapshot)
-                            tools(snapshot)
+                            timeline(snapshot)
                             permissions(snapshot)
                             Color.clear.frame(height: 1).id("agent-run-bottom")
                         }
@@ -53,7 +52,13 @@ struct AgentRunPanelView: View {
                     } action: { _, distance in
                         model.updateAutoFollowing(distanceFromBottom: distance)
                     }
-                    .onChange(of: snapshot.output) {
+                    .onChange(of: snapshot.timeline) {
+                        guard model.isAutoFollowing else { return }
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            proxy.scrollTo("agent-run-bottom", anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: snapshot.permissions) {
                         guard model.isAutoFollowing else { return }
                         withAnimation(.easeOut(duration: 0.16)) {
                             proxy.scrollTo("agent-run-bottom", anchor: .bottom)
@@ -111,22 +116,50 @@ struct AgentRunPanelView: View {
     }
 
     @ViewBuilder
-    private func response(_ snapshot: AgentRunSnapshot) -> some View {
-        if !snapshot.output.isEmpty {
-            VStack(alignment: .leading, spacing: 7) {
-                sectionLabel("Live output", symbol: "text.alignleft")
-                Text(snapshot.output)
-                    .font(.system(size: 13, design: .rounded))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-        } else if snapshot.phase == .running || snapshot.phase == .cancelling {
+    private func timeline(_ snapshot: AgentRunSnapshot) -> some View {
+        if snapshot.timeline.isEmpty,
+           snapshot.phase == .running || snapshot.phase == .cancelling
+        {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(snapshot.phase == .cancelling ? "Cancelling…" : "Waiting for output…")
                     .foregroundStyle(.secondary)
             }
             .font(.system(size: 12, weight: .medium, design: .rounded))
+        } else {
+            ForEach(snapshot.timeline) { item in
+                switch item {
+                case .omitted:
+                    Label("Earlier activity omitted", systemImage: "ellipsis.circle")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                case let .message(message):
+                    messageBlock(message)
+                case let .tool(tool):
+                    toolCard(tool)
+                }
+            }
+        }
+    }
+
+    private func messageBlock(_ message: AgentMessagePresentation) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if message.kind == .thought {
+                sectionLabel("Thinking", symbol: "brain.head.profile")
+            }
+            AgentMarkdownView(markdown: message.text)
+                .foregroundStyle(message.kind == .thought ? .secondary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+                .tint(accent)
+        }
+        .padding(message.kind == .thought ? 10 : 0)
+        .background {
+            if message.kind == .thought {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(.primary.opacity(0.035))
+            }
         }
     }
 
@@ -156,24 +189,79 @@ struct AgentRunPanelView: View {
         }
     }
 
-    @ViewBuilder
-    private func tools(_ snapshot: AgentRunSnapshot) -> some View {
-        if !snapshot.tools.isEmpty {
-            VStack(alignment: .leading, spacing: 7) {
-                sectionLabel("Tools", symbol: "hammer.fill")
-                ForEach(snapshot.tools) { tool in
-                    HStack(spacing: 8) {
-                        Image(systemName: toolSymbol(tool))
-                            .foregroundStyle(tool.status == .failed ? .red : accent)
-                        Text(tool.title)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                        Spacer()
-                        Text(tool.status?.rawValue.replacingOccurrences(of: "_", with: " ") ?? "")
-                            .font(.system(size: 10, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
+    private func toolCard(_ tool: AgentToolPresentation) -> some View {
+        let isExpanded = model.isToolExpanded(toolID: tool.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.24)) {
+                    model.toggleToolDetails(toolID: tool.id)
                 }
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    toolActivityIcon(tool)
+
+                    Text(toolSummary(tool))
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(tool.status == .failed ? .red : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .padding(.top, 3)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 7) {
+                    Divider().opacity(0.42)
+                    if let kind = tool.kind {
+                        Text(toolKindLabel(kind))
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                            .tracking(0.7)
+                    }
+                    Text(tool.title)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .padding(.top, 9)
+                .padding(.leading, 28)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, tool.status.isFinished ? 8 : 10)
+        .background(
+            tool.status == .failed ? Color.red.opacity(0.075) : accent.opacity(0.065),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(alignment: .leading) {
+            Capsule()
+                .fill(tool.status == .failed ? Color.red.opacity(0.75) : accent.opacity(0.72))
+                .frame(width: 2)
+                .padding(.vertical, 7)
+        }
+        .animation(.snappy(duration: 0.24), value: tool.status)
+    }
+
+    @ViewBuilder
+    private func toolActivityIcon(_ tool: AgentToolPresentation) -> some View {
+        if tool.status.isWorking {
+            ProgressView()
+                .controlSize(.small)
+                .tint(accent)
+                .frame(width: 18, height: 18, alignment: .topLeading)
+        } else {
+            Image(systemName: toolSymbol(tool))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(tool.status == .failed ? .red : accent)
+                .frame(width: 18, height: 18, alignment: .topLeading)
         }
     }
 
@@ -200,7 +288,9 @@ struct AgentRunPanelView: View {
             }
             .padding(12)
             .background(accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 13))
+            .transition(.scale(scale: 0.96).combined(with: .opacity))
         }
+        .animation(.snappy(duration: 0.2), value: snapshot.permissions.map(\.id))
     }
 
     private func actions(_ snapshot: AgentRunSnapshot) -> some View {
@@ -289,5 +379,41 @@ struct AgentRunPanelView: View {
         case .inProgress: "gearshape.2.fill"
         case .pending, nil: "circle.dotted"
         }
+    }
+
+    private func toolSummary(_ tool: AgentToolPresentation) -> String {
+        switch tool.status {
+        case .failed:
+            tool.kind.map { "\(toolKindLabel($0)) failed" } ?? "Tool failed"
+        case .completed:
+            tool.kind.map { "\(toolKindLabel($0)) complete" } ?? "Completed"
+        case .pending, .inProgress, nil:
+            "Working…"
+        }
+    }
+
+    private func toolKindLabel(_ kind: AgentToolKind) -> String {
+        switch kind {
+        case .read: "Read"
+        case .edit: "Edit"
+        case .delete: "Delete"
+        case .move: "Move"
+        case .search: "Search"
+        case .execute: "Command"
+        case .think: "Reasoning"
+        case .fetch: "Fetch"
+        case .switchMode: "Mode change"
+        case .other: "Tool"
+        }
+    }
+}
+
+private extension AgentToolCallStatus? {
+    var isWorking: Bool {
+        self == nil || self == .pending || self == .inProgress
+    }
+
+    var isFinished: Bool {
+        self == .completed || self == .failed
     }
 }

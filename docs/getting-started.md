@@ -98,9 +98,11 @@ Install and authenticate a supported ACP provider first. Then open
 5. Select **Save Settings**.
 
 Trigger that phrase and speak the task. The recording overlay morphs into a
-non-activating agent panel that streams the request, response, plans, tools,
-diagnostics, and permission choices while your current app keeps keyboard
-focus. Completed output remains available to select or copy.
+non-activating agent panel that streams an ordered Markdown response while your
+current app keeps keyboard focus. Running tools use animated compact rows;
+finished tools and answered permission prompts collapse out of the way, with
+tool details still expandable. Completed output remains available to select or
+copy.
 
 Provider credentials remain in the provider's own CLI configuration; Voice
 Activation does not ask for or persist them. Continue with the

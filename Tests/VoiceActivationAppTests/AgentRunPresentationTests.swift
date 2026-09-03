@@ -39,6 +39,94 @@ struct AgentRunPresentationTests {
         #expect(snapshot.tools.map(\.id) == ["tool-1"])
     }
 
+    @MainActor @Test func receive_WhenTextContinuesAfterTool_PreservesVisibleWireOrder() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(
+            runID: runID,
+            profile: try makeAgentProfile(),
+            prompt: "Inspect")
+
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer-1", text: "I’ll inspect it."))
+        presentation.receive(
+            runID: runID,
+            event: .toolCall(AgentToolCall(
+                id: "tool-1",
+                title: "Read Package.swift",
+                kind: .read,
+                status: .inProgress)))
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer-2", text: "\n\nFound the issue."))
+
+        let timeline = try #require(presentation.snapshot?.timeline)
+        #expect(timeline.count == 3)
+        guard case let .message(before) = timeline[0],
+              case let .tool(tool) = timeline[1],
+              case let .message(after) = timeline[2]
+        else {
+            Issue.record("Expected message, tool, message timeline order")
+            return
+        }
+        #expect(before.text == "I’ll inspect it.")
+        #expect(tool.id == "tool-1")
+        #expect(after.text == "\n\nFound the issue.")
+    }
+
+    @MainActor @Test func receive_WhenAdjacentMessageChunksArrive_CoalescesOneTimelineBlock()
+        throws
+    {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Explain")
+
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer", text: "Hello "))
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer", text: "**world**"))
+
+        let timeline = try #require(presentation.snapshot?.timeline)
+        #expect(timeline.count == 1)
+        guard case let .message(message) = timeline[0] else {
+            Issue.record("Expected one coalesced message")
+            return
+        }
+        #expect(message.text == "Hello **world**")
+    }
+
+    @MainActor @Test func receive_WhenToolCompletes_UpdatesItsOriginalTimelinePosition() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Inspect")
+        presentation.receive(
+            runID: runID,
+            event: .toolCall(AgentToolCall(
+                id: "tool-1",
+                title: "Reading",
+                kind: .read,
+                status: .inProgress)))
+
+        presentation.receive(
+            runID: runID,
+            event: .toolCallUpdate(AgentToolCallUpdate(
+                id: "tool-1",
+                title: "Read Package.swift",
+                status: .completed)))
+
+        let timeline = try #require(presentation.snapshot?.timeline)
+        #expect(timeline.count == 1)
+        guard case let .tool(tool) = timeline[0] else {
+            Issue.record("Expected the original tool timeline item")
+            return
+        }
+        #expect(tool.title == "Read Package.swift")
+        #expect(tool.status == .completed)
+    }
+
     @MainActor @Test func receive_WhenMoreThanThirtyTwoToolsArrive_EvictsOldest() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let runID = UUID()
@@ -71,7 +159,7 @@ struct AgentRunPresentationTests {
         #expect(presentation.snapshot?.output == "")
     }
 
-    @MainActor @Test func permission_WhenResolved_DisablesExactlyThatRequest() throws {
+    @MainActor @Test func permission_WhenResolved_CollapsesExactlyThatRequestImmediately() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let runID = UUID()
         let request = AgentPermissionRequest(
@@ -89,7 +177,7 @@ struct AgentRunPresentationTests {
             requestID: request.requestID)
         #expect(presentation.beginPermissionResolution(runID: runID, key: key))
         #expect(!presentation.beginPermissionResolution(runID: runID, key: key))
-        #expect(presentation.snapshot?.permissions.first?.isResolving == true)
+        #expect(presentation.snapshot?.permissions.isEmpty == true)
     }
 
     @MainActor @Test func complete_WhenResultArrives_PublishesTerminalPhase() throws {
@@ -117,6 +205,50 @@ struct AgentRunPresentationTests {
         #expect(output.utf8.count <= AgentRunPresentation.maximumOutputBytes)
         #expect(output.hasPrefix("… earlier output omitted …"))
         #expect(output.hasSuffix("🧪"))
+    }
+
+    @MainActor @Test func receive_WhenVisibleTimelineTextIsLarge_RetainsBoundedValidSuffix()
+        throws
+    {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Stream")
+
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(
+                messageID: "large",
+                text: "old-marker" + String(repeating: "🧪", count: 30_000)))
+
+        let timeline = try #require(presentation.snapshot?.timeline)
+        guard case .some(.omitted) = timeline.first,
+              case let .some(.message(message)) = timeline.last
+        else {
+            Issue.record("Expected an omission marker followed by retained response text")
+            return
+        }
+        #expect(message.text.utf8.count <= AgentRunPresentation.maximumTimelineTextBytes)
+        #expect(!message.text.contains("old-marker"))
+        #expect(message.text.hasSuffix("🧪"))
+    }
+
+    @MainActor @Test func receive_WhenTimelineHasManyMessages_BoundsVisibleItemCount() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Stream")
+
+        for index in 0...AgentRunPresentation.maximumTimelineItems {
+            presentation.receive(
+                runID: runID,
+                event: .agentMessageDelta(messageID: "message-\(index)", text: "x"))
+        }
+
+        let timeline = try #require(presentation.snapshot?.timeline)
+        #expect(timeline.count == AgentRunPresentation.maximumTimelineItems)
+        guard case .some(.omitted) = timeline.first else {
+            Issue.record("Expected an omission marker at the start of the bounded timeline")
+            return
+        }
     }
 
     @MainActor @Test func receive_WhenDiagnosticsExceedLimit_RetainsNewestBoundedText() throws {

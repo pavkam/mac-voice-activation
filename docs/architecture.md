@@ -128,10 +128,12 @@ the turn first and discards queued delivery.
 
 `AgentRunPresentation` applies only events carrying the active run identifier,
 retains bounded output, diagnostics, tools, plans, and simultaneous permission
-requests, and publishes token bursts to SwiftUI at no more than 20 updates per
-second. `AgentRunPanelController` hosts the model in a non-activating floating
-`NSPanel`; the recording overlay passes its exact final frame into the initial
-panel morph.
+requests, and reduces visible text and tool events into one ordered timeline.
+Tool updates mutate the original timeline item; a later message therefore stays
+after the tool that preceded it. Token bursts publish to SwiftUI at no more than
+20 updates per second. `AgentRunPanelController` hosts the Markdown renderer and
+expandable activity model in a non-activating floating `NSPanel`; the recording
+overlay passes its exact final frame into the initial panel morph.
 
 See [ACP agent harness](agent-harness.md) for the complete wire, permission,
 resource, and recovery contract.

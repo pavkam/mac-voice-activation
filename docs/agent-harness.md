@@ -123,8 +123,10 @@ ACP subprocess communication follows the stable protocol-owner specification:
   terminal.
 - A fresh `session/new` uses the profile's absolute working directory and an
   empty MCP server list.
-- Each utterance becomes one `session/prompt` containing one text content
-  block.
+- Each utterance becomes one `session/prompt` containing a harness instruction
+  text block followed by the untouched recognized request. The instruction asks
+  for user-facing GitHub-flavored Markdown; ACP v1 has no separate system-role
+  field.
 - `session/update` streams until the prompt response supplies a stop reason.
 
 The client handles every stable ACP v1 update discriminator:
@@ -157,8 +159,9 @@ An agent profile has one of three permission policies:
   cancelled outcome.
 
 The panel displays agent-provided choice labels; it does not invent an approval
-the agent did not offer. Cancelling a run resolves every pending permission as
-cancelled before the process is torn down. Each displayed choice carries a
+the agent did not offer. Selecting any choice collapses that request immediately
+and resolves it exactly once. Cancelling a run resolves every pending permission
+as cancelled before the process is torn down. Each displayed choice carries a
 globally unique opaque turn identifier as well as the wire request ID, so a
 delayed click cannot resolve a reused request ID from a later turn or replacement
 connection.
@@ -175,8 +178,10 @@ to a 620 by 420 point material surface. It contains:
 
 - provider, running phase, elapsed time, and profile accent;
 - the immutable spoken request;
-- a live, selectable event transcript covering agent text, plans, tools,
-  diagnostics, and terminal state;
+- a live, selectable Markdown timeline that preserves the wire order of agent
+  text and tool activity;
+- compact tool rows with a top-aligned animated activity indicator while
+  running and expandable details after completion;
 - permission choices when required;
 - **Cancel** while running, then **Close** and **Copy output** after completion;
   and
@@ -189,7 +194,9 @@ reuses the panel and clears the prior in-memory presentation.
 
 Token bursts publish on leading and trailing edges at a fixed 50-millisecond
 cadence. This preserves immediate feedback without making SwiftUI render once
-per token. Plans replace atomically, tool updates retain identity, simultaneous
+per token. Adjacent chunks coalesce only within their current timeline message;
+a tool call ends that block, so later prose renders below the tool. Plans replace
+atomically, tool updates retain their original timeline identity, simultaneous
 permissions remain independently actionable, and app-authored truncation or
 protocol notices cannot be mistaken for provider output.
 
@@ -223,8 +230,9 @@ run states with bounded diagnostics. A failed connection is never reused.
   data, 256 control entries, and 32 pending permissions. Output and diagnostics
   discard their oldest UTF-8-safe content with typed notices; control or
   permission overflow fails the run explicitly.
-- The visible event transcript retains at most 512 KiB of UTF-8 for the current
-  run and marks discarded oldest output.
+- Copyable response output retains at most 512 KiB of UTF-8. The rendered
+  timeline retains at most 64 KiB and 256 visible activity items, with an
+  explicit marker when older activity is omitted.
 - Standard-error diagnostics retain the newest 16 KiB.
 - The presentation retains the latest 32 tool calls; older completed calls are
   summarized by count.

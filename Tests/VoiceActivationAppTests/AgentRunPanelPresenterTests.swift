@@ -59,6 +59,13 @@ struct AgentRunPanelPresenterTests {
             providerName: snapshot.providerName,
             phase: .completed(.endTurn),
             output: "Finished",
+            timeline: [
+                .message(AgentMessagePresentation(
+                    id: UUID(),
+                    messageID: "final",
+                    kind: .response,
+                    text: "Finished")),
+            ],
             diagnostics: "",
             plan: [],
             tools: [],
@@ -114,6 +121,21 @@ struct AgentRunPanelPresenterTests {
         #expect(model.isAutoFollowing)
     }
 
+    @MainActor @Test func toolDetails_WhenToolCompletes_CollapsesButCanBeExpandedAgain() {
+        let model = AgentRunPanelModel()
+        let runID = UUID()
+        model.begin(toolSnapshot(runID: runID, status: .inProgress))
+
+        model.toggleToolDetails(toolID: "tool-1")
+        #expect(model.isToolExpanded(toolID: "tool-1"))
+
+        model.update(toolSnapshot(runID: runID, status: .completed))
+        #expect(!model.isToolExpanded(toolID: "tool-1"))
+
+        model.toggleToolDetails(toolID: "tool-1")
+        #expect(model.isToolExpanded(toolID: "tool-1"))
+    }
+
     @MainActor
     private func runningSnapshot(runID: UUID) -> AgentRunSnapshot {
         AgentRunSnapshot(
@@ -124,9 +146,39 @@ struct AgentRunPanelPresenterTests {
             providerName: "Codex",
             phase: .running,
             output: "",
+            timeline: [],
             diagnostics: "",
             plan: [],
             tools: [],
+            permissions: [],
+            notices: [],
+            elapsedSeconds: 0,
+            evictedToolCount: 0,
+            ignoredToolUpdateCount: 0)
+    }
+
+    @MainActor
+    private func toolSnapshot(
+        runID: UUID,
+        status: AgentToolCallStatus) -> AgentRunSnapshot
+    {
+        let tool = AgentToolPresentation(
+            id: "tool-1",
+            title: "Read Package.swift",
+            kind: .read,
+            status: status)
+        return AgentRunSnapshot(
+            runID: runID,
+            profileID: UUID(),
+            accent: .purple,
+            prompt: "Inspect",
+            providerName: "Codex",
+            phase: .running,
+            output: "",
+            timeline: [.tool(tool)],
+            diagnostics: "",
+            plan: [],
+            tools: [tool],
             permissions: [],
             notices: [],
             elapsedSeconds: 0,

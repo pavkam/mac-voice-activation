@@ -98,7 +98,9 @@ directly. Select an absolute working folder, choose a permission policy, and
 save.
 
 The app keeps the foreground application focused while a floating panel streams
-agent text, plans, tools, diagnostics, elapsed time, and permission choices.
+an ordered Markdown timeline. Tool work starts as a compact animated row and
+collapses to an expandable result row when it finishes; permission prompts
+disappear as soon as a choice is made.
 Use **Cancel** in the panel or **Cancel agent run** in the menu to stop a turn;
 completed output remains selectable and copyable until the panel is closed.
 

@@ -46,6 +46,12 @@ public actor ACPClientConnection {
     private static let clientName = "voice-activation"
     private static let clientTitle = "Voice Activation"
     private static let clientVersion = "0.1.0"
+    static let markdownPresentationInstruction = """
+        System instruction from Voice Activation: format every user-facing response as \
+        GitHub-flavored Markdown. Use headings, lists, emphasis, links, and fenced code \
+        when they improve clarity. Do not wrap the entire response in a code fence. The \
+        following content block is the user's request.
+        """
 
     private let transport: any ACPTransport
     private let configuration: AgentHarnessConfiguration
@@ -125,6 +131,10 @@ public actor ACPClientConnection {
                 params: .object([
                     "sessionId": .string(sessionID),
                     "prompt": .array([
+                        .object([
+                            "type": .string("text"),
+                            "text": .string(Self.markdownPresentationInstruction),
+                        ]),
                         .object([
                             "type": .string("text"),
                             "text": .string(prompt),

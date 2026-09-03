@@ -245,18 +245,25 @@ struct ACPClientConnectionTests {
             agentName: "Test Agent",
             sessionID: "session-1"))
         let promptRequest = await transport.nextSentMessage()
-        #expect(promptRequest == .request(
-            id: .integer(3),
-            method: "session/prompt",
-            params: .object([
-                "sessionId": .string("session-1"),
-                "prompt": .array([
-                    .object([
-                        "type": .string("text"),
-                        "text": .string("Inspect the project"),
-                    ]),
-                ]),
-            ])))
+        guard case let .request(id, method, .object(parameters)) = promptRequest,
+              case let .array(blocks) = parameters["prompt"],
+              blocks.count == 2,
+              case let .object(instructionBlock) = blocks[0],
+              case let .string(instruction) = instructionBlock["text"],
+              case let .object(requestBlock) = blocks[1],
+              case let .string(requestText) = requestBlock["text"]
+        else {
+            Issue.record("Expected a Markdown instruction followed by the spoken request")
+            return
+        }
+        #expect(id == .integer(3))
+        #expect(method == "session/prompt")
+        #expect(parameters["sessionId"] == .string("session-1"))
+        #expect(instructionBlock["type"] == .string("text"))
+        #expect(instruction.localizedCaseInsensitiveContains("Markdown"))
+        #expect(instruction.localizedCaseInsensitiveContains("user-facing"))
+        #expect(requestBlock["type"] == .string("text"))
+        #expect(requestText == "Inspect the project")
         try await transport.feed(sessionUpdate(
             .object([
                 "sessionUpdate": .string("agent_message_chunk"),
@@ -923,6 +930,10 @@ struct ACPClientConnectionTests {
                 "prompt": .array([
                     .object([
                         "type": .string("text"),
+                        "text": .string(ACPClientConnection.markdownPresentationInstruction),
+                    ]),
+                    .object([
+                        "type": .string("text"),
                         "text": .string("Cancel during publication"),
                     ]),
                 ]),
@@ -957,6 +968,10 @@ struct ACPClientConnectionTests {
             params: .object([
                 "sessionId": .string("session-1"),
                 "prompt": .array([
+                    .object([
+                        "type": .string("text"),
+                        "text": .string(ACPClientConnection.markdownPresentationInstruction),
+                    ]),
                     .object([
                         "type": .string("text"),
                         "text": .string("Cancel during write"),

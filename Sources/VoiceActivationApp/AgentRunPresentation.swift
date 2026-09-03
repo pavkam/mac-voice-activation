@@ -38,6 +38,38 @@ struct AgentToolPresentation: Equatable, Identifiable, Sendable {
     var status: AgentToolCallStatus?
 }
 
+enum AgentMessagePresentationKind: Equatable, Sendable {
+    case response
+    case thought
+}
+
+struct AgentMessagePresentation: Equatable, Identifiable, Sendable {
+    let id: UUID
+    let messageID: String?
+    let kind: AgentMessagePresentationKind
+    var text: String
+}
+
+enum AgentRunTimelineItemID: Hashable, Sendable {
+    case omitted
+    case message(UUID)
+    case tool(String)
+}
+
+enum AgentRunTimelineItem: Equatable, Identifiable, Sendable {
+    case omitted
+    case message(AgentMessagePresentation)
+    case tool(AgentToolPresentation)
+
+    var id: AgentRunTimelineItemID {
+        switch self {
+        case .omitted: .omitted
+        case let .message(message): .message(message.id)
+        case let .tool(tool): .tool(tool.id)
+        }
+    }
+}
+
 struct AgentRunSnapshot: Equatable, Sendable {
     let runID: UUID
     let profileID: UUID
@@ -46,6 +78,7 @@ struct AgentRunSnapshot: Equatable, Sendable {
     let providerName: String
     let phase: AgentRunPhase
     let output: String
+    let timeline: [AgentRunTimelineItem]
     let diagnostics: String
     let plan: [AgentPlanEntry]
     let tools: [AgentToolPresentation]
@@ -72,6 +105,8 @@ final class AgentRunPresentation {
     static let maximumOutputBytes = 512 * 1_024
     static let maximumDiagnosticBytes = 16 * 1_024
     static let maximumTools = 32
+    static let maximumTimelineTextBytes = 64 * 1_024
+    static let maximumTimelineItems = 256
     static let publicationInterval = Duration.milliseconds(50)
 
     var onPublication: ((AgentRunSnapshot) -> Void)?
@@ -88,6 +123,7 @@ final class AgentRunPresentation {
             providerName: providerName,
             phase: phase,
             output: outputBuffer.value,
+            timeline: timeline,
             diagnostics: diagnosticBuffer.value,
             plan: plan,
             tools: tools,
@@ -114,6 +150,8 @@ final class AgentRunPresentation {
         marker: "… earlier diagnostics omitted …\n")
     private var plan: [AgentPlanEntry] = []
     private var tools: [AgentToolPresentation] = []
+    private var timeline: [AgentRunTimelineItem] = []
+    private var timelineHasOmittedActivity = false
     private var permissions: [AgentPermissionPresentation] = []
     private var notices: [String] = []
     private var elapsedSeconds = 0
@@ -145,6 +183,8 @@ final class AgentRunPresentation {
         diagnosticBuffer.removeAll()
         plan = []
         tools = []
+        timeline = []
+        timelineHasOmittedActivity = false
         permissions = []
         notices = []
         elapsedSeconds = 0
@@ -180,7 +220,7 @@ final class AgentRunPresentation {
               !permissions[index].isResolving
         else { return false }
 
-        permissions[index].isResolving = true
+        permissions.remove(at: index)
         flushPendingPublication()
         publishNow()
         return true
@@ -227,10 +267,12 @@ final class AgentRunPresentation {
         switch event {
         case let .connected(agentName, _):
             providerName = agentName
-        case let .agentMessageDelta(_, text):
+        case let .agentMessageDelta(messageID, text):
             outputBuffer.append(text)
-        case let .thoughtDelta(_, text):
+            appendMessage(text, messageID: messageID, kind: .response)
+        case let .thoughtDelta(messageID, text):
             outputBuffer.append(text)
+            appendMessage(text, messageID: messageID, kind: .thought)
         case let .toolCall(tool):
             upsertTool(AgentToolPresentation(
                 id: tool.id,
@@ -271,13 +313,24 @@ final class AgentRunPresentation {
     private func upsertTool(_ tool: AgentToolPresentation) {
         if let index = tools.firstIndex(where: { $0.id == tool.id }) {
             tools[index] = tool
+            updateTimelineTool(tool)
             return
         }
         if tools.count == Self.maximumTools {
-            tools.remove(at: tools.startIndex)
+            let removedTool = tools.remove(at: tools.startIndex)
+            let previousTimelineCount = timeline.count
+            timeline.removeAll { item in
+                guard case let .tool(candidate) = item else { return false }
+                return candidate.id == removedTool.id
+            }
+            if timeline.count != previousTimelineCount {
+                markTimelineOmitted()
+            }
             evictedToolCount = saturatingIncrement(evictedToolCount)
         }
         tools.append(tool)
+        timeline.append(.tool(tool))
+        enforceTimelineBounds()
     }
 
     private func updateTool(_ update: AgentToolCallUpdate) {
@@ -294,6 +347,109 @@ final class AgentRunPresentation {
         if let status = update.status {
             tools[index].status = status
         }
+        updateTimelineTool(tools[index])
+    }
+
+    private func appendMessage(
+        _ text: String,
+        messageID: String?,
+        kind: AgentMessagePresentationKind)
+    {
+        guard !text.isEmpty else { return }
+        if case var .message(message) = timeline.last,
+           message.kind == kind,
+           message.messageID == messageID
+        {
+            message.text.append(text)
+            timeline[timeline.index(before: timeline.endIndex)] = .message(message)
+            enforceTimelineBounds()
+            return
+        }
+
+        timeline.append(.message(AgentMessagePresentation(
+            id: UUID(),
+            messageID: messageID,
+            kind: kind,
+            text: text)))
+        enforceTimelineBounds()
+    }
+
+    private func updateTimelineTool(_ tool: AgentToolPresentation) {
+        guard let index = timeline.firstIndex(where: { item in
+            guard case let .tool(candidate) = item else { return false }
+            return candidate.id == tool.id
+        }) else { return }
+        timeline[index] = .tool(tool)
+    }
+
+    private func enforceTimelineBounds() {
+        var retainedTextBytes = timelineTextByteCount
+        while retainedTextBytes > Self.maximumTimelineTextBytes,
+              let index = timeline.firstIndex(where: { item in
+                  if case .message = item { return true }
+                  return false
+              }),
+              case var .message(message) = timeline[index]
+        {
+            let originalByteCount = message.text.utf8.count
+            let excessByteCount = retainedTextBytes - Self.maximumTimelineTextBytes
+            if originalByteCount <= excessByteCount {
+                timeline.remove(at: index)
+                retainedTextBytes -= originalByteCount
+            } else {
+                message.text = droppingUTF8Prefix(
+                    message.text,
+                    atLeast: excessByteCount)
+                timeline[index] = .message(message)
+                retainedTextBytes -= originalByteCount - message.text.utf8.count
+            }
+            markTimelineOmitted()
+        }
+
+        if timelineHasOmittedActivity,
+           !timeline.contains(where: { item in
+               if case .omitted = item { return true }
+               return false
+           })
+        {
+            timeline.insert(.omitted, at: timeline.startIndex)
+        }
+
+        while timeline.count > Self.maximumTimelineItems,
+              let index = timeline.firstIndex(where: { item in
+                  if case .omitted = item { return false }
+                  return true
+              })
+        {
+            timeline.remove(at: index)
+            markTimelineOmitted()
+        }
+    }
+
+    private var timelineTextByteCount: Int {
+        timeline.reduce(into: 0) { count, item in
+            guard case let .message(message) = item else { return }
+            let byteCount = message.text.utf8.count
+            count = count > Int.max - byteCount ? Int.max : count + byteCount
+        }
+    }
+
+    private func markTimelineOmitted() {
+        timelineHasOmittedActivity = true
+        guard !timeline.contains(where: { item in
+            if case .omitted = item { return true }
+            return false
+        }) else { return }
+        timeline.insert(.omitted, at: timeline.startIndex)
+    }
+
+    private func droppingUTF8Prefix(_ text: String, atLeast byteCount: Int) -> String {
+        let data = Data(text.utf8)
+        var retainedStart = min(max(0, byteCount), data.count)
+        while retainedStart < data.count, data[retainedStart] & 0xC0 == 0x80 {
+            retainedStart += 1
+        }
+        return String(decoding: data[retainedStart...], as: UTF8.self)
     }
 
     private func publishTokenUpdate(runID: UUID) {
