@@ -1,5 +1,12 @@
 import Foundation
 
+public enum AgentRunLifecycleEvent: Equatable, Sendable {
+    case started(runID: UUID, profile: WakeProfile, prompt: String)
+    case event(runID: UUID, event: AgentRunEvent)
+    case completed(runID: UUID, result: AgentRunResult)
+    case failed(runID: UUID, message: String)
+}
+
 @MainActor
 public final class VoiceActivationCoordinator {
     public private(set) var state: ActivationState = .disabled {
@@ -24,14 +31,19 @@ public final class VoiceActivationCoordinator {
     public var onTranscriptChange: ((String) -> Void)?
     public var onCurrentTranscriptChange: ((String) -> Void)?
     public var onActiveProfileChange: ((WakeProfile?) -> Void)?
+    public var onAgentRunEvent: ((AgentRunLifecycleEvent) -> Void)?
 
     private let speechSession: any SpeechSessionProtocol
     private let commandRunner: any CommandRunning
+    private let agentRunner: any AgentHarnessRunning
     private let configuration: () throws -> ActivationConfiguration
     private let timing: ActivationTiming
     private var passiveEnabled = false
     private var pushToTalkActive = false
-    private var activeCommandTemplate: CommandTemplate?
+    private var capturedAction: WakeProfileAction?
+    private var capturedLocaleID: String?
+    private var executingAction: WakeProfileAction?
+    private var activeAgentRunID: UUID?
     private var capturedCommand = ""
     private var generation = 0
     private var captureGeneration = 0
@@ -41,15 +53,19 @@ public final class VoiceActivationCoordinator {
     private var inactivityTask: Task<Void, Never>?
     private var hardStopTask: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
+    private var executionTask: Task<Void, Never>?
+    private var agentCancellationTask: Task<Void, Never>?
 
     public convenience init(
         speechSession: any SpeechSessionProtocol,
         commandRunner: any CommandRunning,
+        agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
         configuration: @escaping () throws -> ActivationConfiguration)
     {
         self.init(
             speechSession: speechSession,
             commandRunner: commandRunner,
+            agentRunner: agentRunner,
             configuration: configuration,
             timing: .standard)
     }
@@ -57,17 +73,21 @@ public final class VoiceActivationCoordinator {
     init(
         speechSession: any SpeechSessionProtocol,
         commandRunner: any CommandRunning,
+        agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
         configuration: @escaping () throws -> ActivationConfiguration,
         timing: ActivationTiming)
     {
         self.speechSession = speechSession
         self.commandRunner = commandRunner
+        self.agentRunner = agentRunner
         self.configuration = configuration
         self.timing = timing
     }
 
     public func setPassiveEnabled(_ enabled: Bool) {
         passiveEnabled = enabled
+        guard !isAgentExecutionActive else { return }
+
         if enabled {
             guard !pushToTalkActive else { return }
             startPassiveListening()
@@ -78,7 +98,7 @@ public final class VoiceActivationCoordinator {
     }
 
     public func refreshConfiguration() {
-        guard passiveEnabled, !pushToTalkActive else { return }
+        guard passiveEnabled, !pushToTalkActive, !isAgentExecutionActive else { return }
         startPassiveListening()
     }
 
@@ -95,17 +115,29 @@ public final class VoiceActivationCoordinator {
             guard let profile = config.profiles.first(where: { $0.id == profileID }) else {
                 throw CoordinatorError.profileUnavailable
             }
-            let commandTemplate = try profile.commandTemplate
 
             executionGeneration &+= 1
+            let replacementGeneration = executionGeneration
             restartTask?.cancel()
             restartTask = nil
+            executionTask?.cancel()
+            executionTask = nil
+            if case .agent = executingAction, let runID = activeAgentRunID {
+                beginAgentCancellation(
+                    generation: replacementGeneration,
+                    runID: runID,
+                    scheduleRestart: false)
+            } else {
+                executingAction = nil
+                activeAgentRunID = nil
+            }
             pushToTalkActive = true
             stopActiveSession()
             capturedCommand = ""
             currentTranscript = ""
             activeProfile = profile
-            activeCommandTemplate = commandTemplate
+            capturedAction = profile.action
+            capturedLocaleID = config.localeID
             state = .capturing
             startSession(mode: .pushToTalk, localeID: config.localeID)
         } catch {
@@ -142,12 +174,76 @@ public final class VoiceActivationCoordinator {
         resumePassiveIfNeeded()
     }
 
+    public func cancelAgentRun() {
+        guard
+            state == .executing,
+            case .agent = executingAction,
+            let runID = activeAgentRunID,
+            agentCancellationTask == nil
+        else { return }
+
+        executionGeneration &+= 1
+        let cancellationGeneration = executionGeneration
+        executionTask?.cancel()
+        executionTask = nil
+        beginAgentCancellation(
+            generation: cancellationGeneration,
+            runID: runID,
+            scheduleRestart: true)
+    }
+
+    public func resolveAgentPermission(
+        runID: UUID,
+        turnToken: AgentTurnToken,
+        requestID: ACPRequestID,
+        optionID: String?)
+    {
+        guard
+            state == .executing,
+            case .agent = executingAction,
+            activeAgentRunID == runID
+        else { return }
+
+        let activeExecutionGeneration = executionGeneration
+        Task { @MainActor [weak self, agentRunner] in
+            guard
+                let self,
+                self.executionGeneration == activeExecutionGeneration,
+                self.activeAgentRunID == runID
+            else { return }
+            await agentRunner.resolvePermission(
+                turnToken: turnToken,
+                requestID: requestID,
+                optionID: optionID)
+        }
+    }
+
     public func stop() {
+        executionGeneration &+= 1
         passiveEnabled = false
         pushToTalkActive = false
-        executionGeneration &+= 1
+        restartTask?.cancel()
+        restartTask = nil
+        executionTask?.cancel()
+        executionTask = nil
+        agentCancellationTask?.cancel()
+        agentCancellationTask = nil
+        executingAction = nil
+        activeAgentRunID = nil
+        capturedAction = nil
+        capturedLocaleID = nil
         stopActiveSession()
         state = .disabled
+        Task { [agentRunner] in
+            await agentRunner.shutdown()
+        }
+    }
+
+    private var isAgentExecutionActive: Bool {
+        if case .agent = executingAction {
+            return true
+        }
+        return agentCancellationTask != nil
     }
 
     private func startPassiveListening() {
@@ -155,7 +251,8 @@ public final class VoiceActivationCoordinator {
         capturedCommand = ""
         currentTranscript = ""
         activeProfile = nil
-        activeCommandTemplate = nil
+        capturedAction = nil
+        capturedLocaleID = nil
 
         do {
             let config = try configuration()
@@ -247,29 +344,43 @@ public final class VoiceActivationCoordinator {
     }
 
     private func handlePassive(_ update: SpeechUpdate) {
-        let config: ActivationConfiguration
-        do {
-            config = try configuration()
-        } catch {
-            stopActiveSession()
-            state = .failed(error.localizedDescription)
-            return
+        let profiles: [WakeProfile]
+        let localeID: String
+        if state == .capturing, let activeProfile, let capturedLocaleID {
+            profiles = [activeProfile]
+            localeID = capturedLocaleID
+        } else {
+            do {
+                let config = try configuration()
+                profiles = config.profiles
+                localeID = config.localeID
+            } catch {
+                stopActiveSession()
+                state = .failed(error.localizedDescription)
+                return
+            }
         }
 
         guard let match = WakePhraseMatcher.match(
             in: update.transcript,
-            profiles: config.profiles)
+            profiles: profiles)
         else {
             if wakeHandoffTask != nil {
                 cancelWakeHandoff()
+                activeProfile = nil
+                capturedAction = nil
+                capturedLocaleID = nil
                 state = .listening
             }
             if update.isFinal { startPassiveListening() }
             return
         }
 
-        activeProfile = match.profile
-        activeCommandTemplate = try? match.profile.commandTemplate
+        if capturedAction == nil {
+            activeProfile = match.profile
+            capturedAction = match.profile.action
+            capturedLocaleID = localeID
+        }
         capturedCommand = match.command
         currentTranscript = match.command
         state = .capturing
@@ -281,9 +392,9 @@ public final class VoiceActivationCoordinator {
 
         guard !match.command.isEmpty else {
             if update.isFinal {
-                startCommandCapture(localeID: config.localeID)
+                startCommandCapture(localeID: localeID)
             } else {
-                scheduleWakeHandoff(localeID: config.localeID)
+                scheduleWakeHandoff(localeID: localeID)
             }
             return
         }
@@ -429,47 +540,181 @@ public final class VoiceActivationCoordinator {
     }
 
     private func execute(_ transcript: String) {
-        let template: CommandTemplate
-        do {
-            if let activeCommandTemplate {
-                template = activeCommandTemplate
-            } else {
-                template = try configuration().profiles[0].commandTemplate
-            }
-        } catch {
-            state = .failed(error.localizedDescription)
+        guard let action = capturedAction, let profile = activeProfile else {
+            state = .failed(CoordinatorError.actionUnavailable.localizedDescription)
             resumePassiveAfterCooldown()
             return
         }
 
         executionGeneration &+= 1
         let activeExecutionGeneration = executionGeneration
+        let pendingAgentCancellation = agentCancellationTask
+        executionTask?.cancel()
+        executingAction = action
         state = .executing
         lastTranscript = transcript
-        Task { [weak self, commandRunner] in
-            do {
-                _ = try await commandRunner.run(template: template, transcript: transcript)
-                guard
-                    let self,
-                    self.executionGeneration == activeExecutionGeneration
-                else { return }
-                self.resumePassiveAfterCooldown()
-            } catch {
-                guard
-                    let self,
-                    self.executionGeneration == activeExecutionGeneration
-                else { return }
-                self.state = .failed(error.localizedDescription)
+
+        switch action {
+        case let .command(template):
+            activeAgentRunID = nil
+            executionTask = Task { @MainActor [weak self, commandRunner] in
+                do {
+                    if let pendingAgentCancellation {
+                        await pendingAgentCancellation.value
+                    }
+                    try Task.checkCancellation()
+                    guard
+                        let self,
+                        self.executionGeneration == activeExecutionGeneration
+                    else { return }
+                    self.agentCancellationTask = nil
+                    _ = try await commandRunner.run(template: template, transcript: transcript)
+                    self.finishCommandExecution(generation: activeExecutionGeneration)
+                } catch {
+                    guard let self else { return }
+                    self.failCommandExecution(error, generation: activeExecutionGeneration)
+                }
+            }
+        case let .agent(agentConfiguration):
+            let runID = UUID()
+            activeAgentRunID = runID
+            onAgentRunEvent?(.started(
+                runID: runID,
+                profile: profile,
+                prompt: transcript))
+            executionTask = Task { @MainActor [weak self, agentRunner] in
+                do {
+                    if let pendingAgentCancellation {
+                        await pendingAgentCancellation.value
+                    }
+                    try Task.checkCancellation()
+                    guard
+                        let self,
+                        self.executionGeneration == activeExecutionGeneration,
+                        self.activeAgentRunID == runID
+                    else { return }
+                    self.agentCancellationTask = nil
+                    let result = try await agentRunner.run(
+                        profileID: profile.id,
+                        configuration: agentConfiguration,
+                        prompt: transcript,
+                        onEvent: { [weak self] event in
+                            await self?.publishAgentEvent(
+                                event,
+                                runID: runID,
+                                generation: activeExecutionGeneration)
+                        })
+                    self.finishAgentExecution(
+                        result,
+                        runID: runID,
+                        generation: activeExecutionGeneration)
+                } catch {
+                    guard let self else { return }
+                    self.failAgentExecution(
+                        error,
+                        runID: runID,
+                        generation: activeExecutionGeneration)
+                }
+            }
+        }
+    }
+
+    private func finishCommandExecution(generation: Int) {
+        guard executionGeneration == generation else { return }
+        executionTask = nil
+        executingAction = nil
+        resumePassiveAfterCooldown()
+    }
+
+    private func failCommandExecution(_ error: any Error, generation: Int) {
+        guard executionGeneration == generation else { return }
+        executionTask = nil
+        executingAction = nil
+        state = .failed(error.localizedDescription)
+        resumePassiveAfterCooldown()
+    }
+
+    private func publishAgentEvent(
+        _ event: AgentRunEvent,
+        runID: UUID,
+        generation: Int)
+    {
+        guard
+            executionGeneration == generation,
+            activeAgentRunID == runID
+        else { return }
+        onAgentRunEvent?(.event(runID: runID, event: event))
+    }
+
+    private func finishAgentExecution(
+        _ result: AgentRunResult,
+        runID: UUID,
+        generation: Int)
+    {
+        guard
+            executionGeneration == generation,
+            activeAgentRunID == runID
+        else { return }
+        onAgentRunEvent?(.completed(runID: runID, result: result))
+        executionTask = nil
+        executingAction = nil
+        activeAgentRunID = nil
+        resumePassiveAfterCooldown()
+    }
+
+    private func failAgentExecution(
+        _ error: any Error,
+        runID: UUID,
+        generation: Int)
+    {
+        guard
+            executionGeneration == generation,
+            activeAgentRunID == runID
+        else { return }
+        let message = error.localizedDescription
+        onAgentRunEvent?(.failed(runID: runID, message: message))
+        executionTask = nil
+        executingAction = nil
+        activeAgentRunID = nil
+        state = .failed(message)
+        resumePassiveAfterCooldown()
+    }
+
+    private func beginAgentCancellation(
+        generation: Int,
+        runID: UUID,
+        scheduleRestart: Bool)
+    {
+        guard agentCancellationTask == nil else { return }
+        agentCancellationTask = Task { @MainActor [weak self, agentRunner] in
+            await agentRunner.cancel()
+            guard
+                let self,
+                self.executionGeneration == generation
+            else { return }
+            self.agentCancellationTask = nil
+            guard self.activeAgentRunID == runID else { return }
+            self.onAgentRunEvent?(.completed(
+                runID: runID,
+                result: AgentRunResult(stopReason: .cancelled)))
+            self.executingAction = nil
+            self.activeAgentRunID = nil
+            if scheduleRestart {
                 self.resumePassiveAfterCooldown()
             }
         }
     }
 
     private func resumePassiveAfterCooldown() {
+        let activeExecutionGeneration = executionGeneration
         restartTask?.cancel()
         restartTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.executionCooldown)
-            guard !Task.isCancelled, let self else { return }
+            guard
+                !Task.isCancelled,
+                let self,
+                self.executionGeneration == activeExecutionGeneration
+            else { return }
             self.resumePassiveIfNeeded()
         }
     }
@@ -510,8 +755,14 @@ public final class VoiceActivationCoordinator {
 
 private enum CoordinatorError: Error, LocalizedError {
     case profileUnavailable
+    case actionUnavailable
 
     var errorDescription: String? {
-        "The push-to-talk profile is no longer available."
+        switch self {
+        case .profileUnavailable:
+            "The push-to-talk profile is no longer available."
+        case .actionUnavailable:
+            "The captured voice action is no longer available."
+        }
     }
 }
