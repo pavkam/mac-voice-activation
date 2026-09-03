@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 import VoiceActivationCore
 @testable import VoiceActivationApp
@@ -6,6 +7,8 @@ import VoiceActivationCore
 private final class RecordingOverlayDisplaySpy: RecordingOverlayDisplaying {
     private(set) var shownValues: [(String, WakeProfileAccent)] = []
     private(set) var hideCount = 0
+    private(set) var handoffCount = 0
+    var handoff: RecordingOverlayHandoff?
     var onCancel: (() -> Void)?
 
     func show(transcript: String, accent: WakeProfileAccent) {
@@ -14,6 +17,11 @@ private final class RecordingOverlayDisplaySpy: RecordingOverlayDisplaying {
 
     func hide() {
         hideCount += 1
+    }
+
+    func takeAgentRunHandoff() -> RecordingOverlayHandoff? {
+        handoffCount += 1
+        return handoff
     }
 
     func requestCancel() {
@@ -65,5 +73,19 @@ struct RecordingOverlayPresenterTests {
 
         #expect(display.shownValues.isEmpty)
         #expect(display.hideCount == 1)
+    }
+
+    @MainActor @Test func handoff_WhenRequested_ForwardsTheExactDisplayGeometry() {
+        let display = RecordingOverlayDisplaySpy()
+        let expected = RecordingOverlayHandoff(
+            visibleScreenFrame: NSRect(x: -1_920, y: 24, width: 1_920, height: 1_056),
+            sourceFrame: NSRect(x: -1_100, y: 66, width: 464, height: 118))
+        display.handoff = expected
+        let presenter = RecordingOverlayPresenter(display: display)
+
+        let actual = presenter.takeAgentRunHandoff()
+
+        #expect(actual == expected)
+        #expect(display.handoffCount == 1)
     }
 }

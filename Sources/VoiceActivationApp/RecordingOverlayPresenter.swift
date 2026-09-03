@@ -1,4 +1,10 @@
 import VoiceActivationCore
+import AppKit
+
+struct RecordingOverlayHandoff: Equatable {
+    let visibleScreenFrame: NSRect
+    let sourceFrame: NSRect
+}
 
 @MainActor
 protocol RecordingOverlayDisplaying: AnyObject {
@@ -6,6 +12,11 @@ protocol RecordingOverlayDisplaying: AnyObject {
 
     func show(transcript: String, accent: WakeProfileAccent)
     func hide()
+    func takeAgentRunHandoff() -> RecordingOverlayHandoff?
+}
+
+extension RecordingOverlayDisplaying {
+    func takeAgentRunHandoff() -> RecordingOverlayHandoff? { nil }
 }
 
 @MainActor
@@ -30,5 +41,9 @@ final class RecordingOverlayPresenter {
         } else {
             display.hide()
         }
+    }
+
+    func takeAgentRunHandoff() -> RecordingOverlayHandoff? {
+        display.takeAgentRunHandoff()
     }
 }

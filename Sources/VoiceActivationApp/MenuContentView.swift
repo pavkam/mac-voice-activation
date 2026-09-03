@@ -15,6 +15,10 @@ struct MenuContentView: View {
                 lastCommand
             }
 
+            if let snapshot = model.agentRunSnapshot {
+                agentRunControls(snapshot)
+            }
+
             profileList
 
             if model.state == .capturing {
@@ -139,6 +143,61 @@ struct MenuContentView: View {
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 14)
+    }
+
+    private func agentRunControls(_ snapshot: AgentRunSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(snapshot.providerName, systemImage: "sparkles")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(snapshot.accent.swiftUIColor)
+                Spacer()
+                Text(agentRunPhaseLabel(snapshot.phase))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    model.showAgentRun()
+                } label: {
+                    Label("Show agent run", systemImage: "rectangle.on.rectangle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                if snapshot.phase == .running {
+                    Button {
+                        model.cancelAgentRun(runID: snapshot.runID)
+                    } label: {
+                        Label("Cancel", systemImage: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red.opacity(0.84))
+                } else if snapshot.phase == .cancelling {
+                    Button("Cancelling…") {}
+                        .buttonStyle(.bordered)
+                        .disabled(true)
+                }
+            }
+        }
+        .padding(12)
+        .background(snapshot.accent.swiftUIColor.opacity(0.075), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(snapshot.accent.swiftUIColor.opacity(0.16), lineWidth: 0.75)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 12)
+    }
+
+    private func agentRunPhaseLabel(_ phase: AgentRunPhase) -> String {
+        switch phase {
+        case .running: "Running"
+        case .cancelling: "Cancelling"
+        case let .completed(reason): reason == .cancelled ? "Cancelled" : "Completed"
+        case .failed: "Failed"
+        }
     }
 
     private var cancelButton: some View {

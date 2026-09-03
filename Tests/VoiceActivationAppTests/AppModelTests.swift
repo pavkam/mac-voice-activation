@@ -55,6 +55,22 @@ private final class AppModelOverlayStub: RecordingOverlayDisplaying {
 }
 
 @MainActor
+private final class AppModelAgentPanelSpy: AgentRunPanelDisplaying {
+    var onAction: ((AgentRunPanelAction) -> Void)?
+    private(set) var began: [AgentRunSnapshot] = []
+    private(set) var updates: [AgentRunSnapshot] = []
+    private(set) var shown: [UUID] = []
+
+    func begin(_ snapshot: AgentRunSnapshot, from handoff: RecordingOverlayHandoff?) {
+        began.append(snapshot)
+    }
+
+    func update(_ snapshot: AgentRunSnapshot) { updates.append(snapshot) }
+    func show(runID: UUID) { shown.append(runID) }
+    func hide(runID: UUID) {}
+}
+
+@MainActor
 private final class AppModelSpeechSessionSpy: SpeechSessionProtocol {
     private(set) var startCount = 0
     private(set) var mode: SpeechSessionMode?
@@ -726,16 +742,58 @@ struct AppModelTests {
         #expect(fixture.preferences.wakeProfiles[0].pushToTalkHotKey == .defaultValue)
     }
 
+    @MainActor @Test func agentLifecycle_WhenRunStreams_OpensUpdatesAndRetainsPanel() throws {
+        let profile = try makeAgentProfile(displayName: "Codex")
+        let panel = AppModelAgentPanelSpy()
+        let fixture = try Fixture(profiles: [profile], agentRunPanel: panel)
+        let runID = UUID()
+
+        fixture.model.handleAgentRunLifecycleEvent(.started(
+            runID: runID,
+            profile: profile,
+            prompt: "Explain the change"))
+        fixture.model.handleAgentRunLifecycleEvent(.event(
+            runID: runID,
+            event: .agentMessageDelta(messageID: nil, text: "Done")))
+        fixture.model.handleAgentRunLifecycleEvent(.completed(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn)))
+        fixture.model.showAgentRun()
+
+        #expect(panel.began.count == 1)
+        #expect(fixture.model.agentRunSnapshot?.output == "Done")
+        #expect(fixture.model.agentRunSnapshot?.phase == .completed(.endTurn))
+        #expect(panel.shown == [runID])
+    }
+
+    @MainActor @Test func agentLifecycle_WhenEventIsStale_IgnoresIt() throws {
+        let profile = try makeAgentProfile(displayName: "Codex")
+        let fixture = try Fixture(profiles: [profile])
+        let runID = UUID()
+        fixture.model.handleAgentRunLifecycleEvent(.started(
+            runID: runID,
+            profile: profile,
+            prompt: "Current"))
+
+        fixture.model.handleAgentRunLifecycleEvent(.event(
+            runID: UUID(),
+            event: .agentMessageDelta(messageID: nil, text: "stale")))
+
+        #expect(fixture.model.agentRunSnapshot?.output == "")
+    }
+
     @MainActor
     private struct Fixture {
         let preferences: AppPreferences
         let shortcut = ShortcutSpy()
         let speech = AppModelSpeechSessionSpy()
+        let agentRunPanel: AppModelAgentPanelSpy
         let model: AppModel
 
         init(
             profiles: [WakeProfile]? = nil,
             agentRunner: any AgentHarnessRunning = AppModelAgentRunnerSpy(),
+            agentRunPanel: AppModelAgentPanelSpy = AppModelAgentPanelSpy(),
             isExecutableFile: @escaping @MainActor (String) -> Bool = { path in
                 FileManager.default.isExecutableFile(atPath: path)
             },
@@ -749,12 +807,14 @@ struct AppModelTests {
             let defaults = try #require(UserDefaults(suiteName: suite))
             defaults.removePersistentDomain(forName: suite)
             preferences = AppPreferences(defaults: defaults)
+            self.agentRunPanel = agentRunPanel
             if let profiles {
                 preferences.wakeProfiles = profiles
             }
             model = AppModel(
                 preferences: preferences,
                 recordingOverlay: AppModelOverlayStub(),
+                agentRunPanel: agentRunPanel,
                 shortcut: shortcut,
                 speechSession: speech,
                 agentRunner: agentRunner,

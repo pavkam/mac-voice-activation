@@ -62,6 +62,17 @@ final class RecordingOverlayController: RecordingOverlayDisplaying {
         activeVisibleFrame = nil
     }
 
+    func takeAgentRunHandoff() -> RecordingOverlayHandoff? {
+        guard panel.isVisible, let visibleFrame = activeVisibleFrame else { return nil }
+        let handoff = RecordingOverlayHandoff(
+            visibleScreenFrame: visibleFrame,
+            sourceFrame: panel.frame)
+        model.isRecording = false
+        panel.orderOut(nil)
+        activeVisibleFrame = nil
+        return handoff
+    }
+
     private func activeScreenVisibleFrame() -> NSRect? {
         let mouseLocation = NSEvent.mouseLocation
         let screen = NSScreen.screens.first {

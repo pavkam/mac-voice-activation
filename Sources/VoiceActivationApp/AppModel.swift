@@ -14,6 +14,7 @@ final class AppModel {
     var localeID: String
     var settingsError: String?
     private(set) var isSavingSettings = false
+    private(set) var agentRunSnapshot: AgentRunSnapshot?
 
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let speechSession: any SpeechSessionProtocol
@@ -24,6 +25,8 @@ final class AppModel {
     @ObservationIgnored private let permissionRequest: @MainActor () async -> Bool
     @ObservationIgnored private let shortcut: any PushToTalkShortcutManaging
     @ObservationIgnored private let overlayPresenter: RecordingOverlayPresenter
+    @ObservationIgnored private let agentRunPresentation: AgentRunPresentation
+    @ObservationIgnored private let agentRunPanelPresenter: AgentRunPanelPresenter
     @ObservationIgnored private let soundPresenter: CaptureSoundPresenter
     @ObservationIgnored private var started = false
     @ObservationIgnored private var permissionGranted = false
@@ -31,6 +34,7 @@ final class AppModel {
     @ObservationIgnored private var hotkeyHeld = false
     @ObservationIgnored private var recordingShortcut = false
     @ObservationIgnored private var activeProfile: WakeProfile?
+    @ObservationIgnored private var pendingAgentHandoff: RecordingOverlayHandoff?
     @ObservationIgnored private lazy var coordinator = VoiceActivationCoordinator(
         speechSession: speechSession,
         commandRunner: commandRunner,
@@ -43,6 +47,7 @@ final class AppModel {
     init(
         preferences: AppPreferences = AppPreferences(),
         recordingOverlay: any RecordingOverlayDisplaying = RecordingOverlayController(),
+        agentRunPanel: any AgentRunPanelDisplaying = AgentRunPanelController(),
         shortcut: any PushToTalkShortcutManaging = PushToTalkShortcut(),
         speechSession: any SpeechSessionProtocol = AppleSpeechSession(),
         commandRunner: any CommandRunning = CommandRunner(),
@@ -62,6 +67,8 @@ final class AppModel {
         self.isDirectory = isDirectory
         self.permissionRequest = permissionRequest
         overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
+        agentRunPresentation = AgentRunPresentation()
+        agentRunPanelPresenter = AgentRunPanelPresenter(display: agentRunPanel)
         soundPresenter = CaptureSoundPresenter(player: soundPlayer)
         passiveEnabled = preferences.passiveEnabled
         activeWakeProfiles = preferences.wakeProfiles
@@ -69,6 +76,21 @@ final class AppModel {
         localeID = preferences.localeID
         overlayPresenter.onCancel = { [weak self] in
             self?.cancelCapture()
+        }
+        agentRunPresentation.onPublication = { [weak self] snapshot in
+            self?.publishAgentRun(snapshot)
+        }
+        agentRunPanelPresenter.onCancel = { [weak self] runID in
+            self?.cancelAgentRun(runID: runID)
+        }
+        agentRunPanelPresenter.onPermission = { [weak self] runID, key, optionID in
+            self?.resolveAgentPermission(
+                runID: runID,
+                key: key,
+                optionID: optionID)
+        }
+        agentRunPanelPresenter.onClose = { [weak self] runID in
+            self?.agentRunPresentation.close(runID: runID)
         }
 
         if startsAutomatically {
@@ -159,6 +181,10 @@ final class AppModel {
         shortcut.stop()
         coordinator.stop()
         overlayPresenter.update(state: .disabled, transcript: "")
+        if let runID = agentRunSnapshot?.runID {
+            agentRunPanelPresenter.hide(runID: runID)
+        }
+        agentRunPresentation.shutdown()
     }
 
     func setPushToTalkHotKey(_ hotKey: PushToTalkHotKey?, for profileID: UUID) {
@@ -187,9 +213,17 @@ final class AppModel {
         guard !started else { return }
         started = true
         coordinator.onStateChange = { [weak self] in
-            self?.state = $0
-            self?.soundPresenter.update(state: $0)
-            self?.updateRecordingOverlay()
+            guard let self else { return }
+            if $0 == .capturing {
+                self.pendingAgentHandoff = nil
+            } else if $0 == .executing, self.pendingAgentHandoff == nil {
+                self.pendingAgentHandoff = self.overlayPresenter.takeAgentRunHandoff()
+            } else if $0 != .executing {
+                self.pendingAgentHandoff = nil
+            }
+            self.state = $0
+            self.soundPresenter.update(state: $0)
+            self.updateRecordingOverlay()
         }
         coordinator.onTranscriptChange = { [weak self] in self?.lastTranscript = $0 }
         coordinator.onCurrentTranscriptChange = { [weak self] in
@@ -199,6 +233,9 @@ final class AppModel {
         coordinator.onActiveProfileChange = { [weak self] in
             self?.activeProfile = $0
             self?.updateRecordingOverlay()
+        }
+        coordinator.onAgentRunEvent = { [weak self] event in
+            self?.handleAgentRunLifecycleEvent(event)
         }
         do {
             try registerShortcuts(activeWakeProfiles)
@@ -276,6 +313,44 @@ final class AppModel {
         coordinator.cancelCapture()
     }
 
+    func showAgentRun() {
+        guard let runID = agentRunSnapshot?.runID else { return }
+        agentRunPanelPresenter.show(runID: runID)
+    }
+
+    func cancelAgentRun(runID: UUID) {
+        guard agentRunPresentation.beginCancellation(runID: runID) else { return }
+        coordinator.cancelAgentRun()
+    }
+
+    func resolveAgentPermission(
+        runID: UUID,
+        key: AgentPermissionKey,
+        optionID: String)
+    {
+        guard agentRunPresentation.beginPermissionResolution(runID: runID, key: key) else {
+            return
+        }
+        coordinator.resolveAgentPermission(
+            runID: runID,
+            turnToken: key.turnToken,
+            requestID: key.requestID,
+            optionID: optionID)
+    }
+
+    func handleAgentRunLifecycleEvent(_ event: AgentRunLifecycleEvent) {
+        switch event {
+        case let .started(runID, profile, prompt):
+            agentRunPresentation.start(runID: runID, profile: profile, prompt: prompt)
+        case let .event(runID, event):
+            agentRunPresentation.receive(runID: runID, event: event)
+        case let .completed(runID, result):
+            agentRunPresentation.complete(runID: runID, result: result)
+        case let .failed(runID, message):
+            agentRunPresentation.fail(runID: runID, message: message)
+        }
+    }
+
     private func ensurePermissions() async -> Bool {
         if permissionGranted { return true }
         if let permissionTask {
@@ -307,6 +382,17 @@ final class AppModel {
             state: state,
             transcript: currentTranscript,
             accent: activeProfile?.accent ?? activeWakeProfiles.first?.accent ?? .blue)
+    }
+
+    private func publishAgentRun(_ snapshot: AgentRunSnapshot) {
+        let beginsRun = agentRunSnapshot?.runID != snapshot.runID
+        agentRunSnapshot = snapshot
+        if beginsRun {
+            agentRunPanelPresenter.begin(snapshot, from: pendingAgentHandoff)
+            pendingAgentHandoff = nil
+        } else {
+            agentRunPanelPresenter.update(snapshot)
+        }
     }
 
     private static func executableFileExists(_ path: String) -> Bool {
