@@ -69,6 +69,7 @@ struct MenuContentViewTests {
         return AppModel(
             preferences: preferences,
             recordingOverlay: MenuOverlayStub(),
+            soundPlayer: SilentCaptureSoundPlayer(),
             startsAutomatically: false)
     }
 }

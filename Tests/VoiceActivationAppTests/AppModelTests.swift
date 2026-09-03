@@ -221,6 +221,7 @@ struct AppModelTests {
             shortcut: ShortcutSpy(),
             speechSession: AppModelSpeechSessionSpy(),
             permissionRequest: { true },
+            soundPlayer: SilentCaptureSoundPlayer(),
             startsAutomatically: false)
 
         await model.start()
@@ -245,6 +246,7 @@ struct AppModelTests {
             shortcut: shortcut,
             speechSession: speech,
             permissionRequest: { true },
+            soundPlayer: SilentCaptureSoundPlayer(),
             startsAutomatically: false)
 
         await model.start()
@@ -267,6 +269,7 @@ struct AppModelTests {
             shortcut: shortcut,
             speechSession: speech,
             permissionRequest: { true },
+            soundPlayer: SilentCaptureSoundPlayer(),
             startsAutomatically: false)
 
         await model.start()
@@ -290,6 +293,7 @@ struct AppModelTests {
             shortcut: ShortcutSpy(),
             speechSession: speech,
             permissionRequest: { await permission.request() },
+            soundPlayer: SilentCaptureSoundPlayer(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -317,6 +321,7 @@ struct AppModelTests {
             shortcut: ShortcutSpy(),
             speechSession: AppModelSpeechSessionSpy(),
             permissionRequest: { await permission.request() },
+            soundPlayer: SilentCaptureSoundPlayer(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -340,6 +345,7 @@ struct AppModelTests {
             shortcut: ShortcutSpy(),
             speechSession: AppModelSpeechSessionSpy(),
             permissionRequest: { await permission.request() },
+            soundPlayer: SilentCaptureSoundPlayer(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -364,6 +370,7 @@ struct AppModelTests {
             shortcut: shortcut,
             speechSession: AppModelSpeechSessionSpy(),
             permissionRequest: { await permission.request() },
+            soundPlayer: SilentCaptureSoundPlayer(),
             startsAutomatically: false)
         let startup = Task { @MainActor in await model.start() }
         await waitUntil { permission.isWaiting && !shortcut.startedProfiles.isEmpty }
@@ -819,6 +826,7 @@ struct AppModelTests {
                 speechSession: speech,
                 agentRunner: agentRunner,
                 permissionRequest: { true },
+                soundPlayer: SilentCaptureSoundPlayer(),
                 isExecutableFile: isExecutableFile,
                 isDirectory: isDirectory,
                 startsAutomatically: false)
