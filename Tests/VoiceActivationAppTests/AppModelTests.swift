@@ -76,6 +76,62 @@ private final class PermissionRequestGate {
 }
 
 struct AppModelTests {
+    @MainActor @Test func togglePassiveListening_WhenProfilesDiffer_PausesWithoutChangingProfiles() throws {
+        let computer = try WakeProfile(
+            wakePhrase: "computer",
+            urlTemplate: "https://one.example/?q={urlText}",
+            accent: .blue,
+            isEnabled: true)
+        let sneek = try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://two.example/?q={urlText}",
+            accent: .purple,
+            isEnabled: false)
+        let fixture = try Fixture(profiles: [computer, sneek])
+
+        fixture.model.togglePassiveListening()
+
+        #expect(!fixture.model.passiveEnabled)
+        #expect(!fixture.preferences.passiveEnabled)
+        #expect(fixture.model.activeWakeProfiles.map(\.isEnabled) == [true, false])
+    }
+
+    @MainActor @Test func togglePassiveListening_WhenPaused_ResumesPreviousProfiles() async throws {
+        let suite = "VoiceActivationResumeAllTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        preferences.passiveEnabled = false
+        let profiles = [
+            try WakeProfile(
+                wakePhrase: "computer",
+                urlTemplate: "https://one.example/?q={urlText}",
+                accent: .blue,
+                isEnabled: true),
+            try WakeProfile(
+                wakePhrase: "sneek",
+                urlTemplate: "https://two.example/?q={urlText}",
+                accent: .purple,
+                isEnabled: false),
+        ]
+        preferences.wakeProfiles = profiles
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: ShortcutSpy(),
+            speechSession: AppModelSpeechSessionSpy(),
+            permissionRequest: { true },
+            startsAutomatically: false)
+
+        await model.start()
+        model.togglePassiveListening()
+        await waitUntil { model.state == .listening }
+
+        #expect(model.passiveEnabled)
+        #expect(preferences.passiveEnabled)
+        #expect(model.activeWakeProfiles.map(\.isEnabled) == [true, false])
+    }
+
     @MainActor @Test func start_WhenPassiveListeningIsEnabled_WiresAndStartsDependencies() async throws {
         let suite = "VoiceActivationStartupTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -232,6 +288,9 @@ struct AppModelTests {
         let deadline = clock.now.advanced(by: timeout)
         while !condition(), clock.now < deadline {
             try? await Task.sleep(for: .milliseconds(1))
+        }
+        if !condition() {
+            Issue.record("Condition was not satisfied before timeout")
         }
     }
 

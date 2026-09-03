@@ -92,13 +92,38 @@ struct MenuContentView: View {
     }
 
     private var profileList: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("Wake profiles")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.8)
-                .padding(.horizontal, 4)
+        let listeningControl = MenuListeningControlPresentation.make(
+            isListening: model.passiveEnabled)
+
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text("Wake profiles")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.8)
+
+                Spacer()
+
+                Button {
+                    model.togglePassiveListening()
+                } label: {
+                    Label(listeningControl.title, systemImage: listeningControl.symbolName)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .foregroundStyle(model.passiveEnabled ? Color.secondary : headerAccent)
+                        .background(.primary.opacity(0.055), in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(.white.opacity(0.08), lineWidth: 0.75)
+                        }
+                }
+                .buttonStyle(.plain)
+                .help("\(listeningControl.title) wake phrase listening")
+                .accessibilityLabel("\(listeningControl.title) wake phrase listening")
+            }
+            .padding(.horizontal, 4)
 
             ScrollView {
                 LazyVStack(spacing: 7) {

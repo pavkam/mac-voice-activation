@@ -13,7 +13,9 @@ validation errors keep it open so the invalid field can be corrected.
   and occur at the beginning of the recognized utterance. If phrases overlap,
   the longest match wins. The menu-bar menu has a separate persistent toggle
   for every saved phrase. Disabled phrases are excluded from recognition
-  without affecting the other profiles.
+  without affecting the other profiles. Use **Pause all** in the same menu to
+  stop passive recognition without changing those per-profile choices; use
+  **Resume all** to restore listening for the previously enabled phrases.
 - **Speech locale:** defaults to the current macOS locale and accepts an Apple
   locale identifier such as `en-US` or `pt-PT`.
 - **Always listen:** enabled by default and keeps an on-device recognition
@@ -29,7 +31,8 @@ validation errors keep it open so the invalid field can be corrected.
 
 A wake phrase must be enabled and end at a word boundary. `computer, open calendar`
 matches; `supercomputer open calendar` does not. A profile’s push-to-talk binding
-remains available when that profile’s passive wake phrase is disabled.
+remains available when that profile’s passive wake phrase or all passive listening
+is disabled.
 
 Passive recognition fails closed when the selected locale does not support
 on-device recognition. Command capture and push-to-talk may use Apple's speech

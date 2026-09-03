@@ -12,6 +12,20 @@ private final class MenuOverlayStub: RecordingOverlayDisplaying {
 }
 
 struct MenuContentViewTests {
+    @Test func listeningControl_WhenListening_OffersPauseAll() {
+        let presentation = MenuListeningControlPresentation.make(isListening: true)
+
+        #expect(presentation.title == "Pause all")
+        #expect(presentation.symbolName == "pause.circle.fill")
+    }
+
+    @Test func listeningControl_WhenPaused_OffersResumeAll() {
+        let presentation = MenuListeningControlPresentation.make(isListening: false)
+
+        #expect(presentation.title == "Resume all")
+        #expect(presentation.symbolName == "play.circle.fill")
+    }
+
     @MainActor @Test func render_WhenMenuHostProposesNoHeight_KeepsProfileRowsVisible() throws {
         let oneProfileRenderer = ImageRenderer(content: MenuContentView(model: try model(profileCount: 1)))
         let twoProfileRenderer = ImageRenderer(content: MenuContentView(model: try model(profileCount: 2)))

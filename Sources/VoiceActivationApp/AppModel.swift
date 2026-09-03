@@ -87,6 +87,10 @@ final class AppModel {
         }
     }
 
+    func togglePassiveListening() {
+        setPassiveEnabled(!passiveEnabled)
+    }
+
     func setWakeProfileEnabled(_ id: UUID, enabled: Bool) {
         guard let activeIndex = activeWakeProfiles.firstIndex(where: { $0.id == id }) else {
             return
