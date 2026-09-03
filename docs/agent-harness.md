@@ -41,7 +41,7 @@ launched application cannot rely on an interactive shell's `PATH`.
 
 The app inherits the launch environment but never stores API keys or other
 secret values in preferences. Users authenticate the selected agent through
-its normal CLI or protocol-driven login flow.
+its normal provider CLI before starting a run.
 
 ## Runtime architecture
 
@@ -94,10 +94,11 @@ ACP subprocess communication follows the stable protocol-owner specification:
 - Startup calls `initialize` with `protocolVersion: 1`, no filesystem,
   terminal, terminal-authentication, or elicitation capabilities, and Voice
   Activation implementation metadata.
-- Protocol-driven authentication uses the first advertised agent-managed
-  method. A terminal-only authentication method produces a clear error asking
-  the user to authenticate with that CLI; Voice Activation does not emulate an
-  interactive terminal.
+- Session creation uses the provider's ambient CLI authentication. If it
+  returns `auth_required`, the connection closes cleanly and the app displays
+  the advertised method names with provider CLI login guidance. Voice
+  Activation neither guesses among multiple methods nor emulates an interactive
+  terminal.
 - A fresh `session/new` uses the profile's absolute working directory and an
   empty MCP server list.
 - Each utterance becomes one `session/prompt` containing one text content
