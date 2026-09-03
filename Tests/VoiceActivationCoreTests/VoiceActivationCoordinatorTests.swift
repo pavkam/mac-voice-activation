@@ -548,17 +548,17 @@ struct VoiceActivationCoordinatorTests {
     }
 
     @MainActor @Test func commandCapture_WhenWordsArrive_CancelsInitialSilence() async throws {
-        let fixture = try Fixture(timing: .initialSilenceThenInactivity)
+        let fixture = try Fixture(timing: .initialSilenceCancellation)
         fixture.coordinator.setPassiveEnabled(true)
         fixture.speech.emit("computer", isFinal: true)
 
-        try await Task.sleep(for: .milliseconds(10))
         fixture.speech.emit("open calendar")
-        try await Task.sleep(for: .milliseconds(100))
+        try await Task.sleep(for: .milliseconds(200))
 
         #expect(fixture.coordinator.state == .capturing)
         #expect(await fixture.runner.recordedTranscripts().isEmpty)
-        await waitUntil(timeout: .milliseconds(200)) {
+        fixture.speech.emit("open calendar", isFinal: true)
+        await waitUntil {
             await fixture.runner.recordedTranscripts() == ["open calendar"]
         }
     }
@@ -1456,11 +1456,11 @@ private extension ActivationTiming {
         passiveRestart: .milliseconds(10),
         executionCooldown: .milliseconds(10))
 
-    static let initialSilenceThenInactivity = ActivationTiming(
+    static let initialSilenceCancellation = ActivationTiming(
         wakeHandoffDelay: .milliseconds(5),
-        captureInitialSilence: .milliseconds(80),
-        captureInactivity: .milliseconds(160),
-        captureMaximum: .milliseconds(500),
+        captureInitialSilence: .milliseconds(50),
+        captureInactivity: .seconds(5),
+        captureMaximum: .seconds(10),
         passiveRestart: .milliseconds(10),
         executionCooldown: .milliseconds(10))
 
