@@ -78,7 +78,9 @@ before putting it into Settings.
 ## An agent profile does not start
 
 - Confirm the provider executable and working folder are absolute paths and
-  still exist. Finder-launched applications cannot rely on your shell's `PATH`.
+  still exist. Use **Detect** to search the app's inherited `PATH` and common
+  macOS install locations, or select the executable directly. Finder-launched
+  applications cannot rely on your interactive shell's complete `PATH`.
 - Run the provider's normal login command in Terminal first. An ACP
   `auth_required` response is shown in the panel with the provider-advertised
   authentication methods; Voice Activation does not collect credentials.

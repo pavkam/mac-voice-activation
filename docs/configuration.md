@@ -90,15 +90,18 @@ my-app://command?prompt={urlText}
 ### Agent targets
 
 Choose one of the provider presets or **Custom**. A preset fills editable
-defaults; the saved absolute executable and argument list remain authoritative.
-Finder-launched apps do not inherit an interactive shell's `PATH`, so resolve
-wrappers such as `npx` to their absolute location before saving.
+defaults; a fresh Agent target selects the first available preset automatically.
+Use **Detect** to resolve a command name from the app's inherited `PATH` and
+known install locations, or use the file button to choose it directly. The saved
+absolute executable and argument list remain authoritative. Finder-launched apps
+do not inherit an interactive shell's complete `PATH`, so the detector also
+checks common Homebrew, local, ChatGPT, and NVM locations.
 
 | Field | Meaning |
 | --- | --- |
 | Provider | Cursor, Codex, Claude, or Custom ACP v1 process. |
 | Display name | Label shown in the menu and floating run panel. |
-| Executable | Absolute path to the ACP process or launcher. |
+| Executable | Detected command or absolute ACP process path. |
 | Working folder | Absolute project directory supplied to `session/new`. |
 | Permission policy | Ask in the panel, automatically allow once, or reject. |
 | Adapter arguments | Direct process arguments; no shell parsing occurs. |

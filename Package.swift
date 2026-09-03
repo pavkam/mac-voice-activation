@@ -23,6 +23,7 @@ let package = Package(
                 "Resources/CaptureEnd.wav",
                 "Resources/CaptureStart.wav",
                 "Resources/Info.plist",
+                "Resources/VoiceActivation.icns",
             ]),
         .testTarget(
             name: "VoiceActivationCoreTests",

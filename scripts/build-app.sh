@@ -17,6 +17,7 @@ rm -rf "$app_path"
 mkdir -p "$contents_path/MacOS" "$contents_path/Resources"
 cp "$binary_dir/VoiceActivation" "$contents_path/MacOS/VoiceActivation"
 cp "$project_dir/Sources/VoiceActivationApp/Resources/Info.plist" "$contents_path/Info.plist"
+cp "$project_dir/Sources/VoiceActivationApp/Resources/VoiceActivation.icns" "$contents_path/Resources/VoiceActivation.icns"
 cp "$project_dir/Sources/VoiceActivationApp/Resources/CaptureStart.wav" "$contents_path/Resources/CaptureStart.wav"
 cp "$project_dir/Sources/VoiceActivationApp/Resources/CaptureEnd.wav" "$contents_path/Resources/CaptureEnd.wav"
 

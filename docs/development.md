@@ -8,6 +8,7 @@ Sources/VoiceActivationApp/        macOS adapters and SwiftUI application
 Tests/VoiceActivationCoreTests/    Coordinator and command unit tests
 Tests/VoiceActivationAppTests/     macOS adapter unit tests
 scripts/build-app.sh               Application bundle assembly and signing
+scripts/generate-app-icon.swift    Reproducible macOS icon artwork generator
 .github/workflows/swift.yml        Build, test, and packaging CI
 ```
 

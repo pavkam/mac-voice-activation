@@ -2,6 +2,81 @@ import Testing
 @testable import VoiceActivationApp
 
 struct AgentExecutableLocatorTests {
+    @Test func resolve_WhenExecutableIsOnEnvironmentPath_ReportsEnvironmentPathSource() {
+        let executable = "/custom/tools/cursor-agent"
+        let locator = AgentExecutableLocator(
+            path: "/custom/tools:/usr/bin",
+            additionalDirectories: ["/opt/homebrew/bin"],
+            nvmBinDirectories: [],
+            isExecutableFile: { $0 == executable })
+
+        let location = locator.resolve(executable: "cursor-agent")
+
+        #expect(location == AgentExecutableLocation(
+            path: executable,
+            source: .environmentPath))
+    }
+
+    @Test func resolve_WhenCommandNameHasOuterWhitespace_TrimsBeforeSearching() {
+        let executable = "/custom/tools/my-agent"
+        let locator = AgentExecutableLocator(
+            path: "/custom/tools",
+            additionalDirectories: [],
+            nvmBinDirectories: [],
+            isExecutableFile: { $0 == executable })
+
+        let location = locator.resolve(executable: "  my-agent  ")
+
+        #expect(location == AgentExecutableLocation(
+            path: executable,
+            source: .environmentPath))
+    }
+
+    @Test func resolve_WhenExecutableIsInKnownInstallDirectory_ReportsKnownLocationSource() {
+        let executable = "/opt/homebrew/bin/npx"
+        let locator = AgentExecutableLocator(
+            path: "/usr/bin",
+            additionalDirectories: ["/opt/homebrew/bin"],
+            nvmBinDirectories: [],
+            isExecutableFile: { $0 == executable })
+
+        let location = locator.resolve(executable: "npx")
+
+        #expect(location == AgentExecutableLocation(
+            path: executable,
+            source: .knownLocation))
+    }
+
+    @Test func resolve_WhenAbsoluteExecutableIsRunnable_ReportsExplicitPathSource() {
+        let executable = "/Applications/My Agent/bin/acp"
+        let locator = AgentExecutableLocator(
+            path: nil,
+            additionalDirectories: [],
+            nvmBinDirectories: [],
+            isExecutableFile: { $0 == executable })
+
+        let location = locator.resolve(executable: executable)
+
+        #expect(location == AgentExecutableLocation(
+            path: executable,
+            source: .explicitPath))
+    }
+
+    @Test func resolve_WhenAbsoluteExecutableMatchesEnvironmentPath_ReportsEnvironmentPathSource() {
+        let executable = "/custom/tools/cursor-agent"
+        let locator = AgentExecutableLocator(
+            path: "/custom/tools:/usr/bin",
+            additionalDirectories: [],
+            nvmBinDirectories: [],
+            isExecutableFile: { $0 == executable })
+
+        let location = locator.resolve(executable: executable)
+
+        #expect(location == AgentExecutableLocation(
+            path: executable,
+            source: .environmentPath))
+    }
+
     @Test func locate_WhenSeveralNpxVersionsExist_UsesNewestExecutableVersion() {
         let executable = "/Users/test/.nvm/versions/node/v20.10.0/bin/npx"
         let locator = AgentExecutableLocator(

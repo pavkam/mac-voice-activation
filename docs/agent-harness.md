@@ -35,9 +35,20 @@ Settings offer four agent presets:
 | Custom | User-supplied absolute executable and argument vector |
 
 The adapter versions are pinned so a working profile cannot silently acquire a
-breaking protocol change. Selecting a preset fills editable launch fields. The
-persisted absolute executable path remains authoritative because a Finder-
-launched application cannot rely on an interactive shell's `PATH`.
+breaking protocol change. Selecting a preset fills editable launch fields. When
+an empty Agent target is opened for the first time, settings choose the first
+locally available preset, preferring Cursor before the `npx`-based adapters.
+The executable detector checks the app process's inherited `PATH`, then common
+Homebrew, `/usr/local`, `~/.local/bin`, ChatGPT application-resource, and
+installed NVM node-version directories. Settings identify whether discovery
+came from `PATH`, a known location, NVM, or a directly selected file. Custom
+targets may enter a bare command name and resolve it with **Detect**, or choose
+a file using the native picker.
+
+The persisted absolute executable path remains authoritative because a Finder-
+or login-item-launched application cannot rely on an interactive shell's
+`PATH`. Reopening settings never replaces a saved path or edited adapter
+arguments automatically.
 
 The app inherits the launch environment but never stores API keys or other
 secret values in preferences. Users authenticate the selected agent through

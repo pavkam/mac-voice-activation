@@ -6,6 +6,8 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>VoiceActivation</string>
+    <key>CFBundleIconFile</key>
+    <string>VoiceActivation</string>
     <key>CFBundleIdentifier</key>
     <string>dev.alex.voice-activation</string>
     <key>CFBundleInfoDictionaryVersion</key>

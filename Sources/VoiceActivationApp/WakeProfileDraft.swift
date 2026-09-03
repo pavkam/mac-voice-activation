@@ -97,6 +97,15 @@ struct WakeProfileDraft: Equatable, Identifiable {
         }
     }
 
+    mutating func selectTarget(
+        _ target: WakeProfileTargetKind,
+        locator: AgentExecutableLocator = AgentExecutableLocator())
+    {
+        targetKind = target
+        guard target == .agent else { return }
+        agentHarness.selectDefaultPresetIfAvailable(locator: locator)
+    }
+
     func validatedProfile() throws -> WakeProfile {
         let action: WakeProfileAction
         switch targetKind {

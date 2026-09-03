@@ -90,8 +90,12 @@ shell, so punctuation in speech cannot become shell syntax.
 ## Local coding agents
 
 Set a profile's **Target** to **Agent**, then choose Cursor, Codex, Claude, or a
-custom ACP v1 executable. Confirm the absolute executable path, select an
-absolute working folder, choose a permission policy, and save.
+custom ACP v1 executable. A fresh Agent target selects the first installed
+provider it can find. The executable field resolves command names from the
+app's inherited `PATH` and common Homebrew, local, ChatGPT, and NVM locations;
+**Detect** retries discovery, while the folder button selects an executable
+directly. Select an absolute working folder, choose a permission policy, and
+save.
 
 The app keeps the foreground application focused while a floating panel streams
 agent text, plans, tools, diagnostics, elapsed time, and permission choices.

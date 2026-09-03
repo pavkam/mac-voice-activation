@@ -172,6 +172,76 @@ struct WakeProfileDraftTests {
             permissionPolicy: .allowOnce))
     }
 
+    @Test func detectExecutable_WhenCustomDraftContainsCommandName_ResolvesAbsolutePath() {
+        var draft = AgentHarnessDraft(
+            preset: .custom,
+            displayName: "My agent",
+            executablePath: "my-acp-agent",
+            arguments: ["--acp"],
+            workingDirectory: "/custom/project",
+            permissionPolicy: .ask)
+        let locator = AgentExecutableLocator(
+            path: "/custom/bin:/usr/bin",
+            additionalDirectories: [],
+            nvmBinDirectories: [],
+            isExecutableFile: { $0 == "/custom/bin/my-acp-agent" })
+
+        let location = draft.detectExecutable(locator: locator)
+
+        #expect(location == AgentExecutableLocation(
+            path: "/custom/bin/my-acp-agent",
+            source: .environmentPath))
+        #expect(draft.executablePath == "/custom/bin/my-acp-agent")
+    }
+
+    @Test func selectTarget_WhenEmptyAgentDraftAndCursorIsInstalled_ConfiguresCursor() {
+        var draft = WakeProfileDraft(
+            wakePhrase: "computer",
+            urlTemplate: "https://example.com/?q={urlText}",
+            accent: .blue)
+        let locator = executableLocator([
+            "cursor-agent": "/Users/test/.local/bin/cursor-agent",
+            "npx": "/opt/homebrew/bin/npx",
+        ])
+
+        draft.selectTarget(.agent, locator: locator)
+
+        #expect(draft.targetKind == .agent)
+        #expect(draft.agentHarness.preset == .cursor)
+        #expect(draft.agentHarness.displayName == "Cursor")
+        #expect(draft.agentHarness.executablePath == "/Users/test/.local/bin/cursor-agent")
+        #expect(draft.agentHarness.arguments == ["acp"])
+    }
+
+    @Test func selectTarget_WhenAgentDraftWasEdited_PreservesEveryField() {
+        var draft = WakeProfileDraft(
+            wakePhrase: "computer",
+            executablePath: "/usr/bin/open",
+            argumentTemplates: ["https://example.com/?q={urlText}"],
+            agentHarness: AgentHarnessDraft(
+                preset: .custom,
+                displayName: "Private agent",
+                executablePath: "/private/bin/acp",
+                arguments: ["--mode", "acp"],
+                workingDirectory: "/private/project",
+                permissionPolicy: .reject),
+            targetKind: .command,
+            accent: .blue)
+
+        draft.selectTarget(.agent, locator: executableLocator([
+            "cursor-agent": "/Users/test/.local/bin/cursor-agent",
+        ]))
+
+        #expect(draft.targetKind == .agent)
+        #expect(draft.agentHarness == AgentHarnessDraft(
+            preset: .custom,
+            displayName: "Private agent",
+            executablePath: "/private/bin/acp",
+            arguments: ["--mode", "acp"],
+            workingDirectory: "/private/project",
+            permissionPolicy: .reject))
+    }
+
     @Test func init_WhenSavedPresetHasEditedLaunchFields_DoesNotResolvePresetAgain() throws {
         let configuration = try AgentHarnessConfiguration(
             preset: .codex,

@@ -59,18 +59,58 @@ struct AgentHarnessDraft: Equatable {
         switch selectedPreset {
         case .cursor:
             displayName = "Cursor"
-            executablePath = locator.locate(executable: "cursor-agent") ?? ""
+            executablePath = ""
             arguments = ["acp"]
         case .codex:
             displayName = "Codex"
-            executablePath = locator.locate(executable: "npx") ?? ""
+            executablePath = ""
             arguments = ["-y", "@agentclientprotocol/codex-acp@1.8.0"]
         case .claude:
             displayName = "Claude"
-            executablePath = locator.locate(executable: "npx") ?? ""
+            executablePath = ""
             arguments = ["-y", "@agentclientprotocol/claude-agent-acp@0.73.0"]
         case .custom:
             break
+        }
+
+        _ = detectExecutable(locator: locator)
+    }
+
+    @discardableResult
+    mutating func detectExecutable(
+        locator: AgentExecutableLocator = AgentExecutableLocator()) -> AgentExecutableLocation?
+    {
+        let executable: String
+        switch preset {
+        case .cursor:
+            executable = "cursor-agent"
+        case .codex, .claude:
+            executable = "npx"
+        case .custom:
+            executable = executablePath
+        }
+
+        guard let location = locator.resolve(executable: executable) else { return nil }
+        executablePath = location.path
+        return location
+    }
+
+    mutating func selectDefaultPresetIfAvailable(
+        locator: AgentExecutableLocator = AgentExecutableLocator())
+    {
+        guard preset == .custom,
+              displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              executablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              arguments.isEmpty
+        else {
+            return
+        }
+
+        for candidate in [AgentHarnessPreset.cursor, .codex, .claude] {
+            let executable = candidate == .cursor ? "cursor-agent" : "npx"
+            guard locator.locate(executable: executable) != nil else { continue }
+            selectPreset(candidate, locator: locator)
+            return
         }
     }
 

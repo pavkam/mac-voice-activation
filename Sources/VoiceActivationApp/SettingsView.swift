@@ -34,10 +34,8 @@ struct SettingsView: View {
 
     private var header: some View {
         HStack(spacing: 16) {
-            Image(systemName: "waveform.circle.fill")
-                .font(.system(size: 48, weight: .medium))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
+            VoiceActivationMark(tint: headerTint)
+                .frame(width: 52, height: 52)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Voice Activation")
@@ -195,6 +193,11 @@ struct SettingsView: View {
         }
     }
 
+    private var headerTint: Color {
+        model.wakeProfiles.first(where: \WakeProfileDraft.isEnabled)?.accent.swiftUIColor
+            ?? .cyan
+    }
+
     private func settingsField(
         _ title: String,
         hint: String,
@@ -254,7 +257,12 @@ struct SettingsView: View {
                 .help("Remove wake profile")
             }
 
-            Picker("Target", selection: profile.targetKind) {
+            Picker(
+                "Target",
+                selection: Binding(
+                    get: { profile.wrappedValue.targetKind },
+                    set: { profile.wrappedValue.selectTarget($0) }))
+            {
                 Text("Command").tag(WakeProfileTargetKind.command)
                 Text("Agent").tag(WakeProfileTargetKind.agent)
             }
@@ -264,7 +272,7 @@ struct SettingsView: View {
             case .command:
                 commandEditor(profile: profile)
             case .agent:
-                agentEditor(profile: profile)
+                AgentHarnessSettingsView(profile: profile)
             }
 
             Divider()
@@ -320,65 +328,6 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func agentEditor(profile: Binding<WakeProfileDraft>) -> some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Provider")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Picker(
-                    "Provider",
-                    selection: Binding(
-                        get: { profile.wrappedValue.agentHarness.preset },
-                        set: { preset in
-                            profile.wrappedValue.agentHarness.selectPreset(preset)
-                        }))
-                {
-                    ForEach(AgentHarnessPreset.allCases, id: \.self) { preset in
-                        Text(preset.displayName).tag(preset)
-                    }
-                }
-                .labelsHidden()
-            }
-            .frame(width: 150)
-
-            settingsField(
-                "Display name",
-                hint: "Local agent",
-                text: profile.agentHarness.displayName)
-        }
-
-        settingsField(
-            "Executable",
-            hint: "/absolute/path/to/agent",
-            text: profile.agentHarness.executablePath,
-            monospaced: true)
-        settingsField(
-            "Working folder",
-            hint: "/absolute/path/to/project",
-            text: profile.agentHarness.workingDirectory,
-            monospaced: true)
-
-        VStack(alignment: .leading, spacing: 7) {
-            Text("Permission policy")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Picker("Permission policy", selection: profile.agentHarness.permissionPolicy) {
-                ForEach(AgentPermissionPolicy.allCases, id: \.self) { policy in
-                    Text(policy.displayName).tag(policy)
-                }
-            }
-            .labelsHidden()
-            .frame(width: 180)
-        }
-
-        argumentEditor(
-            "Adapter arguments",
-            hint: "Argument",
-            arguments: profile.agentHarness.argumentDrafts)
-    }
-
-    @ViewBuilder
     private func argumentEditor(
         _ title: String,
         hint: String,
@@ -431,27 +380,6 @@ extension WakeProfileAccent {
         case .pink: .pink
         case .orange: .orange
         case .green: .green
-        }
-    }
-}
-
-private extension AgentHarnessPreset {
-    var displayName: String {
-        switch self {
-        case .cursor: "Cursor"
-        case .codex: "Codex"
-        case .claude: "Claude"
-        case .custom: "Custom"
-        }
-    }
-}
-
-private extension AgentPermissionPolicy {
-    var displayName: String {
-        switch self {
-        case .ask: "Ask"
-        case .allowOnce: "Allow once"
-        case .reject: "Reject"
         }
     }
 }

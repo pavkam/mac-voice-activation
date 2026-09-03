@@ -1,5 +1,17 @@
 import Foundation
 
+enum AgentExecutableSource: Equatable, Sendable {
+    case environmentPath
+    case knownLocation
+    case nodeVersionManager
+    case explicitPath
+}
+
+struct AgentExecutableLocation: Equatable, Sendable {
+    let path: String
+    let source: AgentExecutableSource
+}
+
 struct AgentExecutableLocator {
     private let path: String?
     private let additionalDirectories: [String]
@@ -26,25 +38,49 @@ struct AgentExecutableLocator {
     }
 
     func locate(executable: String) -> String? {
+        locatedExecutable(named: executable)?.path
+    }
+
+    func resolve(executable: String) -> AgentExecutableLocation? {
+        if executable.hasPrefix("/") {
+            guard isExecutableFile(executable) else { return nil }
+            let executableName = (executable as NSString).lastPathComponent
+            let discoveredSource = orderedDirectories.first(where: { directory in
+                guard directory.path.hasPrefix("/") else { return false }
+                return (directory.path as NSString).appendingPathComponent(executableName)
+                    == executable
+            })?.source
+            return AgentExecutableLocation(
+                path: executable,
+                source: discoveredSource ?? .explicitPath)
+        }
+
+        return locatedExecutable(named: executable.trimmingCharacters(
+            in: .whitespacesAndNewlines))
+    }
+
+    private func locatedExecutable(named executable: String) -> AgentExecutableLocation? {
         guard !executable.isEmpty, !executable.contains("/") else { return nil }
 
-        for directory in orderedDirectories where directory.hasPrefix("/") {
-            let candidate = (directory as NSString).appendingPathComponent(executable)
+        for directory in orderedDirectories where directory.path.hasPrefix("/") {
+            let candidate = (directory.path as NSString).appendingPathComponent(executable)
             guard candidate.hasPrefix("/") else { continue }
             if isExecutableFile(candidate) {
-                return candidate
+                return AgentExecutableLocation(path: candidate, source: directory.source)
             }
         }
         return nil
     }
 
-    private var orderedDirectories: [String] {
+    private var orderedDirectories: [(path: String, source: AgentExecutableSource)] {
         let pathDirectories = path?.split(
             separator: ":",
             omittingEmptySubsequences: false).map(String.init) ?? []
-        return pathDirectories
-            + additionalDirectories
-            + nvmBinDirectories.sorted(by: Self.nvmVersionIsNewer)
+        return pathDirectories.map { ($0, .environmentPath) }
+            + additionalDirectories.map { ($0, .knownLocation) }
+            + nvmBinDirectories.sorted(by: Self.nvmVersionIsNewer).map {
+                ($0, .nodeVersionManager)
+            }
     }
 
     private static func installedNvmBinDirectories(homeDirectory: String) -> [String] {
