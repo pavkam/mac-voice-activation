@@ -27,4 +27,9 @@ struct CaptureCancellationMatcherTests {
         #expect(!CaptureCancellationMatcher.matches("stop the music", isComplete: true))
         #expect(!CaptureCancellationMatcher.matches("dismiss the alert", isComplete: true))
     }
+
+    @Test func matches_WhenCancellationWordHasNumericContent_ReturnsFalse() {
+        #expect(!CaptureCancellationMatcher.matches("stop 123", isComplete: true))
+        #expect(!CaptureCancellationMatcher.matches("stop 2 stop", isComplete: false))
+    }
 }

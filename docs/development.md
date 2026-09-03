@@ -87,10 +87,15 @@ push-to-talk capture.
 Agent-panel tests verify run-identifier isolation, UTF-8-safe output and
 diagnostic bounds, tool eviction, simultaneous permissions, 20 Hz token
 coalescing, exact-once cancellation, menu affordances, overlay handoff geometry,
-bottom-pinned automatic scrolling, chronological follow-ups, and a panel that
-accepts pointer actions without becoming key or main. Conversation-audio tests
-use injected silent players to verify Markdown speech formatting and working
-pulse state without producing sound from the test process.
+bottom-pinned automatic scrolling throughout user interaction, bounded and
+chronological follow-ups, per-turn plans, thought-free separated response export,
+terminal tool settlement, and a panel that accepts pointer actions without
+becoming key or main. Conversation-audio tests use injected silent players to
+verify Markdown speech formatting, permission-resume behavior, and working-pulse
+state without producing sound from the test process. App tests cover pause and
+shutdown races during pending permission requests plus profile-identified hotkey
+releases. Hotkey recording tests synthesize AppKit events without registering
+global shortcuts.
 
 Run one suite while iterating:
 

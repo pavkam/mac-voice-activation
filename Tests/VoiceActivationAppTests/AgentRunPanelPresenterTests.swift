@@ -85,6 +85,39 @@ struct AgentRunPanelPresenterTests {
         #expect(cancellations == [runID, runID])
     }
 
+    @MainActor @Test func permission_WhenRequestKeyIsReusedAfterRemoval_CanBeResolvedAgain() {
+        let display = AgentRunPanelDisplaySpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy())
+        let runID = UUID()
+        let key = AgentPermissionKey(
+            turnToken: AgentTurnToken(),
+            requestID: .string("permission"))
+        let permission = AgentPermissionPresentation(
+            key: key,
+            toolTitle: "Edit file",
+            options: [
+                AgentPermissionOption(id: "once", label: "Allow once", kind: .allowOnce),
+            ],
+            isResolving: false)
+        var resolutions: [AgentPermissionKey] = []
+        presenter.onPermission = { _, key, _ in resolutions.append(key) }
+        var snapshot = replacingPermissions(
+            [permission],
+            in: runningSnapshot(runID: runID))
+        presenter.begin(snapshot, from: nil)
+        display.onAction?(.permission(runID: runID, key: key, optionID: "once"))
+
+        snapshot = replacingPermissions([], in: snapshot)
+        presenter.update(snapshot)
+        snapshot = replacingPermissions([permission], in: snapshot)
+        presenter.update(snapshot)
+        display.onAction?(.permission(runID: runID, key: key, optionID: "once"))
+
+        #expect(resolutions == [key, key])
+    }
+
     @MainActor @Test func terminalActions_WhenInvoked_CopyAndHideRetainedRun() throws {
         let display = AgentRunPanelDisplaySpy()
         let pasteboard = AgentRunPasteboardSpy()
@@ -156,18 +189,31 @@ struct AgentRunPanelPresenterTests {
     @MainActor @Test func model_WhenUserScrollsAwayFromBottom_DisablesAndReenablesFollow() {
         let model = AgentRunPanelModel()
 
-        model.updateAutoFollowing(distanceFromBottom: 25, userInitiated: true)
+        model.beginUserScrolling(distanceFromBottom: 0)
+        model.updateScrollGeometry(distanceFromBottom: 25)
         #expect(!model.isAutoFollowing)
-        model.updateAutoFollowing(distanceFromBottom: 24, userInitiated: true)
+        model.updateScrollGeometry(distanceFromBottom: 24)
         #expect(model.isAutoFollowing)
+        model.endUserScrolling(distanceFromBottom: 24)
     }
 
     @MainActor @Test func model_WhenContentGrowsWithoutUserScroll_KeepsFollowingEnabled() {
         let model = AgentRunPanelModel()
 
-        model.updateAutoFollowing(distanceFromBottom: 200, userInitiated: false)
+        model.updateScrollGeometry(distanceFromBottom: 200)
 
         #expect(model.isAutoFollowing)
+    }
+
+    @MainActor @Test func model_WhenProgrammaticScrollReturnsToBottom_DoesNotOverrideUserChoice() {
+        let model = AgentRunPanelModel()
+        model.beginUserScrolling(distanceFromBottom: 0)
+        model.updateScrollGeometry(distanceFromBottom: 100)
+        model.endUserScrolling(distanceFromBottom: 100)
+
+        model.updateScrollGeometry(distanceFromBottom: 0)
+
+        #expect(!model.isAutoFollowing)
     }
 
     @MainActor @Test func toolDetails_WhenToolCompletes_CollapsesButCanBeExpandedAgain() {
@@ -183,6 +229,17 @@ struct AgentRunPanelPresenterTests {
 
         model.toggleToolDetails(toolID: "tool-1")
         #expect(model.isToolExpanded(toolID: "tool-1"))
+    }
+
+    @MainActor @Test func toolDetails_WhenTurnSettlesWithoutFinalStatus_Collapses() {
+        let model = AgentRunPanelModel()
+        let runID = UUID()
+        model.begin(toolSnapshot(runID: runID, status: .inProgress))
+        model.toggleToolDetails(toolID: "tool-1")
+
+        model.update(toolSnapshot(runID: runID, status: .inProgress, isSettled: true))
+
+        #expect(!model.isToolExpanded(toolID: "tool-1"))
     }
 
     @MainActor
@@ -210,13 +267,15 @@ struct AgentRunPanelPresenterTests {
     @MainActor
     private func toolSnapshot(
         runID: UUID,
-        status: AgentToolCallStatus) -> AgentRunSnapshot
+        status: AgentToolCallStatus,
+        isSettled: Bool = false) -> AgentRunSnapshot
     {
         let tool = AgentToolPresentation(
             id: "tool-1",
             title: "Read Package.swift",
             kind: .read,
-            status: status)
+            status: status,
+            isSettled: isSettled)
         return AgentRunSnapshot(
             runID: runID,
             profileID: UUID(),
@@ -256,6 +315,31 @@ struct AgentRunPanelPresenterTests {
             plan: snapshot.plan,
             tools: snapshot.tools,
             permissions: snapshot.permissions,
+            notices: snapshot.notices,
+            elapsedSeconds: snapshot.elapsedSeconds,
+            evictedToolCount: snapshot.evictedToolCount,
+            ignoredToolUpdateCount: snapshot.ignoredToolUpdateCount)
+    }
+
+    @MainActor
+    private func replacingPermissions(
+        _ permissions: [AgentPermissionPresentation],
+        in snapshot: AgentRunSnapshot) -> AgentRunSnapshot
+    {
+        AgentRunSnapshot(
+            runID: snapshot.runID,
+            profileID: snapshot.profileID,
+            accent: snapshot.accent,
+            prompt: snapshot.prompt,
+            providerName: snapshot.providerName,
+            phase: snapshot.phase,
+            voiceInput: snapshot.voiceInput,
+            output: snapshot.output,
+            timeline: snapshot.timeline,
+            diagnostics: snapshot.diagnostics,
+            plan: snapshot.plan,
+            tools: snapshot.tools,
+            permissions: permissions,
             notices: snapshot.notices,
             elapsedSeconds: snapshot.elapsedSeconds,
             evictedToolCount: snapshot.evictedToolCount,

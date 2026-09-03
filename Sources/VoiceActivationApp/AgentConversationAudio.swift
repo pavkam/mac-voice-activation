@@ -155,6 +155,8 @@ final class AgentConversationAudioPresenter {
             reply = ""
             player.stopSpeaking()
             updateWorking(true)
+        case .notice:
+            break
         case let .turnStarted(runID):
             guard self.runID == runID else { return }
             reply = ""
@@ -202,6 +204,11 @@ final class AgentConversationAudioPresenter {
         if !readsReplies() {
             player.stopSpeaking()
         }
+    }
+
+    func resumeAfterPermission(runID: UUID) {
+        guard self.runID == runID else { return }
+        updateWorking(true)
     }
 
     private func handle(_ event: AgentRunEvent) {

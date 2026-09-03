@@ -5,7 +5,7 @@ enum CaptureCancellationMatcher {
 
     static func matches(_ transcript: String, isComplete: Bool) -> Bool {
         let words = transcript
-            .split(whereSeparator: { !$0.isLetter })
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map {
                 String($0).folding(
                     options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],

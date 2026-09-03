@@ -52,6 +52,8 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   button, and plays distinct sounds when capture starts and ends.
 - Say only `cancel`, `stop`, or `dismiss` to discard the capture. Repeating the
   same word twice cancels immediately, even before recognition finalizes.
+  Numbers remain command content, so phrases such as `stop 123` are submitted
+  normally instead of being mistaken for cancellation.
 - Give any wake profile its own push-to-talk shortcut. Hold that shortcut, speak
   without the wake phrase, then release; the profile’s target and color are used.
   Each assigned binding appears beside its phrase in the menu.
@@ -99,21 +101,27 @@ save.
 
 The app keeps the foreground application focused while a floating panel streams
 an ordered Markdown timeline. Tool work starts as a compact animated row and
-collapses to an expandable result row when it finishes; permission prompts
-disappear as soon as a choice is made. New output follows the bottom of the
-panel until you deliberately scroll upward.
+collapses to an expandable result row when it finishes—even when a provider
+omits a final tool status; permission prompts disappear as soon as a choice is
+made. New output follows the bottom of the panel until you deliberately scroll
+upward.
 
 The microphone stays live after the first response. Speak another request—or
 use the profile's push-to-talk binding—to continue in the same ACP session and
 timeline. **Stop turn** cancels only the current work; **End conversation**
 returns to passive wake listening. Saying only `cancel`, `stop`, or `dismiss`
 always ends the whole conversation and returns to passive wake listening.
+Up to 16 follow-ups may wait behind active work; the panel reports when that
+bounded queue is full instead of growing memory without limit.
 
 Settings can read completed replies aloud with the matching macOS system voice
 and play a quiet repeating pulse through long thinking/tool pauses. Both options
 are enabled by default. Voice cancellation says “Stopped” when reply speech is
 enabled, and tests inject silent audio players, so CI never emits speaker sounds.
 Completed output remains selectable and copyable until the panel is closed.
+Copied output contains the request, response Markdown, and bounded diagnostics.
+Its response section separates conversation turns and excludes provider thought
+updates.
 
 Provider authentication stays with the provider CLI. Voice Activation stores
 no API keys, prompt history, agent output, or raw tool payloads. See the

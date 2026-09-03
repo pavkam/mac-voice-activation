@@ -98,6 +98,24 @@ struct AgentRunPresentationTests {
         #expect(message.text == "Hello **world**")
     }
 
+    @MainActor @Test func receive_WhenThoughtAndResponseStream_CopiesOnlyResponseOutput() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Explain")
+
+        presentation.receive(
+            runID: runID,
+            event: .thoughtDelta(messageID: "thought", text: "Checking the parser"))
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer", text: "The parser is correct."))
+
+        let snapshot = try #require(presentation.snapshot)
+        #expect(snapshot.output == "The parser is correct.")
+        #expect(snapshot.copyText.contains("The parser is correct."))
+        #expect(!snapshot.copyText.contains("Checking the parser"))
+    }
+
     @MainActor @Test func receive_WhenToolCompletes_UpdatesItsOriginalTimelinePosition() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let runID = UUID()
@@ -190,6 +208,46 @@ struct AgentRunPresentationTests {
         #expect(presentation.snapshot?.phase == .completed(.maxTokens))
     }
 
+    @MainActor @Test func completeTurn_WhenProviderOmitsFinalToolStatus_SettlesTool() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Inspect")
+        presentation.receive(
+            runID: runID,
+            event: .toolCall(AgentToolCall(
+                id: "tool-1",
+                title: "Read Package.swift",
+                kind: .read,
+                status: .inProgress)))
+
+        presentation.completeTurn(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn))
+
+        let tool = try #require(presentation.snapshot?.tools.first)
+        #expect(tool.isFinished)
+        #expect(!tool.isWorking)
+    }
+
+    @MainActor @Test func fail_WhenProviderOmitsFinalToolStatus_SettlesTool() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Inspect")
+        presentation.receive(
+            runID: runID,
+            event: .toolCall(AgentToolCall(
+                id: "tool-1",
+                title: "Read Package.swift",
+                kind: .read,
+                status: .inProgress)))
+
+        presentation.fail(runID: runID, message: "Connection closed")
+
+        let tool = try #require(presentation.snapshot?.tools.first)
+        #expect(tool.isFinished)
+        #expect(!tool.isWorking)
+    }
+
     @MainActor @Test func conversation_WhenFollowUpRuns_PreservesChronologicalMessages() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let runID = UUID()
@@ -216,6 +274,7 @@ struct AgentRunPresentationTests {
         let snapshot = try #require(presentation.snapshot)
         #expect(snapshot.phase == .listening)
         #expect(snapshot.voiceInput.isEmpty)
+        #expect(snapshot.output == "It is recursive.\n\nIn `Parser.swift`.")
         #expect(snapshot.timeline.count == 3)
         guard case let .message(firstAnswer) = snapshot.timeline[0],
               case let .userMessage(followUp) = snapshot.timeline[1],
@@ -227,6 +286,52 @@ struct AgentRunPresentationTests {
         #expect(firstAnswer.text == "It is recursive.")
         #expect(followUp.text == "Show me where")
         #expect(secondAnswer.text == "In `Parser.swift`.")
+    }
+
+    @MainActor @Test func conversation_WhenSeveralFollowUpsWereQueued_SeparatesEveryResponse()
+        throws
+    {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "First")
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer-1", text: "One"))
+        presentation.submitFollowUp(runID: runID, prompt: "Second")
+        presentation.submitFollowUp(runID: runID, prompt: "Third")
+
+        presentation.beginTurn(runID: runID)
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer-2", text: "Two"))
+        presentation.completeTurn(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn))
+        presentation.beginTurn(runID: runID)
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer-3", text: "Three"))
+
+        #expect(presentation.snapshot?.output == "One\n\nTwo\n\nThree")
+    }
+
+    @MainActor @Test func beginTurn_WhenPreviousTurnHadAPlan_ClearsStalePlan() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Inspect")
+        presentation.receive(
+            runID: runID,
+            event: .plan([
+                AgentPlanEntry(content: "Read files", priority: .high, status: .completed),
+            ]))
+        presentation.completeTurn(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn))
+        presentation.submitFollowUp(runID: runID, prompt: "Now fix it")
+
+        presentation.beginTurn(runID: runID)
+
+        #expect(presentation.snapshot?.plan.isEmpty == true)
     }
 
     @MainActor @Test func voiceInput_WhenConversationListens_PublishesLiveTranscript() throws {
@@ -317,6 +422,22 @@ struct AgentRunPresentationTests {
         #expect(diagnostics.utf8.count <= AgentRunPresentation.maximumDiagnosticBytes)
         #expect(!diagnostics.contains("old-marker"))
         #expect(diagnostics.hasPrefix("… earlier diagnostics omitted …"))
+    }
+
+    @MainActor @Test func notice_WhenManyArrive_RetainsNewestVisibleNotices() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Work")
+
+        for index in 0...16 {
+            presentation.receiveNotice(runID: runID, message: "Notice \(index)")
+        }
+        presentation.receiveNotice(runID: runID, message: "Notice 16")
+
+        let notices = try #require(presentation.snapshot?.notices)
+        #expect(notices.count == 16)
+        #expect(notices.first == "Notice 1")
+        #expect(notices.last == "Notice 16")
     }
 
     @MainActor @Test func receive_WhenTokensBurst_CoalescesPublications() async throws {

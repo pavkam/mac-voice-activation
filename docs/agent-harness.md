@@ -134,6 +134,10 @@ ACP subprocess communication follows the stable protocol-owner specification:
   field.
 - `session/update` streams until the prompt response supplies a stop reason.
 
+Follow-ups remain ordered behind an active turn. At most 16 may wait; further
+recognized requests produce an app-authored notice and are not admitted until
+the queue has room.
+
 The client handles every stable ACP v1 update discriminator:
 
 - user and agent message chunks;
@@ -165,9 +169,12 @@ An agent profile has one of three permission policies:
 
 The panel displays agent-provided choice labels; it does not invent an approval
 the agent did not offer. Selecting any choice collapses that request immediately
-and resolves it exactly once. Cancelling a run resolves every pending permission
-as cancelled before the process is torn down. Each displayed choice carries a
-globally unique opaque turn identifier as well as the wire request ID, so a
+and resolves it exactly once. A provider may reuse a wire request identifier
+after its earlier prompt disappears; the new prompt remains actionable. The
+working-audio delay resumes after a choice is sent. Cancelling a run resolves
+every pending permission as cancelled before the process is torn down. Each
+displayed choice carries a globally unique opaque turn identifier as well as the
+wire request ID, so a
 delayed click cannot resolve a reused request ID from a later turn or replacement
 connection.
 
@@ -194,10 +201,12 @@ to a 620 by 420 point material surface. It contains:
   and
 - explicit truncation notices when a safety limit is reached.
 
-The transcript auto-follows output, tool, permission, and voice-input growth
-only while the view is already pinned near the bottom. A deliberate user scroll
-up disables following; returning to the bottom enables it again. Programmatic
-scrolling and content growth never misclassify that state.
+The transcript auto-follows output, tool, plan, notice, permission, and
+voice-input growth only while the view is already pinned near the bottom. A
+deliberate user scroll up disables following; returning to the bottom enables it
+again. Scroll geometry is sampled throughout interaction and deceleration, so
+streamed growth cannot overwrite that decision. Programmatic scrolling and
+content growth never misclassify that state.
 
 Completing one turn keeps the microphone and conversation open for a follow-up.
 Ending the conversation leaves the panel visible for inspection. The menu-bar
@@ -209,9 +218,14 @@ Token bursts publish on leading and trailing edges at a fixed 50-millisecond
 cadence. This preserves immediate feedback without making SwiftUI render once
 per token. Adjacent chunks coalesce only within their current timeline message;
 a tool call ends that block, so later prose renders below the tool. Plans replace
-atomically, tool updates retain their original timeline identity, simultaneous
-permissions remain independently actionable, and app-authored truncation or
-protocol notices cannot be mistaken for provider output.
+atomically and clear at the start of the next turn. Tool updates retain their
+original timeline identity; if a provider omits a terminal tool update, turn
+settlement still stops the animation and presents the row as finished.
+Simultaneous permissions remain independently actionable, and app-authored
+truncation or protocol notices cannot be mistaken for provider output. The
+copyable response section separates turns and excludes thought updates, which
+remain visible only in the timeline; the full export also includes the request
+and bounded diagnostics.
 
 Direct command profiles keep the current short execution state and do not open
 the agent panel.
@@ -263,6 +277,8 @@ run states with bounded diagnostics. A failed connection is never reused.
 ## Resource and privacy bounds
 
 - A prompt is rejected above 8 KiB of UTF-8 rather than silently truncated.
+- At most 16 follow-up prompts wait behind an active turn; overflow produces a
+  visible bounded notice and does not cancel the active work.
 - One ACP line is limited to 1 MiB before the connection is failed.
 - Accepted events waiting between transport ingestion and consumer callbacks
   retain at most 512 KiB of output, 16 KiB of diagnostics, 512 KiB of control
@@ -275,6 +291,8 @@ run states with bounded diagnostics. A failed connection is never reused.
 - Standard-error diagnostics retain the newest 16 KiB.
 - The presentation retains the latest 32 tool calls; older completed calls are
   summarized by count.
+- The presentation retains the latest 16 app-authored or protocol notices and
+  suppresses an immediately repeated notice.
 - UI publication is coalesced to at most 20 updates per second during token
   bursts.
 - The 1 MiB frame limit bounds parser input; decoding one accepted frame may

@@ -44,44 +44,59 @@ struct AgentRunPanelView: View {
                         }
                         .padding(18)
                     }
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        max(
+                            0,
+                            geometry.contentSize.height
+                                - geometry.contentOffset.y
+                                - geometry.containerSize.height)
+                    } action: { _, distanceFromBottom in
+                        model.updateScrollGeometry(distanceFromBottom: distanceFromBottom)
+                    }
                     .onScrollPhaseChange { oldPhase, newPhase, context in
-                        guard oldPhase == .interacting
+                        let wasUserScrolling = oldPhase == .interacting
                             || oldPhase == .decelerating
-                            || newPhase == .interacting
+                        let isUserScrolling = newPhase == .interacting
                             || newPhase == .decelerating
-                        else { return }
+                        guard wasUserScrolling || isUserScrolling else { return }
                         let geometry = context.geometry
                         let distance = max(
                             0,
                             geometry.contentSize.height
                                 - geometry.contentOffset.y
                                 - geometry.containerSize.height)
-                        model.updateAutoFollowing(
-                            distanceFromBottom: distance,
-                            userInitiated: true)
+                        if isUserScrolling {
+                            model.beginUserScrolling(distanceFromBottom: distance)
+                        } else {
+                            model.endUserScrolling(distanceFromBottom: distance)
+                        }
                     }
                     .onChange(of: snapshot.timeline) {
-                        guard model.isAutoFollowing else { return }
-                        withAnimation(.easeOut(duration: 0.16)) {
-                            proxy.scrollTo("agent-run-bottom", anchor: .bottom)
-                        }
+                        followBottom(proxy)
+                    }
+                    .onChange(of: snapshot.notices) {
+                        followBottom(proxy)
+                    }
+                    .onChange(of: snapshot.plan) {
+                        followBottom(proxy)
                     }
                     .onChange(of: snapshot.permissions) {
-                        guard model.isAutoFollowing else { return }
-                        withAnimation(.easeOut(duration: 0.16)) {
-                            proxy.scrollTo("agent-run-bottom", anchor: .bottom)
-                        }
+                        followBottom(proxy)
                     }
                     .onChange(of: snapshot.voiceInput) {
-                        guard model.isAutoFollowing else { return }
-                        withAnimation(.easeOut(duration: 0.16)) {
-                            proxy.scrollTo("agent-run-bottom", anchor: .bottom)
-                        }
+                        followBottom(proxy)
                     }
                 }
                 Divider().opacity(0.45)
                 actions(snapshot)
             }
+        }
+    }
+
+    private func followBottom(_ proxy: ScrollViewProxy) {
+        guard model.isAutoFollowing else { return }
+        withAnimation(.easeOut(duration: 0.16)) {
+            proxy.scrollTo("agent-run-bottom", anchor: .bottom)
         }
     }
 
@@ -263,7 +278,7 @@ struct AgentRunPanelView: View {
             }
         }
         .padding(.horizontal, 11)
-        .padding(.vertical, tool.status.isFinished ? 8 : 10)
+        .padding(.vertical, tool.isFinished ? 8 : 10)
         .background(
             tool.status == .failed ? Color.red.opacity(0.075) : accent.opacity(0.065),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -273,12 +288,12 @@ struct AgentRunPanelView: View {
                 .frame(width: 2)
                 .padding(.vertical, 7)
         }
-        .animation(.snappy(duration: 0.24), value: tool.status)
+        .animation(.snappy(duration: 0.24), value: tool)
     }
 
     @ViewBuilder
     private func toolActivityIcon(_ tool: AgentToolPresentation) -> some View {
-        if tool.status.isWorking {
+        if tool.isWorking {
             ProgressView()
                 .controlSize(.small)
                 .tint(accent)
@@ -435,7 +450,7 @@ struct AgentRunPanelView: View {
         case .completed: "checkmark.circle.fill"
         case .failed: "exclamationmark.circle.fill"
         case .inProgress: "gearshape.2.fill"
-        case .pending, nil: "circle.dotted"
+        case .pending, nil: tool.isSettled ? "checkmark.circle" : "circle.dotted"
         }
     }
 
@@ -446,7 +461,7 @@ struct AgentRunPanelView: View {
         case .completed:
             tool.kind.map { "\(toolKindLabel($0)) complete" } ?? "Completed"
         case .pending, .inProgress, nil:
-            "Working…"
+            tool.isSettled ? "Finished" : "Working…"
         }
     }
 
@@ -463,15 +478,5 @@ struct AgentRunPanelView: View {
         case .switchMode: "Mode change"
         case .other: "Tool"
         }
-    }
-}
-
-private extension AgentToolCallStatus? {
-    var isWorking: Bool {
-        self == nil || self == .pending || self == .inProgress
-    }
-
-    var isFinished: Bool {
-        self == .completed || self == .failed
     }
 }

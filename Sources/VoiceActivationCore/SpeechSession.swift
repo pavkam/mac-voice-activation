@@ -41,10 +41,13 @@ public struct ActivationConfiguration: Equatable, Sendable {
     }
 
     public init(wakePhrase: String, localeID: String, commandTemplate: CommandTemplate) {
-        let normalizedPhrase = wakePhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidatePhrase = WakePhraseMatcher.normalizedWakePhrase(wakePhrase)
+        let normalizedPhrase = !WakePhraseMatcher.containsSpokenCharacter(candidatePhrase)
+            ? "computer"
+            : candidatePhrase
         profiles = [try! WakeProfile(
             id: WakeProfile.defaultValue.id,
-            wakePhrase: normalizedPhrase.isEmpty ? "computer" : normalizedPhrase,
+            wakePhrase: normalizedPhrase,
             executablePath: commandTemplate.executablePath,
             argumentTemplates: commandTemplate.argumentTemplates,
             accent: .blue)]

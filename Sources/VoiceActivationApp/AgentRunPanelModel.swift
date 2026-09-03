@@ -10,22 +10,24 @@ final class AgentRunPanelModel {
     var resolvingPermissions: Set<AgentPermissionKey> = []
     private(set) var expandedToolIDs: Set<String> = []
     @ObservationIgnored var onAction: ((AgentRunPanelAction) -> Void)?
+    @ObservationIgnored private var isUserScrolling = false
 
     func begin(_ snapshot: AgentRunSnapshot) {
         self.snapshot = snapshot
         isAutoFollowing = true
         resolvingPermissions = []
         expandedToolIDs = []
+        isUserScrolling = false
     }
 
     func update(_ snapshot: AgentRunSnapshot) {
         guard let previousSnapshot = self.snapshot,
               previousSnapshot.runID == snapshot.runID
         else { return }
-        let previousStatuses = Dictionary(
-            uniqueKeysWithValues: previousSnapshot.tools.map { ($0.id, $0.status) })
+        let previouslyFinished = Dictionary(
+            uniqueKeysWithValues: previousSnapshot.tools.map { ($0.id, $0.isFinished) })
         let newlyFinishedToolIDs = snapshot.tools.lazy.filter { tool in
-            tool.status.isTerminal && previousStatuses[tool.id]?.isTerminal != true
+            tool.isFinished && previouslyFinished[tool.id] != true
         }.map(\.id)
         expandedToolIDs.subtract(newlyFinishedToolIDs)
         expandedToolIDs.formIntersection(snapshot.tools.lazy.map(\.id))
@@ -55,14 +57,23 @@ final class AgentRunPanelModel {
             optionID: optionID))
     }
 
-    func updateAutoFollowing(distanceFromBottom: CGFloat, userInitiated: Bool) {
-        guard userInitiated else { return }
-        isAutoFollowing = distanceFromBottom <= 24
+    func beginUserScrolling(distanceFromBottom: CGFloat) {
+        isUserScrolling = true
+        updateAutoFollowing(distanceFromBottom: distanceFromBottom)
     }
-}
 
-private extension AgentToolCallStatus? {
-    var isTerminal: Bool {
-        self == .completed || self == .failed
+    func endUserScrolling(distanceFromBottom: CGFloat) {
+        guard isUserScrolling else { return }
+        updateAutoFollowing(distanceFromBottom: distanceFromBottom)
+        isUserScrolling = false
+    }
+
+    func updateScrollGeometry(distanceFromBottom: CGFloat) {
+        guard isUserScrolling else { return }
+        updateAutoFollowing(distanceFromBottom: distanceFromBottom)
+    }
+
+    private func updateAutoFollowing(distanceFromBottom: CGFloat) {
+        isAutoFollowing = distanceFromBottom <= 24
     }
 }

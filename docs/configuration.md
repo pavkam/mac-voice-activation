@@ -10,9 +10,11 @@ validation errors keep it open so the invalid field can be corrected.
 - **Wake profiles:** each profile has a wake phrase, run target, and presentation
   color. Add or remove profiles as needed. Phrases must be unique after the same
   case, width, accent, punctuation, and symbol normalization used by matching,
-  and occur at the beginning of the recognized utterance. If phrases overlap,
-  the longest match wins. The menu-bar menu has a separate persistent toggle
-  for every saved phrase. Disabled phrases are excluded from recognition
+  contain at least one spoken letter or number, and occur at the beginning of
+  the recognized utterance. Runs of whitespace are normalized to one space and
+  invisible control or format marks are removed when saved. If phrases overlap,
+  the longest match wins. The menu-bar menu has a separate persistent toggle for
+  every saved phrase. Disabled phrases are excluded from recognition
   without affecting the other profiles. Use **Pause all** in the same menu to
   stop passive recognition without changing those per-profile choices; use
   **Resume all** to restore listening for the previously enabled phrases.
@@ -28,12 +30,15 @@ validation errors keep it open so the invalid field can be corrected.
   Press Escape to cancel recording, or select **Save Settings** to apply every
   recorded binding. Assigned bindings must be unique. If another application owns
   a combination, Voice Activation restores the previous saved bindings and reports
-  the conflict.
+  the conflict. Press and release events retain the profile identity, including
+  while macOS permission prompts are pending, so one profile cannot release or
+  start another profile's capture.
 
 A wake phrase must be enabled and end at a word boundary. `computer, open calendar`
 matches; `supercomputer open calendar` does not. A profile’s push-to-talk binding
 remains available when that profile’s passive wake phrase or all passive listening
-is disabled.
+is disabled. Punctuation-only and symbol-only phrases are rejected because Apple
+Speech cannot produce a triggerable spoken match for them.
 
 Passive recognition fails closed when the selected locale does not support
 on-device recognition. Command capture and push-to-talk may use Apple's speech
@@ -47,8 +52,9 @@ service when on-device recognition is unavailable.
   character by character.
 - **Working pulse:** enabled by default. A low-volume cue begins after a short
   silent delay and repeats while the agent is thinking or using tools. It stops
-  when permission input is needed or the turn ends. Each streamed update resets
-  the delay, so the pulse fills genuine pauses rather than continuous output.
+  when permission input is needed or the turn ends. Choosing a permission option
+  starts its delay again while the agent resumes. Each streamed update resets the
+  delay, so the pulse fills genuine pauses rather than continuous output.
 
 These are saved settings: editing either toggle does not affect an active
 conversation until **Save Settings** succeeds.

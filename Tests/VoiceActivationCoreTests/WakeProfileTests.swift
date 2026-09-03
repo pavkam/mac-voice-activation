@@ -98,6 +98,41 @@ struct WakeProfileTests {
         }
     }
 
+    @Test func init_WhenWakePhraseHasNoSpokenCharacters_RejectsProfile() {
+        for wakePhrase in ["!!!", "🤖", "\u{200B}", "\u{0301}"] {
+            #expect(throws: WakeProfile.ValidationError.wakePhraseRequired) {
+                try WakeProfile(
+                    wakePhrase: wakePhrase,
+                    urlTemplate: "https://example.com?q={urlText}",
+                    accent: .cyan)
+            }
+        }
+    }
+
+    @Test func init_WhenWakePhraseWhitespaceIsIrregular_NormalizesForRecognition() throws {
+        let profile = try WakeProfile(
+            wakePhrase: "  hey\t\n  computer  ",
+            urlTemplate: "https://example.com?q={urlText}",
+            accent: .cyan)
+
+        #expect(profile.wakePhrase == "hey computer")
+        #expect(WakePhraseMatcher.command(
+            in: "hey computer open calendar",
+            wakePhrase: profile.wakePhrase) == "open calendar")
+    }
+
+    @Test func init_WhenWakePhraseContainsInvisibleFormatMarks_RemovesThem() throws {
+        let profile = try WakeProfile(
+            wakePhrase: "com\u{200B}puter",
+            urlTemplate: "https://example.com?q={urlText}",
+            accent: .cyan)
+
+        #expect(profile.wakePhrase == "computer")
+        #expect(WakePhraseMatcher.command(
+            in: "computer open calendar",
+            wakePhrase: profile.wakePhrase) == "open calendar")
+    }
+
     @Test func init_WhenURLTemplateHasNoPlaceholder_RejectsProfile() {
         #expect(throws: WakeProfile.ValidationError.missingTranscriptPlaceholder) {
             try WakeProfile(
@@ -105,5 +140,21 @@ struct WakeProfileTests {
                 urlTemplate: "https://example.com/static",
                 accent: .cyan)
         }
+    }
+
+    @Test func activationConfiguration_WhenLegacyPhraseHasNoSpokenCharacters_UsesDefaultPhrase()
+        throws
+    {
+        let template = try CommandTemplate(
+            executablePath: "/usr/bin/printf",
+            argumentTemplates: ["--message={text}"])
+
+        let configuration = ActivationConfiguration(
+            wakePhrase: "\u{0301}",
+            localeID: "en-US",
+            commandTemplate: template)
+
+        #expect(configuration.profiles.first?.wakePhrase == "computer")
+        #expect(configuration.profiles.first?.action == .command(template))
     }
 }

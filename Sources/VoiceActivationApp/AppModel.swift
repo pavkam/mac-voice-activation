@@ -33,9 +33,10 @@ final class AppModel {
     @ObservationIgnored private let agentConversationAudioPlayer: any AgentConversationAudioPlaying
     @ObservationIgnored private let agentConversationAudioPresenter: AgentConversationAudioPresenter
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var isShutdown = false
     @ObservationIgnored private var permissionGranted = false
     @ObservationIgnored private var permissionTask: Task<Bool, Never>?
-    @ObservationIgnored private var hotkeyHeld = false
+    @ObservationIgnored private var heldHotKeyProfileID: UUID?
     @ObservationIgnored private var recordingShortcut = false
     @ObservationIgnored private var activeProfile: WakeProfile?
     @ObservationIgnored private var pendingAgentHandoff: RecordingOverlayHandoff?
@@ -121,6 +122,7 @@ final class AppModel {
     }
 
     func setPassiveEnabled(_ enabled: Bool) {
+        guard !isShutdown else { return }
         guard passiveEnabled != enabled else { return }
         passiveEnabled = enabled
         preferences.passiveEnabled = enabled
@@ -201,6 +203,9 @@ final class AppModel {
     }
 
     func shutdown() {
+        guard !isShutdown else { return }
+        isShutdown = true
+        heldHotKeyProfileID = nil
         shortcut.stop()
         coordinator.stop()
         overlayPresenter.update(state: .disabled, transcript: "")
@@ -234,7 +239,7 @@ final class AppModel {
     }
 
     func start() async {
-        guard !started else { return }
+        guard !started, !isShutdown else { return }
         started = true
         coordinator.onStateChange = { [weak self] in
             guard let self else { return }
@@ -276,16 +281,16 @@ final class AppModel {
             settingsError = error.localizedDescription
         }
 
-        if passiveEnabled, await ensurePermissions() {
-            coordinator.setPassiveEnabled(true)
-        }
+        guard passiveEnabled else { return }
+        guard await ensurePermissions(), passiveEnabled, !isShutdown else { return }
+        coordinator.setPassiveEnabled(true)
     }
 
     private func registerShortcuts(_ profiles: [WakeProfile]) throws {
         try shortcut.start(
             profiles: profiles,
             onPressed: { [weak self] in self?.pushToTalkPressed(profileID: $0) },
-            onReleased: { [weak self] _ in self?.pushToTalkReleased() })
+            onReleased: { [weak self] in self?.pushToTalkReleased(profileID: $0) })
     }
 
     private func validateFileSystem(_ profiles: [WakeProfile]) throws {
@@ -327,22 +332,25 @@ final class AppModel {
     }
 
     private func pushToTalkPressed(profileID: UUID) {
-        guard !hotkeyHeld else { return }
-        hotkeyHeld = true
+        guard !isShutdown, heldHotKeyProfileID == nil else { return }
+        heldHotKeyProfileID = profileID
         Task { @MainActor [weak self] in
-            guard let self, await self.ensurePermissions(), self.hotkeyHeld else { return }
+            guard let self,
+                  await self.ensurePermissions(),
+                  self.heldHotKeyProfileID == profileID
+            else { return }
             self.coordinator.pushToTalkPressed(profileID: profileID)
         }
     }
 
-    private func pushToTalkReleased() {
-        guard hotkeyHeld else { return }
-        hotkeyHeld = false
+    private func pushToTalkReleased(profileID: UUID) {
+        guard heldHotKeyProfileID == profileID else { return }
+        heldHotKeyProfileID = nil
         coordinator.pushToTalkReleased()
     }
 
     func cancelCapture() {
-        hotkeyHeld = false
+        heldHotKeyProfileID = nil
         coordinator.cancelCapture()
     }
 
@@ -371,6 +379,7 @@ final class AppModel {
         guard agentRunPresentation.beginPermissionResolution(runID: runID, key: key) else {
             return
         }
+        agentConversationAudioPresenter.resumeAfterPermission(runID: runID)
         coordinator.resolveAgentPermission(
             runID: runID,
             turnToken: key.turnToken,
@@ -384,6 +393,8 @@ final class AppModel {
             agentRunPresentation.start(runID: runID, profile: profile, prompt: prompt)
         case let .followUpSubmitted(runID, prompt):
             agentRunPresentation.submitFollowUp(runID: runID, prompt: prompt)
+        case let .notice(runID, message):
+            agentRunPresentation.receiveNotice(runID: runID, message: message)
         case let .turnStarted(runID):
             agentRunPresentation.beginTurn(runID: runID)
         case let .turnCancellationStarted(runID):
@@ -401,17 +412,21 @@ final class AppModel {
     }
 
     private func ensurePermissions() async -> Bool {
+        guard !isShutdown else { return false }
         if permissionGranted { return true }
         if let permissionTask {
-            return await permissionTask.value
+            let granted = await permissionTask.value
+            return isShutdown ? false : granted
         }
 
         let task = Task { @MainActor [permissionRequest] in
             await permissionRequest()
         }
         permissionTask = task
-        permissionGranted = await task.value
+        let granted = await task.value
         permissionTask = nil
+        guard !isShutdown else { return false }
+        permissionGranted = granted
         if !permissionGranted {
             state = .failed("Microphone and Speech Recognition permissions are required.")
             passiveEnabled = false

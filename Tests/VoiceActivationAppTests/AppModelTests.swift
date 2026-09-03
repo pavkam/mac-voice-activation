@@ -49,8 +49,11 @@ private enum ShortcutSpyError: Error, LocalizedError {
 @MainActor
 private final class AppModelOverlayStub: RecordingOverlayDisplaying {
     var onCancel: (() -> Void)?
+    private(set) var shownAccents: [WakeProfileAccent] = []
 
-    func show(transcript: String, accent: WakeProfileAccent) {}
+    func show(transcript: String, accent: WakeProfileAccent) {
+        shownAccents.append(accent)
+    }
     func hide() {}
 }
 
@@ -422,6 +425,114 @@ struct AppModelTests {
         await startup.value
     }
 
+    @MainActor @Test func shutdown_WhenStartupPermissionCompletesLate_DoesNotRestartListening()
+        async throws
+    {
+        let suite = "VoiceActivationShutdownPermissionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        let permission = PermissionRequestGate()
+        let speech = AppModelSpeechSessionSpy()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: ShortcutSpy(),
+            speechSession: speech,
+            permissionRequest: { await permission.request() },
+            soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            startsAutomatically: false)
+        let startup = Task { @MainActor in await model.start() }
+        await waitUntil { permission.isWaiting }
+
+        model.shutdown()
+        permission.resolve(true)
+        await startup.value
+
+        #expect(speech.startCount == 0)
+        #expect(model.state == .disabled)
+    }
+
+    @MainActor @Test func start_WhenPassiveDisabledDuringPermissionRequest_StaysOff() async throws {
+        let suite = "VoiceActivationStartupPausePermissionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        let permission = PermissionRequestGate()
+        let speech = AppModelSpeechSessionSpy()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: AppModelOverlayStub(),
+            shortcut: ShortcutSpy(),
+            speechSession: speech,
+            permissionRequest: { await permission.request() },
+            soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            startsAutomatically: false)
+        let startup = Task { @MainActor in await model.start() }
+        await waitUntil { permission.isWaiting }
+
+        model.setPassiveEnabled(false)
+        permission.resolve(true)
+        await startup.value
+
+        #expect(!model.passiveEnabled)
+        #expect(speech.startCount == 0)
+        #expect(model.state == .disabled)
+    }
+
+    @MainActor @Test func pushToTalk_WhenHeldProfileChangesDuringPermission_UsesNewestBinding()
+        async throws
+    {
+        let suite = "VoiceActivationHotKeyPermissionRaceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = AppPreferences(defaults: defaults)
+        preferences.passiveEnabled = false
+        let firstProfile = try WakeProfile(
+            wakePhrase: "computer",
+            urlTemplate: "https://one.example/?q={urlText}",
+            accent: .blue,
+            pushToTalkHotKey: try PushToTalkHotKey(
+                keyCode: 40,
+                modifiers: [.command, .shift],
+                keyLabel: "K"))
+        let secondProfile = try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://two.example/?q={urlText}",
+            accent: .purple,
+            pushToTalkHotKey: try PushToTalkHotKey(
+                keyCode: 45,
+                modifiers: [.control, .option],
+                keyLabel: "N"))
+        preferences.wakeProfiles = [firstProfile, secondProfile]
+        let permission = PermissionRequestGate()
+        let shortcut = ShortcutSpy()
+        let speech = AppModelSpeechSessionSpy()
+        let overlay = AppModelOverlayStub()
+        let model = AppModel(
+            preferences: preferences,
+            recordingOverlay: overlay,
+            shortcut: shortcut,
+            speechSession: speech,
+            permissionRequest: { await permission.request() },
+            soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            startsAutomatically: false)
+        await model.start()
+
+        shortcut.press(firstProfile.id)
+        await waitUntil { permission.isWaiting }
+        shortcut.release(firstProfile.id)
+        shortcut.press(secondProfile.id)
+        permission.resolve(true)
+        await waitUntil { speech.mode == .pushToTalk }
+
+        #expect(overlay.shownAccents.last == .purple)
+        shortcut.release(secondProfile.id)
+    }
+
     @MainActor
     private func waitUntil(
         timeout: Duration = .seconds(5),
@@ -746,6 +857,40 @@ struct AppModelTests {
         #expect(await runner.recordedResets() == [[profile.id]])
     }
 
+    @MainActor @Test func pushToTalk_WhenAnotherProfileReleases_KeepsOriginalCaptureActive()
+        async throws
+    {
+        let firstHotKey = try PushToTalkHotKey(
+            keyCode: 40,
+            modifiers: [.command, .shift],
+            keyLabel: "K")
+        let secondHotKey = try PushToTalkHotKey(
+            keyCode: 45,
+            modifiers: [.control, .option],
+            keyLabel: "N")
+        let firstProfile = try WakeProfile(
+            wakePhrase: "computer",
+            urlTemplate: "https://one.example/?q={urlText}",
+            accent: .blue,
+            pushToTalkHotKey: firstHotKey)
+        let secondProfile = try WakeProfile(
+            wakePhrase: "sneek",
+            urlTemplate: "https://two.example/?q={urlText}",
+            accent: .purple,
+            pushToTalkHotKey: secondHotKey)
+        let fixture = try Fixture(profiles: [firstProfile, secondProfile])
+        await fixture.model.start()
+        fixture.shortcut.press(firstProfile.id)
+        await waitUntil { fixture.speech.mode == .pushToTalk }
+
+        fixture.shortcut.press(secondProfile.id)
+        fixture.shortcut.release(secondProfile.id)
+
+        #expect(fixture.speech.mode == .pushToTalk)
+        #expect(fixture.model.state == .capturing)
+        fixture.shortcut.release(firstProfile.id)
+    }
+
     @MainActor @Test func saveSettings_WhenSaveIsInFlight_RejectsOverlappingSave() async throws {
         let profile = try makeAgentProfile(executablePath: "/agents/original")
         let runner = AppModelAgentRunnerSpy()
@@ -823,6 +968,22 @@ struct AppModelTests {
             event: .agentMessageDelta(messageID: nil, text: "stale")))
 
         #expect(fixture.model.agentRunSnapshot?.output == "")
+    }
+
+    @MainActor @Test func agentLifecycle_WhenNoticeArrives_PublishesItInCurrentRun() throws {
+        let profile = try makeAgentProfile(displayName: "Codex")
+        let fixture = try Fixture(profiles: [profile])
+        let runID = UUID()
+        fixture.model.handleAgentRunLifecycleEvent(.started(
+            runID: runID,
+            profile: profile,
+            prompt: "Current"))
+
+        fixture.model.handleAgentRunLifecycleEvent(.notice(
+            runID: runID,
+            message: "Wait for the agent."))
+
+        #expect(fixture.model.agentRunSnapshot?.notices == ["Wait for the agent."])
     }
 
     @MainActor @Test func agentConversation_WhenSpeechIsPartial_ShowsLiveFollowUpText() async throws {

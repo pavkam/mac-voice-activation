@@ -70,8 +70,8 @@ public struct WakeProfile: Codable, Equatable, Identifiable, Sendable {
         isEnabled: Bool = true,
         pushToTalkHotKey: PushToTalkHotKey? = nil) throws
     {
-        let normalizedPhrase = wakePhrase.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedPhrase.isEmpty else {
+        let normalizedPhrase = WakePhraseMatcher.normalizedWakePhrase(wakePhrase)
+        guard WakePhraseMatcher.containsSpokenCharacter(normalizedPhrase) else {
             throw ValidationError.wakePhraseRequired
         }
 

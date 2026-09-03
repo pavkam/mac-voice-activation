@@ -10,17 +10,31 @@ public enum WakePhraseMatcher {
         .union(.punctuationCharacters)
         .union(.symbols)
 
+    static func normalizedWakePhrase(_ phrase: String) -> String {
+        let spokenScalars = phrase.unicodeScalars.filter {
+            $0.properties.isWhitespace || !CharacterSet.controlCharacters.contains($0)
+        }
+        return String(String.UnicodeScalarView(spokenScalars))
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+    }
+
     static func canonicalWakePhrase(_ phrase: String) -> String {
-        phrase
+        normalizedWakePhrase(phrase)
             .trimmingCharacters(in: leadingAndTrailing)
             .folding(
                 options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
                 locale: Locale(identifier: "en_US_POSIX"))
     }
 
+    static func containsSpokenCharacter(_ phrase: String) -> Bool {
+        phrase.contains { $0.isLetter || $0.isNumber }
+    }
+
     public static func command(in transcript: String, wakePhrase: String) -> String? {
         let spoken = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        let phrase = wakePhrase.trimmingCharacters(in: leadingAndTrailing)
+        let phrase = normalizedWakePhrase(wakePhrase)
+            .trimmingCharacters(in: leadingAndTrailing)
         guard !spoken.isEmpty, !phrase.isEmpty else { return nil }
 
         let options: String.CompareOptions = [

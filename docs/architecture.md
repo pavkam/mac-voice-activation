@@ -79,7 +79,9 @@ visible after the conversation returns to passive wake listening.
   into profile drafts and registers the full binding set only when settings are
   saved.
   The prior registration remains active until that save succeeds and is restored
-  if the requested combination is unavailable.
+  if the requested combination is unavailable. Press and release callbacks carry
+  the same profile identifier through asynchronous permission checks, preventing
+  another binding's release from ending the held profile's capture.
 - **Agent conversation:** after an agent request, interactive recognition stays
   active without an initial-silence timeout. Final speech or 1.5 seconds of
   inactivity submits a follow-up, and the 30-second utterance bound still
@@ -144,16 +146,21 @@ overlay passes its exact final frame into the initial panel morph.
 
 One presentation run identifier spans the whole conversation. User follow-ups,
 agent messages, and tools share one chronological timeline while individual ACP
-turns remain sequential. The panel's bottom-follow policy changes only on
-user-driven scrolling; output growth and animated programmatic scrolling cannot
-disable it.
+turns remain sequential. At most 16 recognized follow-ups wait behind active
+work; further submissions produce a visible notice. Beginning a turn clears the
+prior plan, the copied response section separates turns and excludes thought
+updates, and tools still marked pending settle when their turn ends. The panel's
+bottom-follow policy tracks geometry throughout user interaction and changes
+only on user-driven scrolling; output growth and animated programmatic scrolling
+cannot disable it.
 
 `AgentConversationAudioPresenter` observes typed lifecycle events through an
 injected playback boundary. It collects only user-facing agent message deltas,
 converts their Markdown to speech text at turn completion, and independently
-controls the delayed working pulse. Spoken conversation cancellation gets a
-short voice acknowledgement. Tests inject a silent player. The system adapter
-uses `AVSpeechSynthesizer` and a low-volume bundled cue.
+controls the delayed working pulse. Permission prompts pause that pulse and a
+resolved choice restarts its delay. Spoken conversation cancellation gets a short
+voice acknowledgement. Tests inject a silent player. The system adapter uses
+`AVSpeechSynthesizer` and a low-volume bundled cue.
 
 See [ACP agent harness](agent-harness.md) for the complete wire, permission,
 resource, and recovery contract.
@@ -180,6 +187,10 @@ resource, and recovery contract.
   ending the conversation resumes passive listening. Stale events are rejected
   by execution generation and conversation run identifier at the coordinator,
   app model, and presentation boundaries.
+- Application shutdown prevents delayed microphone-permission results from
+  restarting passive listening or a held push-to-talk capture.
+- Pausing passive listening while the startup permission request is open remains
+  authoritative when that request eventually completes.
 - During synthesized reply playback, conversation recognition ignores ordinary
   speech to prevent output echo from becoming a prompt. Cancellation words stop
   playback and close an idle conversation; recognition restarts cleanly after
@@ -214,6 +225,7 @@ when the locale lacks on-device support. Interactive command capture can use
 Apple's speech service. Audio is not stored. Partial text exists in memory only
 during the current capture; the most recent submitted request remains for menu
 feedback. Agent prompts, output, diagnostics, plans, tools, and permissions are
-bounded in memory and never persisted by the app.
+bounded in memory and never persisted by the app. Pending spoken follow-ups and
+app-authored notices are bounded independently.
 
 Next: [development and verification](development.md).

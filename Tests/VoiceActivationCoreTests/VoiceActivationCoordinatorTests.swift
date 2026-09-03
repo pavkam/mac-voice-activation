@@ -1350,6 +1350,44 @@ struct VoiceActivationCoordinatorTests {
         await fixture.agentRunner.complete(runIndex: 1)
     }
 
+    @MainActor
+    @Test func followUps_WhenCancellationIsBlocked_BoundsQueueAndPublishesRejection() async throws {
+        let profile = try makeAgentProfile()
+        let fixture = try Fixture(profiles: [profile])
+        var lifecycleEvents: [AgentRunLifecycleEvent] = []
+        fixture.coordinator.onAgentRunEvent = { lifecycleEvents.append($0) }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent first", isFinal: true)
+        await waitUntil {
+            await fixture.agentRunner.recordedInvocations().count == 1
+        }
+        await fixture.agentRunner.delayCancellation()
+
+        for index in 0...16 {
+            fixture.coordinator.pushToTalkPressed(profileID: profile.id)
+            fixture.speech.emit("follow up \(index)")
+            fixture.coordinator.pushToTalkReleased()
+        }
+
+        let submittedPrompts = lifecycleEvents.compactMap { event -> String? in
+            guard case let .followUpSubmitted(_, prompt) = event else { return nil }
+            return prompt
+        }
+        let notices = lifecycleEvents.compactMap { event -> String? in
+            guard case let .notice(_, message) = event else { return nil }
+            return message
+        }
+        #expect(submittedPrompts.count == 16)
+        #expect(submittedPrompts.first == "follow up 0")
+        #expect(submittedPrompts.last == "follow up 15")
+        #expect(notices == [
+            "Follow-up queue is full. Wait for the agent before speaking again.",
+        ])
+
+        fixture.coordinator.stop()
+        await fixture.agentRunner.releaseCancellation()
+    }
+
     @MainActor @Test func pushToTalk_WhenAgentIsAlreadyExecuting_CancelsItBeforeStartingNextAgent() async throws {
         let profile = try makeAgentProfile()
         let fixture = try Fixture(profiles: [profile])

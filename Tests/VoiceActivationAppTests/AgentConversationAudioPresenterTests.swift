@@ -147,6 +147,31 @@ struct AgentConversationAudioPresenterTests {
         #expect(player.workingStates.last == false)
     }
 
+    @MainActor @Test func permissionResolution_WhenCurrentRunContinues_RestartsWorkingCue() throws {
+        let player = AgentConversationAudioSpy()
+        let presenter = AgentConversationAudioPresenter(
+            player: player,
+            readsReplies: { true },
+            playsWorkingSound: { true },
+            localeID: { "en-US" })
+        let runID = UUID()
+        presenter.handle(.started(
+            runID: runID,
+            profile: try agentProfile(),
+            prompt: "Question"))
+        presenter.handle(.event(
+            runID: runID,
+            event: .permissionRequested(AgentPermissionRequest(
+                turnToken: AgentTurnToken(),
+                requestID: .integer(4),
+                toolCall: AgentToolCallUpdate(id: "tool", title: "Edit"),
+                options: []))))
+
+        presenter.resumeAfterPermission(runID: runID)
+
+        #expect(player.workingStates.suffix(2) == [false, true])
+    }
+
     @MainActor @Test func refreshSettings_WhenRunHasFailed_DoesNotRestartWorkingCue() throws {
         let player = AgentConversationAudioSpy()
         let presenter = AgentConversationAudioPresenter(

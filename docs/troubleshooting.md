@@ -45,6 +45,8 @@ to a service.
 ## A custom wake phrase does not trigger
 
 - Open the menu and confirm that the toggle for that specific phrase is enabled.
+- Ensure the phrase contains a letter or number. Punctuation-only and symbol-only
+  phrases are rejected because they cannot become spoken recognition matches.
 - Confirm **Save Settings** completed; saved phrases are supplied to Apple
   Speech as contextual vocabulary when passive listening restarts.
 - Speak the phrase at the beginning of the utterance and pause briefly while
@@ -101,6 +103,10 @@ with “Stopped.”
 
 If new output does not follow the bottom, scroll to the bottom once. A deliberate
 scroll upward pauses automatic following so earlier output remains readable.
+
+If the panel reports that the follow-up queue is full, wait for the current turn
+and queued speech to settle before speaking again. The queue is intentionally
+bounded at 16 requests.
 
 If a provider exits, emits invalid JSON, exceeds a protocol bound, or closes a
 pipe unexpectedly, the panel enters a failed state with bounded diagnostics.

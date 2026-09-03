@@ -37,6 +37,15 @@ struct AgentToolPresentation: Equatable, Identifiable, Sendable {
     var title: String
     var kind: AgentToolKind?
     var status: AgentToolCallStatus?
+    var isSettled = false
+
+    var isWorking: Bool {
+        !isSettled && (status == nil || status == .pending || status == .inProgress)
+    }
+
+    var isFinished: Bool {
+        isSettled || status == .completed || status == .failed
+    }
 }
 
 enum AgentMessagePresentationKind: Equatable, Sendable {
@@ -154,6 +163,7 @@ final class AgentRunPresentation {
     private var providerName: String?
     private var phase: AgentRunPhase?
     private var voiceInput = ""
+    private var needsResponseSeparator = false
     private var outputBuffer = AgentRunBoundedTextBuffer(
         maximumBytes: maximumOutputBytes,
         marker: "… earlier output omitted …\n")
@@ -192,6 +202,7 @@ final class AgentRunPresentation {
         }
         phase = .running
         voiceInput = ""
+        needsResponseSeparator = false
         outputBuffer.removeAll()
         diagnosticBuffer.removeAll()
         plan = []
@@ -234,10 +245,19 @@ final class AgentRunPresentation {
         publishNow()
     }
 
+    func receiveNotice(runID: UUID, message: String) {
+        guard self.runID == runID, phase?.isTerminal == false, !message.isEmpty else { return }
+        flushPendingPublication()
+        appendNotice(message)
+        publishNow()
+    }
+
     func beginTurn(runID: UUID) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
         flushPendingPublication()
         phase = .running
+        needsResponseSeparator = !outputBuffer.value.isEmpty
+        plan = []
         permissions = []
         voiceInput = ""
         publishNow()
@@ -246,6 +266,7 @@ final class AgentRunPresentation {
     func completeTurn(runID: UUID, result _: AgentRunResult) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
         flushPendingPublication()
+        settleTools()
         phase = .listening
         permissions = []
         voiceInput = ""
@@ -286,6 +307,7 @@ final class AgentRunPresentation {
     func complete(runID: UUID, result: AgentRunResult) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
         flushPendingPublication()
+        settleTools()
         phase = .completed(result.stopReason)
         permissions = []
         stopRuntimeTimers()
@@ -295,6 +317,7 @@ final class AgentRunPresentation {
     func fail(runID: UUID, message: String) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
         flushPendingPublication()
+        settleTools()
         phase = .failed(message)
         permissions = []
         stopRuntimeTimers()
@@ -316,10 +339,13 @@ final class AgentRunPresentation {
         case let .connected(agentName, _):
             providerName = agentName
         case let .agentMessageDelta(messageID, text):
+            if needsResponseSeparator, !text.isEmpty {
+                outputBuffer.append("\n\n")
+                needsResponseSeparator = false
+            }
             outputBuffer.append(text)
             appendMessage(text, messageID: messageID, kind: .response)
         case let .thoughtDelta(messageID, text):
-            outputBuffer.append(text)
             appendMessage(text, messageID: messageID, kind: .thought)
         case let .toolCall(tool):
             upsertTool(AgentToolPresentation(
@@ -351,10 +377,15 @@ final class AgentRunPresentation {
         case let .unknown(discriminator, summary):
             diagnosticBuffer.append("[\(discriminator)] \(summary)\n")
         case let .deliveryNotice(notice):
-            notices.append(noticeDescription(notice))
-            if notices.count > 16 {
-                notices.remove(at: notices.startIndex)
-            }
+            appendNotice(noticeDescription(notice))
+        }
+    }
+
+    private func appendNotice(_ message: String) {
+        guard notices.last != message else { return }
+        notices.append(message)
+        if notices.count > 16 {
+            notices.remove(at: notices.startIndex)
         }
     }
 
@@ -396,6 +427,13 @@ final class AgentRunPresentation {
             tools[index].status = status
         }
         updateTimelineTool(tools[index])
+    }
+
+    private func settleTools() {
+        for index in tools.indices where tools[index].isWorking {
+            tools[index].isSettled = true
+            updateTimelineTool(tools[index])
+        }
     }
 
     private func appendMessage(

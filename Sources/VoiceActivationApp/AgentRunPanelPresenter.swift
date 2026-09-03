@@ -70,6 +70,7 @@ final class AgentRunPanelPresenter {
         if snapshot.phase == .running, self.snapshot?.phase != .running {
             cancelledRunID = nil
         }
+        resolvedPermissions.formIntersection(snapshot.permissions.lazy.map(\.key))
         self.snapshot = snapshot
         display.update(snapshot)
     }

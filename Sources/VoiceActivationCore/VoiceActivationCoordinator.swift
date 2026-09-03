@@ -3,6 +3,7 @@ import Foundation
 public enum AgentRunLifecycleEvent: Equatable, Sendable {
     case started(runID: UUID, profile: WakeProfile, prompt: String)
     case followUpSubmitted(runID: UUID, prompt: String)
+    case notice(runID: UUID, message: String)
     case turnStarted(runID: UUID)
     case turnCancellationStarted(runID: UUID)
     case event(runID: UUID, event: AgentRunEvent)
@@ -13,6 +14,8 @@ public enum AgentRunLifecycleEvent: Equatable, Sendable {
 
 @MainActor
 public final class VoiceActivationCoordinator {
+    static let maximumPendingAgentPrompts = 16
+
     public private(set) var state: ActivationState = .disabled {
         didSet {
             onStateChange?(state)
@@ -838,6 +841,12 @@ public final class VoiceActivationCoordinator {
 
     private func submitAgentFollowUp(_ prompt: String) {
         guard case .agent = executingAction, let runID = activeAgentRunID else { return }
+        guard pendingAgentPrompts.count < Self.maximumPendingAgentPrompts else {
+            onAgentRunEvent?(.notice(
+                runID: runID,
+                message: "Follow-up queue is full. Wait for the agent before speaking again."))
+            return
+        }
         pendingAgentPrompts.append(prompt)
         onAgentRunEvent?(.followUpSubmitted(runID: runID, prompt: prompt))
 
