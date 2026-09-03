@@ -29,6 +29,16 @@ public struct ContinuousACPAgentRunnerClock: ACPAgentRunnerClock, Sendable {
     }
 }
 
+struct ACPAgentRunnerTestingHooks: Sendable {
+    let beforeCancelledExitWaitReturns: @Sendable () async -> Void
+
+    init(
+        beforeCancelledExitWaitReturns: @escaping @Sendable () async -> Void = {})
+    {
+        self.beforeCancelledExitWaitReturns = beforeCancelledExitWaitReturns
+    }
+}
+
 public actor ACPAgentRunner: AgentHarnessRunning {
     public static let maximumStandardErrorBytes = 16 * 1_024
 
@@ -40,6 +50,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     private let clock: any ACPAgentRunnerClock
     private let drainClock: any ACPAgentRunnerClock
     private let settleClock: any ACPAgentRunnerClock
+    private let testingHooks: ACPAgentRunnerTestingHooks
     private var records: [UUID: ACPAgentConnectionRecord] = [:]
     private var activeTurn: ACPAgentActiveTurn?
     private var isShutDown = false
@@ -54,6 +65,21 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         self.clock = clock
         self.drainClock = drainClock
         self.settleClock = settleClock
+        testingHooks = ACPAgentRunnerTestingHooks()
+    }
+
+    init(
+        transportFactory: any ACPTransportCreating = ACPProcessTransportFactory(),
+        clock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
+        drainClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
+        settleClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
+        testingHooks: ACPAgentRunnerTestingHooks)
+    {
+        self.transportFactory = transportFactory
+        self.clock = clock
+        self.drainClock = drainClock
+        self.settleClock = settleClock
+        self.testingHooks = testingHooks
     }
 
     public func run(
@@ -254,7 +280,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             id: UUID(),
             profileID: profileID,
             configuration: configuration,
-            transport: transport)
+            transport: transport,
+            beforeCancelledExitWaitReturns: testingHooks.beforeCancelledExitWaitReturns)
         records[profileID] = record
         updateActiveTurnRecord(token: turnToken, record: record)
         await startObservers(for: record)
@@ -419,10 +446,14 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         record: ACPAgentConnectionRecord) async -> Bool
     {
         let exitObservation = record.exitObservation
-        return await withTaskGroup(of: ACPAgentPromptSettleRace.self) { group in
+        let result = await withTaskGroup(of: ACPAgentPromptSettleRace.self) { group in
             group.addTask {
-                await exitObservation.wait()
-                return .processExited
+                switch await exitObservation.wait() {
+                case .processExited:
+                    return .processExited
+                case .cancelled:
+                    return .cancelled
+                }
             }
             group.addTask { [settleClock] in
                 await settleClock.sleep(for: Self.promptSettlePeriod)
@@ -430,11 +461,15 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             }
             let result = await group.next() ?? .settled
             group.cancelAll()
-            if case .processExited = result {
-                return true
-            }
-            return false
+            return result
         }
+        if case .processExited = result {
+            return true
+        }
+        if record.exitStatus != nil {
+            return true
+        }
+        return await exitObservation.isResolved()
     }
 
     func retainedStandardErrorByteCountForTesting(profileID: UUID) -> Int {
@@ -595,18 +630,21 @@ private final class ACPAgentConnectionRecord {
     var standardError = Data()
     var diagnosticRemainder = Data()
     var exitStatus: Int32?
-    let exitObservation = ACPAgentProcessExitLatch()
+    let exitObservation: ACPAgentProcessExitLatch
 
     init(
         id: UUID,
         profileID: UUID,
         configuration: AgentHarnessConfiguration,
-        transport: any ACPTransport)
+        transport: any ACPTransport,
+        beforeCancelledExitWaitReturns: @escaping @Sendable () async -> Void)
     {
         self.id = id
         self.profileID = profileID
         self.configuration = configuration
         self.transport = transport
+        exitObservation = ACPAgentProcessExitLatch(
+            beforeCancelledWaitReturns: beforeCancelledExitWaitReturns)
     }
 }
 
@@ -638,11 +676,24 @@ private enum ACPAgentDrainRace: Sendable {
 private enum ACPAgentPromptSettleRace: Sendable {
     case processExited
     case settled
+    case cancelled
+}
+
+private enum ACPAgentProcessExitWaitResult: Sendable {
+    case processExited
+    case cancelled
 }
 
 private actor ACPAgentProcessExitLatch {
     private var wasResolved = false
-    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var waiters: [
+        UUID: CheckedContinuation<ACPAgentProcessExitWaitResult, Never>
+    ] = [:]
+    private let beforeCancelledWaitReturns: @Sendable () async -> Void
+
+    init(beforeCancelledWaitReturns: @escaping @Sendable () async -> Void) {
+        self.beforeCancelledWaitReturns = beforeCancelledWaitReturns
+    }
 
     func resolve() {
         guard !wasResolved else {
@@ -652,16 +703,18 @@ private actor ACPAgentProcessExitLatch {
         let pending = waiters.values
         waiters.removeAll()
         for waiter in pending {
-            waiter.resume()
+            waiter.resume(returning: .processExited)
         }
     }
 
-    func wait() async {
+    func wait() async -> ACPAgentProcessExitWaitResult {
         let id = UUID()
-        await withTaskCancellationHandler {
+        return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                if wasResolved || Task.isCancelled {
-                    continuation.resume()
+                if wasResolved {
+                    continuation.resume(returning: .processExited)
+                } else if Task.isCancelled {
+                    continuation.resume(returning: .cancelled)
                 } else {
                     waiters[id] = continuation
                 }
@@ -671,8 +724,16 @@ private actor ACPAgentProcessExitLatch {
         }
     }
 
-    private func cancelWaiter(id: UUID) {
-        waiters.removeValue(forKey: id)?.resume()
+    func isResolved() -> Bool {
+        wasResolved
+    }
+
+    private func cancelWaiter(id: UUID) async {
+        guard let waiter = waiters.removeValue(forKey: id) else {
+            return
+        }
+        await beforeCancelledWaitReturns()
+        waiter.resume(returning: wasResolved ? .processExited : .cancelled)
     }
 }
 

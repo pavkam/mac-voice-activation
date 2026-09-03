@@ -130,6 +130,95 @@ private actor ManualACPAgentRunnerClock: ACPAgentRunnerClock {
     }
 }
 
+private actor DelayedCancellationACPAgentRunnerClock: ACPAgentRunnerClock {
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var waitingObservers: [CheckedContinuation<Void, Never>] = []
+
+    func sleep(for duration: Duration) async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiters[id] = continuation
+                let observers = waitingObservers
+                waitingObservers.removeAll()
+                for observer in observers {
+                    observer.resume()
+                }
+            }
+        } onCancel: {
+            Task {
+                try? await ContinuousClock().sleep(for: .milliseconds(100))
+                await self.cancel(id: id)
+            }
+        }
+    }
+
+    func waitUntilSleeping() async {
+        guard waiters.isEmpty else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waitingObservers.append(continuation)
+        }
+    }
+
+    private func cancel(id: UUID) {
+        waiters.removeValue(forKey: id)?.resume()
+    }
+}
+
+private actor RunnerPromptSettleCancellationGate {
+    private var didPause = false
+    private var isOpen = false
+    private var pauseObservers: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause() async {
+        didPause = true
+        let observers = pauseObservers
+        pauseObservers.removeAll()
+        for observer in observers {
+            observer.resume()
+        }
+        guard !isOpen else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilPaused() async {
+        guard !didPause else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pauseObservers.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+}
+
+private actor RunnerCompletionObservation {
+    private var didComplete = false
+
+    func complete() {
+        didComplete = true
+    }
+
+    func completed() -> Bool {
+        didComplete
+    }
+}
+
 @Suite(.serialized)
 struct ACPAgentRunnerTests {
     @Test func run_WhenProfileConfigurationIsUnchanged_ReusesConnectionAndSession() async throws {
@@ -596,6 +685,87 @@ struct ACPAgentRunnerTests {
         #expect(try await secondRun.value == AgentRunResult(stopReason: .endTurn))
         let secondEvents = await secondRecorder.recordedEvents()
         #expect(!secondEvents.contains(.diagnostic("final stderr")))
+        await runner.shutdown()
+    }
+
+    @Test func run_WhenExitResolvesDuringSettledLatchCancellation_DrainsOriginalTurn()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let settleClock = ManualACPAgentRunnerClock()
+        let drainClock = ManualACPAgentRunnerClock()
+        let cancellationGate = RunnerPromptSettleCancellationGate()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]),
+            drainClock: drainClock,
+            settleClock: settleClock,
+            testingHooks: ACPAgentRunnerTestingHooks(
+                beforeCancelledExitWaitReturns: { await cancellationGate.pause() }))
+        let recorder = RunnerEventRecorder()
+        let activeRun = Task {
+            try await runner.run(
+                profileID: UUID(),
+                configuration: try makeConfiguration(),
+                prompt: "Inspect",
+                onEvent: { event in await recorder.record(event) })
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+        _ = await recorder.nextEvent()
+
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        await settleClock.waitUntilSleeping()
+        await settleClock.advance()
+        await cancellationGate.waitUntilPaused()
+        await transport.reportExit(status: 0)
+        await drainClock.waitUntilSleeping()
+        await cancellationGate.open()
+        for _ in 0..<100 {
+            await Task.yield()
+        }
+        await transport.feedDiagnostic("final stderr during exit")
+        await transport.finishStreams()
+
+        #expect(try await activeRun.value == AgentRunResult(stopReason: .endTurn))
+        #expect(
+            await recorder.recordedEvents().contains(
+                .diagnostic("final stderr during exit")))
+        await runner.shutdown()
+    }
+
+    @Test func run_WhenHealthyPromptSettlementIsCancelled_DoesNotAwaitProcessExit()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let settleClock = DelayedCancellationACPAgentRunnerClock()
+        let completion = RunnerCompletionObservation()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]),
+            settleClock: settleClock)
+        let activeRun = Task {
+            let result = try await runner.run(
+                profileID: UUID(),
+                configuration: try makeConfiguration(),
+                prompt: "Inspect",
+                onEvent: { _ in })
+            await completion.complete()
+            return result
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        await settleClock.waitUntilSleeping()
+        activeRun.cancel()
+        try await ContinuousClock().sleep(for: .milliseconds(250))
+        let completedBeforeExit = await completion.completed()
+        if !completedBeforeExit {
+            await transport.reportExit(status: 0)
+            await transport.finishStreams()
+        }
+
+        #expect(completedBeforeExit)
+        #expect(try await activeRun.value == AgentRunResult(stopReason: .endTurn))
         await runner.shutdown()
     }
 
