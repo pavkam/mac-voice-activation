@@ -1,6 +1,10 @@
 import Foundation
 
-public struct CommandTemplate: Equatable, Sendable {
+public struct CommandTemplate: Codable, Equatable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case executablePath
+        case argumentTemplates
+    }
     public enum ValidationError: Error, Equatable, LocalizedError {
         case executableMustBeAbsolute
         case missingTranscriptPlaceholder
@@ -30,6 +34,19 @@ public struct CommandTemplate: Equatable, Sendable {
 
         self.executablePath = executablePath
         self.argumentTemplates = argumentTemplates
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            executablePath: container.decode(String.self, forKey: .executablePath),
+            argumentTemplates: container.decode([String].self, forKey: .argumentTemplates))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(executablePath, forKey: .executablePath)
+        try container.encode(argumentTemplates, forKey: .argumentTemplates)
     }
 
     public func expandedArguments(for transcript: String) -> [String] {

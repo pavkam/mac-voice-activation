@@ -36,13 +36,17 @@ public final class AppPreferences {
 
     public var wakeProfiles: [WakeProfile] {
         get {
+            guard let data = defaults.data(forKey: Key.wakeProfiles) else {
+                return profilesWithMigratedHotKey([legacyWakeProfile()])
+            }
+
             guard
-                let data = defaults.data(forKey: Key.wakeProfiles),
                 let profiles = try? JSONDecoder().decode([WakeProfile].self, from: data),
                 !profiles.isEmpty
             else {
-                return profilesWithMigratedHotKey([legacyWakeProfile()])
+                return [legacyWakeProfile()]
             }
+
             return profilesWithMigratedHotKey(profiles)
         }
         set {

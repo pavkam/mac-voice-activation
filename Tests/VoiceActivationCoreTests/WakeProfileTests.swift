@@ -3,6 +3,40 @@ import Testing
 @testable import VoiceActivationCore
 
 struct WakeProfileTests {
+    @Test func decoding_WhenProfilePredatesActionField_MigratesToCommandAction() throws {
+        let legacyJSON = """
+        {"id":"F39F8151-6192-452E-8C96-36D29AB7335D","wakePhrase":"sneek","executablePath":"/usr/bin/open","argumentTemplates":["https://example.com?q={urlText}"],"accent":"purple","isEnabled":false}
+        """
+
+        let profile = try JSONDecoder().decode(
+            WakeProfile.self,
+            from: #require(legacyJSON.data(using: .utf8)))
+
+        let expectedAction = WakeProfileAction.command(try CommandTemplate(
+            executablePath: "/usr/bin/open",
+            argumentTemplates: ["https://example.com?q={urlText}"]))
+
+        #expect(profile.action == expectedAction)
+    }
+
+    @Test func decoding_WhenLegacyProfileHasShortcut_PreservesIdentityAndShortcut() throws {
+        let legacyJSON = """
+        {"id":"F39F8151-6192-452E-8C96-36D29AB7335D","wakePhrase":"sneek","executablePath":"/usr/bin/open","argumentTemplates":["https://example.com?q={urlText}"],"accent":"purple","pushToTalkHotKey":{"keyCode":40,"modifiers":12,"keyLabel":"K"}}
+        """
+
+        let profile = try JSONDecoder().decode(
+            WakeProfile.self,
+            from: #require(legacyJSON.data(using: .utf8)))
+
+        let expectedShortcut = try PushToTalkHotKey(
+            keyCode: 40,
+            modifiers: [.shift, .command],
+            keyLabel: "K")
+
+        #expect(profile.id == UUID(uuidString: "F39F8151-6192-452E-8C96-36D29AB7335D"))
+        #expect(profile.pushToTalkHotKey == expectedShortcut)
+    }
+
     @Test func match_WhenSeveralProfilesCouldMatch_UsesLongestWakePhrase() throws {
         let profiles = [
             try WakeProfile(

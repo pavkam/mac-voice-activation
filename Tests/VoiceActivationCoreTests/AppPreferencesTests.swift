@@ -3,6 +3,18 @@ import Testing
 @testable import VoiceActivationCore
 
 struct AppPreferencesTests {
+    @Test func wakeProfiles_WhenStoredProfileIsCorrupt_DoesNotRewriteStoredBytes() throws {
+        let suite = "VoiceActivationTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let storedData = try #require("[{not valid JSON}]".data(using: .utf8))
+        defaults.set(storedData, forKey: "wakeProfiles")
+
+        _ = AppPreferences(defaults: defaults).wakeProfiles
+
+        #expect(defaults.data(forKey: "wakeProfiles") == storedData)
+    }
+
     @Test func values_WhenDefaultsAreEmpty_ReturnDocumentedDefaults() throws {
         let suite = "VoiceActivationTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
