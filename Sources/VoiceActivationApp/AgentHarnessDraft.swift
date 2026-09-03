@@ -5,9 +5,14 @@ struct AgentHarnessDraft: Equatable {
     var preset: AgentHarnessPreset
     var displayName: String
     var executablePath: String
-    var arguments: [String]
+    var argumentDrafts: ArgumentDraftCollection
     var workingDirectory: String
     var permissionPolicy: AgentPermissionPolicy
+
+    var arguments: [String] {
+        get { argumentDrafts.values }
+        set { argumentDrafts.replace(with: newValue) }
+    }
 
     init(
         preset: AgentHarnessPreset,
@@ -20,7 +25,7 @@ struct AgentHarnessDraft: Equatable {
         self.preset = preset
         self.displayName = displayName
         self.executablePath = executablePath
-        self.arguments = arguments
+        argumentDrafts = ArgumentDraftCollection(values: arguments)
         self.workingDirectory = workingDirectory
         self.permissionPolicy = permissionPolicy
     }
@@ -29,7 +34,7 @@ struct AgentHarnessDraft: Equatable {
         preset = configuration.preset
         displayName = configuration.displayName
         executablePath = configuration.executablePath
-        arguments = configuration.arguments
+        argumentDrafts = ArgumentDraftCollection(values: configuration.arguments)
         workingDirectory = configuration.workingDirectory
         permissionPolicy = configuration.permissionPolicy
     }

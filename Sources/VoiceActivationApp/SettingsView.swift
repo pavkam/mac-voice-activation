@@ -306,7 +306,7 @@ struct SettingsView: View {
         argumentEditor(
             "Argument templates",
             hint: "Argument containing {text} or {urlText}",
-            arguments: profile.argumentTemplates)
+            arguments: profile.commandArguments)
 
         HStack(spacing: 6) {
             templateToken("{urlText}")
@@ -375,28 +375,28 @@ struct SettingsView: View {
         argumentEditor(
             "Adapter arguments",
             hint: "Argument",
-            arguments: profile.agentHarness.arguments)
+            arguments: profile.agentHarness.argumentDrafts)
     }
 
     @ViewBuilder
     private func argumentEditor(
         _ title: String,
         hint: String,
-        arguments: Binding<[String]>) -> some View
+        arguments: Binding<ArgumentDraftCollection>) -> some View
     {
         VStack(alignment: .leading, spacing: 7) {
             Text(title)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
 
-            ForEach(arguments.wrappedValue.indices, id: \.self) { index in
+            ForEach(arguments.rows) { argument in
                 HStack(spacing: 6) {
-                    TextField(hint, text: arguments[index])
+                    TextField(hint, text: argument.value)
                         .font(.system(.body, design: .monospaced))
                         .textFieldStyle(.roundedBorder)
 
                     Button(role: .destructive) {
-                        arguments.wrappedValue.remove(at: index)
+                        arguments.wrappedValue.remove(id: argument.wrappedValue.id)
                     } label: {
                         Image(systemName: "minus.circle")
                     }
@@ -406,7 +406,7 @@ struct SettingsView: View {
             }
 
             Button {
-                arguments.wrappedValue.append("")
+                arguments.wrappedValue.append()
             } label: {
                 Label("Add argument", systemImage: "plus.circle")
             }

@@ -1,5 +1,15 @@
 import Foundation
 
+private struct PhysicalHotKeyIdentity: Hashable {
+    let keyCode: UInt32
+    let modifiers: HotKeyModifiers
+
+    init(_ hotKey: PushToTalkHotKey) {
+        keyCode = hotKey.keyCode
+        modifiers = hotKey.modifiers
+    }
+}
+
 public enum WakeProfileCollectionValidationError: Error, Equatable, LocalizedError {
     case profileRequired
     case duplicateWakePhrase
@@ -28,7 +38,7 @@ public enum WakeProfileCollectionValidator {
             throw WakeProfileCollectionValidationError.duplicateWakePhrase
         }
 
-        let hotKeys = profiles.compactMap(\.pushToTalkHotKey)
+        let hotKeys = profiles.compactMap(\.pushToTalkHotKey).map(PhysicalHotKeyIdentity.init)
         guard Set(hotKeys).count == hotKeys.count else {
             throw WakeProfileCollectionValidationError.duplicatePushToTalkHotKey
         }

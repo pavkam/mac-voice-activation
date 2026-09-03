@@ -79,6 +79,46 @@ struct WakeProfileDraftTests {
         #expect(draft.argumentTemplates == ["--command", "{text}", ""])
     }
 
+    @Test func commandArguments_WhenMiddleRowIsRemovedAndFollowingRowIsEdited_PreserveIdentityAndOrder() throws {
+        var draft = WakeProfileDraft(
+            wakePhrase: "computer",
+            executablePath: "/usr/bin/printf",
+            argumentTemplates: ["--format", "%s", "{text}"],
+            agentHarness: .empty(workingDirectory: "/Users/test/project"),
+            targetKind: .command,
+            accent: .blue)
+        let originalIDs = draft.commandArguments.rows.map(\.id)
+
+        draft.commandArguments.remove(id: originalIDs[1])
+        let finalIndex = try #require(draft.commandArguments.rows.firstIndex {
+            $0.id == originalIDs[2]
+        })
+        draft.commandArguments.rows[finalIndex].value = "prefix={urlText}"
+
+        #expect(draft.commandArguments.rows.map(\.id) == [originalIDs[0], originalIDs[2]])
+        #expect(draft.argumentTemplates == ["--format", "prefix={urlText}"])
+    }
+
+    @Test func agentArguments_WhenMiddleRowIsRemovedAndFollowingRowIsEdited_PreserveIdentityAndOrder() throws {
+        var draft = AgentHarnessDraft(
+            preset: .custom,
+            displayName: "Agent",
+            executablePath: "/custom/agent",
+            arguments: ["--first", "--middle", "--last"],
+            workingDirectory: "/Users/test/project",
+            permissionPolicy: .ask)
+        let originalIDs = draft.argumentDrafts.rows.map(\.id)
+
+        draft.argumentDrafts.remove(id: originalIDs[1])
+        let finalIndex = try #require(draft.argumentDrafts.rows.firstIndex {
+            $0.id == originalIDs[2]
+        })
+        draft.argumentDrafts.rows[finalIndex].value = "two words"
+
+        #expect(draft.argumentDrafts.rows.map(\.id) == [originalIDs[0], originalIDs[2]])
+        #expect(draft.arguments == ["--first", "two words"])
+    }
+
     @Test func preset_WhenCodexSelected_UsesPinnedCodexAdapterArguments() {
         var draft = AgentHarnessDraft.empty(workingDirectory: "/Users/test/project")
         let locator = executableLocator(["npx": "/opt/homebrew/bin/npx"])

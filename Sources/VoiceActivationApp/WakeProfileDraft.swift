@@ -10,20 +10,25 @@ struct WakeProfileDraft: Equatable, Identifiable {
     var id: UUID
     var wakePhrase: String
     var executablePath: String
-    var argumentTemplates: [String]
+    var commandArguments: ArgumentDraftCollection
     var agentHarness: AgentHarnessDraft
     var targetKind: WakeProfileTargetKind
     var accent: WakeProfileAccent
     var isEnabled: Bool
     var pushToTalkHotKey: PushToTalkHotKey?
 
+    var argumentTemplates: [String] {
+        get { commandArguments.values }
+        set { commandArguments.replace(with: newValue) }
+    }
+
     var urlTemplate: String {
-        get { argumentTemplates.first ?? "" }
+        get { commandArguments.rows.first?.value ?? "" }
         set {
-            if argumentTemplates.isEmpty {
-                argumentTemplates = [newValue]
+            if commandArguments.rows.isEmpty {
+                commandArguments = ArgumentDraftCollection(values: [newValue])
             } else {
-                argumentTemplates[0] = newValue
+                commandArguments.rows[0].value = newValue
             }
         }
     }
@@ -39,7 +44,7 @@ struct WakeProfileDraft: Equatable, Identifiable {
         self.id = id
         self.wakePhrase = wakePhrase
         executablePath = "/usr/bin/open"
-        argumentTemplates = [urlTemplate]
+        commandArguments = ArgumentDraftCollection(values: [urlTemplate])
         agentHarness = .empty(
             workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
         targetKind = .command
@@ -62,7 +67,7 @@ struct WakeProfileDraft: Equatable, Identifiable {
         self.id = id
         self.wakePhrase = wakePhrase
         self.executablePath = executablePath
-        self.argumentTemplates = argumentTemplates
+        commandArguments = ArgumentDraftCollection(values: argumentTemplates)
         self.agentHarness = agentHarness
         self.targetKind = targetKind
         self.accent = accent
@@ -79,13 +84,14 @@ struct WakeProfileDraft: Equatable, Identifiable {
         switch profile.action {
         case let .command(command):
             executablePath = command.executablePath
-            argumentTemplates = command.argumentTemplates
+            commandArguments = ArgumentDraftCollection(values: command.argumentTemplates)
             agentHarness = .empty(
                 workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
             targetKind = .command
         case let .agent(configuration):
             executablePath = "/usr/bin/open"
-            argumentTemplates = ["https://www.google.com/search?q={urlText}"]
+            commandArguments = ArgumentDraftCollection(
+                values: ["https://www.google.com/search?q={urlText}"])
             agentHarness = AgentHarnessDraft(configuration: configuration)
             targetKind = .agent
         }

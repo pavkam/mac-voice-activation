@@ -17,6 +17,7 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
     enum RegistrationError: Error, LocalizedError {
         case eventHandler(OSStatus)
         case hotKey(OSStatus)
+        case duplicateHotKey
 
         var errorDescription: String? {
             switch self {
@@ -24,7 +25,19 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
                 "Could not prepare the push-to-talk shortcut (error \(status))."
             case let .hotKey(status):
                 "That shortcut is unavailable. Choose another combination (error \(status))."
+            case .duplicateHotKey:
+                "Push-to-talk shortcuts must be unique."
             }
+        }
+    }
+
+    private struct PhysicalHotKeyIdentity: Hashable {
+        let keyCode: UInt32
+        let modifiers: HotKeyModifiers
+
+        init(_ hotKey: PushToTalkHotKey) {
+            keyCode = hotKey.keyCode
+            modifiers = hotKey.modifiers
         }
     }
 
@@ -79,6 +92,10 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
     {
         let bindings = profiles.compactMap { profile in
             profile.pushToTalkHotKey.map { (profile.id, $0) }
+        }
+        let identities = bindings.map { PhysicalHotKeyIdentity($0.1) }
+        guard Set(identities).count == identities.count else {
+            throw RegistrationError.duplicateHotKey
         }
 
         var installedHandler = false

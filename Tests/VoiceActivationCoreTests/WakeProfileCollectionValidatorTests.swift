@@ -42,6 +42,33 @@ struct WakeProfileCollectionValidatorTests {
         }
     }
 
+    @Test func validate_WhenPushToTalkBindingsSharePhysicalKeyWithDifferentLabels_RejectsThem() throws {
+        let firstHotKey = try PushToTalkHotKey(
+            keyCode: 49,
+            modifiers: [.control, .option],
+            keyLabel: "Space")
+        let secondHotKey = try PushToTalkHotKey(
+            keyCode: 49,
+            modifiers: [.control, .option],
+            keyLabel: "Spacebar")
+        let profiles = [
+            try WakeProfile(
+                wakePhrase: "computer",
+                urlTemplate: "https://one.example/?q={urlText}",
+                accent: .blue,
+                pushToTalkHotKey: firstHotKey),
+            try WakeProfile(
+                wakePhrase: "sneek",
+                urlTemplate: "https://two.example/?q={urlText}",
+                accent: .purple,
+                pushToTalkHotKey: secondHotKey),
+        ]
+
+        #expect(throws: WakeProfileCollectionValidationError.duplicatePushToTalkHotKey) {
+            try WakeProfileCollectionValidator.validate(profiles)
+        }
+    }
+
     @Test func validate_WhenCollectionIsEmpty_RejectsIt() {
         #expect(throws: WakeProfileCollectionValidationError.profileRequired) {
             try WakeProfileCollectionValidator.validate([])
