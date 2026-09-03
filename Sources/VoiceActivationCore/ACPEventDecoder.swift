@@ -76,14 +76,42 @@ public struct ACPEventDecoder: Sendable {
         let contentType = try string(content["type"], named: "content.type")
         let messageID = try optionalString(update["messageId"], named: "messageId")
 
-        if contentType == "text" {
+        switch contentType {
+        case "text":
             return ContentChunk(
                 contentType: contentType,
                 messageID: messageID,
                 text: try string(content["text"], named: "content.text"))
+        case "image":
+            _ = try string(content["data"], named: "content.data")
+            _ = try string(content["mimeType"], named: "content.mimeType")
+        case "audio":
+            _ = try string(content["data"], named: "content.data")
+            _ = try string(content["mimeType"], named: "content.mimeType")
+        case "resource_link":
+            _ = try string(content["name"], named: "content.name")
+            _ = try string(content["uri"], named: "content.uri")
+        case "resource":
+            try validateEmbeddedResource(content)
+        default:
+            throw malformed("content.type")
         }
 
         return ContentChunk(contentType: contentType, messageID: messageID, text: nil)
+    }
+
+    private func validateEmbeddedResource(_ content: [String: ACPJSONValue]) throws {
+        let resource = try object(content["resource"], named: "content.resource")
+        _ = try string(resource["uri"], named: "content.resource.uri")
+
+        if case .string = resource["text"] {
+            return
+        }
+        if case .string = resource["blob"] {
+            return
+        }
+
+        throw malformed("content.resource.text or content.resource.blob")
     }
 
     private func toolCall(_ update: [String: ACPJSONValue]) throws -> AgentToolCall {
@@ -147,13 +175,7 @@ public struct ACPEventDecoder: Sendable {
                 let choices = try array(
                     option["options"],
                     named: "configOptions[\(index)].options")
-                for (choiceIndex, choiceValue) in choices.enumerated() {
-                    let choice = try object(
-                        choiceValue,
-                        named: "configOptions[\(index)].options[\(choiceIndex)]")
-                    _ = try string(choice["value"], named: "config option value")
-                    _ = try string(choice["name"], named: "config option name")
-                }
+                try validateConfigSelectOptions(choices, optionIndex: index)
             case "boolean":
                 guard case .bool = option["currentValue"] else {
                     throw malformed("configOptions[\(index)].currentValue")
@@ -167,6 +189,42 @@ public struct ACPEventDecoder: Sendable {
         let noun = identifiers.count == 1 ? "option" : "options"
         let listedIdentifiers = identifiers.prefix(8).joined(separator: ", ")
         return bounded("\(identifiers.count) configuration \(noun) available: \(listedIdentifiers)")
+    }
+
+    private func validateConfigSelectOptions(
+        _ choices: [ACPJSONValue],
+        optionIndex: Int) throws
+    {
+        guard let firstChoice = choices.first else {
+            return
+        }
+        let firstObject = try object(
+            firstChoice,
+            named: "configOptions[\(optionIndex)].options[0]")
+
+        if firstObject.keys.contains("group") {
+            for (groupIndex, groupValue) in choices.enumerated() {
+                let group = try object(
+                    groupValue,
+                    named: "configOptions[\(optionIndex)].options[\(groupIndex)]")
+                _ = try string(group["group"], named: "config option group")
+                _ = try string(group["name"], named: "config option group name")
+                let groupChoices = try array(
+                    group["options"],
+                    named: "config option group choices")
+                try validateFlatConfigSelectOptions(groupChoices)
+            }
+        } else {
+            try validateFlatConfigSelectOptions(choices)
+        }
+    }
+
+    private func validateFlatConfigSelectOptions(_ choices: [ACPJSONValue]) throws {
+        for choiceValue in choices {
+            let choice = try object(choiceValue, named: "config option choice")
+            _ = try string(choice["value"], named: "config option value")
+            _ = try string(choice["name"], named: "config option name")
+        }
     }
 
     private func sessionInfoSummary(_ update: [String: ACPJSONValue]) throws -> String {

@@ -102,12 +102,12 @@ public struct AgentPermissionOption: Equatable, Sendable {
 }
 
 public struct AgentPermissionRequest: Equatable, Sendable {
-    public let requestID: Int
+    public let requestID: ACPRequestID
     public let toolCall: AgentToolCallUpdate
     public let options: [AgentPermissionOption]
 
     public init(
-        requestID: Int,
+        requestID: ACPRequestID,
         toolCall: AgentToolCallUpdate,
         options: [AgentPermissionOption])
     {

@@ -84,6 +84,75 @@ struct ACPEventDecoderTests {
         }
     }
 
+    @Test func event_WhenConfigSelectOptionsAreGrouped_ReturnsMetadataSummary() throws {
+        let update = #"{"sessionUpdate":"config_option_update","configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fast","options":[{"group":"speed","name":"Speed","options":[{"value":"fast","name":"Fast"},{"value":"balanced","name":"Balanced"}]}]}]}"#
+
+        let event = try ACPEventDecoder().event(from: message(update: update))
+
+        #expect(event == .metadata(
+            kind: "config_option_update",
+            summary: "1 configuration option available: model"))
+    }
+
+    @Test func event_WhenGroupedConfigOptionContainsMalformedChoice_Throws() throws {
+        let update = #"{"sessionUpdate":"config_option_update","configOptions":[{"id":"model","name":"Model","type":"select","currentValue":"fast","options":[{"group":"speed","name":"Speed","options":[{"value":"fast"}]}]}]}"#
+        let malformedMessage = try message(update: update)
+
+        #expect(throws: (any Error).self) {
+            try ACPEventDecoder().event(from: malformedMessage)
+        }
+    }
+
+    @Test func event_WhenNonTextContentBlockIsValid_ReturnsMetadataWithoutRawPayload() throws {
+        let rawImage = String(repeating: "private-image-bytes", count: 1_000)
+        let fixtures: [(String, String)] = [
+            (
+                #"{"type":"image","data":"\#(rawImage)","mimeType":"image/png","uri":"file:///preview.png"}"#,
+                "Agent sent image content"),
+            (
+                #"{"type":"audio","data":"cHJpdmF0ZS1hdWRpbw==","mimeType":"audio/wav"}"#,
+                "Agent sent audio content"),
+            (
+                #"{"type":"resource_link","name":"Build log","uri":"file:///tmp/build.log","mimeType":"text/plain","size":12}"#,
+                "Agent sent resource_link content"),
+            (
+                #"{"type":"resource","resource":{"uri":"file:///tmp/result.txt","mimeType":"text/plain","text":"private resource text"}}"#,
+                "Agent sent resource content"),
+            (
+                #"{"type":"resource","resource":{"uri":"file:///tmp/result.bin","mimeType":"application/octet-stream","blob":"cHJpdmF0ZSByZXNvdXJjZQ=="}}"#,
+                "Agent sent resource content"),
+        ]
+
+        for (content, expectedSummary) in fixtures {
+            let update = #"{"sessionUpdate":"agent_message_chunk","content":\#(content)}"#
+            let event = try ACPEventDecoder().event(from: message(update: update))
+
+            #expect(event == .metadata(
+                kind: "agent_message_chunk",
+                summary: expectedSummary))
+        }
+    }
+
+    @Test func event_WhenNonTextContentBlockIsMalformed_Throws() throws {
+        let malformedContent = [
+            #"{"type":"image","data":"aW1hZ2U="}"#,
+            #"{"type":"audio","data":17,"mimeType":"audio/wav"}"#,
+            #"{"type":"resource_link","name":"Build log"}"#,
+            #"{"type":"resource","resource":{"text":"missing URI"}}"#,
+            #"{"type":"resource","resource":{"uri":"file:///tmp/result.bin"}}"#,
+            #"{"type":"vendor_binary","data":"opaque"}"#,
+        ]
+
+        for content in malformedContent {
+            let update = #"{"sessionUpdate":"agent_message_chunk","content":\#(content)}"#
+            let malformedMessage = try message(update: update)
+
+            #expect(throws: (any Error).self) {
+                try ACPEventDecoder().event(from: malformedMessage)
+            }
+        }
+    }
+
     @Test func event_WhenUpdateDiscriminatorIsUnknown_ReturnsBoundedSummaryWithoutRawPayload() throws {
         let secret = String(repeating: "provider-private-payload", count: 20_000)
         let update = #"{"sessionUpdate":"vendor_progress","payload":"\#(secret)"}"#
@@ -129,6 +198,23 @@ struct ACPEventDecoderTests {
 
         #expect(throws: (any Error).self) {
             try JSONDecoder().decode(ACPMessage.self, from: data)
+        }
+    }
+
+    @Test func init_WhenPermissionRequestUsesEveryJSONRPCIDShape_PreservesIt() {
+        let identifiers: [ACPRequestID] = [
+            .integer(9_007_199_254_740_993),
+            .string("permission-17"),
+            .null,
+        ]
+
+        for identifier in identifiers {
+            let request = AgentPermissionRequest(
+                requestID: identifier,
+                toolCall: AgentToolCallUpdate(id: "tool-1"),
+                options: [])
+
+            #expect(request.requestID == identifier)
         }
     }
 
