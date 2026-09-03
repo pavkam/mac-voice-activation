@@ -7,6 +7,7 @@ import Testing
 @MainActor
 private final class AgentConversationAudioSpy: AgentConversationAudioPlaying {
     var onSpeakingChange: ((Bool) -> Void)?
+    var onSpeak: (() -> Void)?
     private(set) var workingStates: [Bool] = []
     private(set) var spoken: [(text: String, localeID: String)] = []
     private(set) var stopSpeakingCount = 0
@@ -18,6 +19,7 @@ private final class AgentConversationAudioSpy: AgentConversationAudioPlaying {
 
     func speak(_ text: String, localeID: String) {
         spoken.append((text, localeID))
+        onSpeak?()
     }
 
     func stopSpeaking() {
@@ -70,9 +72,11 @@ private actor FailingAgentElevenLabsSpeechSynthesizer: ElevenLabsSpeechSynthesiz
 private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
     private(set) var payloads: [Data] = []
     var isPlaying = false
+    var onPlay: (() -> Void)?
 
     func play(_ data: Data) -> Bool {
         payloads.append(data)
+        onPlay?()
         return true
     }
 
@@ -84,14 +88,17 @@ private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
 @MainActor
 private final class AgentWorkingPulsePlayerSpy: AgentWorkingPulsePlaying {
     private(set) var playCount = 0
+    var onPlay: (() -> Void)?
 
     func play() {
         playCount += 1
+        onPlay?()
     }
 
     func stop() {}
 }
 
+@Suite(.timeLimit(.minutes(1)))
 struct AgentConversationAudioPresenterTests {
     @MainActor @Test func systemPlayer_WhenElevenLabsIsSelected_RoutesSpeechToElevenLabs()
         async
@@ -110,8 +117,13 @@ struct AgentConversationAudioPresenterTests {
             elevenLabsSynthesizer: elevenLabsSynthesizer,
             elevenLabsAudioPlayer: dataPlayer)
 
-        player.speak("A much better voice.", localeID: "en-US")
-        await waitUntil { dataPlayer.payloads.count == 1 }
+        await withCheckedContinuation { continuation in
+            dataPlayer.onPlay = {
+                dataPlayer.onPlay = nil
+                continuation.resume()
+            }
+            player.speak("A much better voice.", localeID: "en-US")
+        }
 
         #expect(systemSynthesizer.utterances.isEmpty)
         #expect(await elevenLabsSynthesizer.texts == ["A much better voice."])
@@ -134,14 +146,19 @@ struct AgentConversationAudioPresenterTests {
 
         #expect(workingPulse.playCount == 0)
 
-        systemSynthesizer.isSpeaking = false
-        await waitUntil { workingPulse.playCount == 1 }
+        await withCheckedContinuation { continuation in
+            workingPulse.onPlay = {
+                workingPulse.onPlay = nil
+                continuation.resume()
+            }
+            systemSynthesizer.isSpeaking = false
+        }
 
         #expect(workingPulse.playCount == 1)
         player.stopAll()
     }
 
-    @MainActor @Test(.timeLimit(.minutes(1)))
+    @MainActor @Test
     func systemPlayer_WhenElevenLabsFails_FallsBackToSystemVoice() async {
         let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
         let player = AgentConversationAudioPlayer(
@@ -156,7 +173,10 @@ struct AgentConversationAudioPresenterTests {
             elevenLabsAudioPlayer: AgentAudioDataPlayerSpy())
 
         await withCheckedContinuation { continuation in
-            systemSynthesizer.onSpeak = { continuation.resume() }
+            systemSynthesizer.onSpeak = {
+                systemSynthesizer.onSpeak = nil
+                continuation.resume()
+            }
             player.speak("Still audible.", localeID: "en-GB")
         }
 
@@ -228,12 +248,18 @@ struct AgentConversationAudioPresenterTests {
             profile: try agentProfile(),
             prompt: "Question"))
 
-        presenter.handle(.event(
-            runID: runID,
-            event: .agentMessageDelta(messageID: "answer", text: "A useful partial answer")))
-        #expect(player.spoken.isEmpty)
-
-        await waitUntil(timeout: .seconds(2)) { player.spoken.count == 1 }
+        await withCheckedContinuation { continuation in
+            player.onSpeak = {
+                player.onSpeak = nil
+                continuation.resume()
+            }
+            presenter.handle(.event(
+                runID: runID,
+                event: .agentMessageDelta(
+                    messageID: "answer",
+                    text: "A useful partial answer")))
+            #expect(player.spoken.isEmpty)
+        }
 
         #expect(player.spoken.map(\.text) == ["A useful partial answer"])
     }
@@ -505,16 +531,4 @@ struct AgentConversationAudioPresenterTests {
             accent: .purple)
     }
 
-    @MainActor
-    private func waitUntil(
-        timeout: Duration = .seconds(1),
-        condition: @escaping @MainActor () async -> Bool) async
-    {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        while clock.now < deadline {
-            if await condition() { return }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-    }
 }
