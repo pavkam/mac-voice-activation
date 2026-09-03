@@ -28,27 +28,143 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
         }
     }
 
+    struct RegistrationBackend {
+        let installEventHandler: (PushToTalkShortcut) throws -> EventHandlerRef
+        let removeEventHandler: (EventHandlerRef) -> Void
+        let registerHotKey: (PushToTalkHotKey, EventHotKeyID) throws -> EventHotKeyRef
+        let unregisterHotKey: (EventHotKeyRef) -> Void
+
+        @MainActor static let live = RegistrationBackend(
+            installEventHandler: { try $0.installLiveEventHandler() },
+            removeEventHandler: { RemoveEventHandler($0) },
+            registerHotKey: { hotKey, identifier in
+                var registeredHotKey: EventHotKeyRef?
+                let status = RegisterEventHotKey(
+                    hotKey.keyCode,
+                    PushToTalkShortcut.carbonModifiers(for: hotKey.modifiers),
+                    identifier,
+                    GetApplicationEventTarget(),
+                    0,
+                    &registeredHotKey)
+                guard status == noErr, let registeredHotKey else {
+                    throw RegistrationError.hotKey(status)
+                }
+                return registeredHotKey
+            },
+            unregisterHotKey: { UnregisterEventHotKey($0) })
+    }
+
     private static let signature: OSType = 0x56414354
 
     private var eventHandler: EventHandlerRef?
-    private var hotKeys: [EventHotKeyRef] = []
+    private var hotKeys: [(
+        hotKey: PushToTalkHotKey,
+        reference: EventHotKeyRef,
+        identifier: UInt32,
+    )] = []
     private var profileIDs: [UInt32: UUID] = [:]
     private var onPressed: ((UUID) -> Void)?
     private var onReleased: ((UUID) -> Void)?
+    private var nextIdentifier: UInt32 = 1
+    private let registrationBackend: RegistrationBackend
+
+    init(registrationBackend: RegistrationBackend = .live) {
+        self.registrationBackend = registrationBackend
+    }
 
     func start(
         profiles: [WakeProfile],
         onPressed: @escaping (UUID) -> Void,
         onReleased: @escaping (UUID) -> Void) throws
     {
-        stop()
-        self.onPressed = onPressed
-        self.onReleased = onReleased
         let bindings = profiles.compactMap { profile in
             profile.pushToTalkHotKey.map { (profile.id, $0) }
         }
-        guard !bindings.isEmpty else { return }
 
+        var installedHandler = false
+        if !bindings.isEmpty, eventHandler == nil {
+            eventHandler = try registrationBackend.installEventHandler(self)
+            installedHandler = true
+        }
+
+        var candidateHotKeys: [(
+            hotKey: PushToTalkHotKey,
+            reference: EventHotKeyRef,
+            identifier: UInt32,
+            profileID: UUID,
+        )] = []
+        var newReferences: [EventHotKeyRef] = []
+        for binding in bindings {
+            if let existing = hotKeys.first(where: {
+                $0.hotKey.keyCode == binding.1.keyCode
+                    && $0.hotKey.modifiers == binding.1.modifiers
+            }) {
+                candidateHotKeys.append((
+                    hotKey: binding.1,
+                    reference: existing.reference,
+                    identifier: existing.identifier,
+                    profileID: binding.0))
+                continue
+            }
+
+            let identifierValue = nextIdentifier
+            nextIdentifier &+= 1
+            let identifier = EventHotKeyID(signature: Self.signature, id: identifierValue)
+            let registeredHotKey: EventHotKeyRef
+            do {
+                registeredHotKey = try registrationBackend.registerHotKey(binding.1, identifier)
+            } catch {
+                for reference in newReferences {
+                    registrationBackend.unregisterHotKey(reference)
+                }
+                if installedHandler, let eventHandler {
+                    registrationBackend.removeEventHandler(eventHandler)
+                    self.eventHandler = nil
+                }
+                throw error
+            }
+            newReferences.append(registeredHotKey)
+            candidateHotKeys.append((
+                hotKey: binding.1,
+                reference: registeredHotKey,
+                identifier: identifierValue,
+                profileID: binding.0))
+        }
+
+        let retainedIdentifiers = Set(candidateHotKeys.map(\.identifier))
+        for hotKey in hotKeys where !retainedIdentifiers.contains(hotKey.identifier) {
+            registrationBackend.unregisterHotKey(hotKey.reference)
+        }
+        hotKeys = candidateHotKeys.map {
+            (hotKey: $0.hotKey, reference: $0.reference, identifier: $0.identifier)
+        }
+        profileIDs = Dictionary(uniqueKeysWithValues: candidateHotKeys.map {
+            ($0.identifier, $0.profileID)
+        })
+        self.onPressed = bindings.isEmpty ? nil : onPressed
+        self.onReleased = bindings.isEmpty ? nil : onReleased
+
+        if bindings.isEmpty, let eventHandler {
+            registrationBackend.removeEventHandler(eventHandler)
+            self.eventHandler = nil
+        }
+    }
+
+    func stop() {
+        for hotKey in hotKeys {
+            registrationBackend.unregisterHotKey(hotKey.reference)
+        }
+        if let eventHandler {
+            registrationBackend.removeEventHandler(eventHandler)
+        }
+        hotKeys = []
+        profileIDs = [:]
+        eventHandler = nil
+        onPressed = nil
+        onReleased = nil
+    }
+
+    private func installLiveEventHandler() throws -> EventHandlerRef {
         var eventTypes = [
             EventTypeSpec(
                 eventClass: OSType(kEventClassKeyboard),
@@ -58,6 +174,7 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
                 eventKind: UInt32(kEventHotKeyReleased)),
         ]
         let owner = Unmanaged.passUnretained(self).toOpaque()
+        var installedEventHandler: EventHandlerRef?
         let handlerStatus = InstallEventHandler(
             GetApplicationEventTarget(),
             { _, event, userData in
@@ -91,44 +208,11 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
             eventTypes.count,
             &eventTypes,
             owner,
-            &eventHandler)
-        guard handlerStatus == noErr else {
-            stop()
+            &installedEventHandler)
+        guard handlerStatus == noErr, let installedEventHandler else {
             throw RegistrationError.eventHandler(handlerStatus)
         }
-
-        for (index, binding) in bindings.enumerated() {
-            let identifierValue = UInt32(index + 1)
-            let identifier = EventHotKeyID(signature: Self.signature, id: identifierValue)
-            var registeredHotKey: EventHotKeyRef?
-            let registrationStatus = RegisterEventHotKey(
-                binding.1.keyCode,
-                Self.carbonModifiers(for: binding.1.modifiers),
-                identifier,
-                GetApplicationEventTarget(),
-                0,
-                &registeredHotKey)
-            guard registrationStatus == noErr, let registeredHotKey else {
-                stop()
-                throw RegistrationError.hotKey(registrationStatus)
-            }
-            hotKeys.append(registeredHotKey)
-            profileIDs[identifierValue] = binding.0
-        }
-    }
-
-    func stop() {
-        for hotKey in hotKeys {
-            UnregisterEventHotKey(hotKey)
-        }
-        if let eventHandler {
-            RemoveEventHandler(eventHandler)
-        }
-        hotKeys = []
-        profileIDs = [:]
-        eventHandler = nil
-        onPressed = nil
-        onReleased = nil
+        return installedEventHandler
     }
 
     static func carbonModifiers(for modifiers: HotKeyModifiers) -> UInt32 {

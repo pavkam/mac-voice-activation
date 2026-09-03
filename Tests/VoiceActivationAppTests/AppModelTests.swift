@@ -6,8 +6,11 @@ import VoiceActivationCore
 @MainActor
 private final class ShortcutSpy: PushToTalkShortcutManaging {
     private(set) var startedProfiles: [[WakeProfile]] = []
+    private(set) var registeredProfiles: [WakeProfile] = []
     private(set) var stopCount = 0
     private var onPressed: ((UUID) -> Void)?
+    private var onReleased: ((UUID) -> Void)?
+    var failNextStart = false
 
     func start(
         profiles: [WakeProfile],
@@ -15,7 +18,13 @@ private final class ShortcutSpy: PushToTalkShortcutManaging {
         onReleased: @escaping (UUID) -> Void) throws
     {
         startedProfiles.append(profiles)
+        if failNextStart {
+            failNextStart = false
+            throw ShortcutSpyError.registrationFailed
+        }
+        registeredProfiles = profiles
         self.onPressed = onPressed
+        self.onReleased = onReleased
     }
 
     func stop() {
@@ -25,6 +34,16 @@ private final class ShortcutSpy: PushToTalkShortcutManaging {
     func press(_ profileID: UUID) {
         onPressed?(profileID)
     }
+
+    func release(_ profileID: UUID) {
+        onReleased?(profileID)
+    }
+}
+
+private enum ShortcutSpyError: Error, LocalizedError {
+    case registrationFailed
+
+    var errorDescription: String? { "Shortcut registration failed." }
 }
 
 @MainActor
@@ -38,6 +57,8 @@ private final class AppModelOverlayStub: RecordingOverlayDisplaying {
 @MainActor
 private final class AppModelSpeechSessionSpy: SpeechSessionProtocol {
     private(set) var startCount = 0
+    private(set) var mode: SpeechSessionMode?
+    private var onUpdate: ((SpeechUpdate) -> Void)?
 
     func start(
         mode: SpeechSessionMode,
@@ -47,9 +68,72 @@ private final class AppModelSpeechSessionSpy: SpeechSessionProtocol {
         onInterruption: @escaping () -> Void) throws
     {
         startCount += 1
+        self.mode = mode
+        self.onUpdate = onUpdate
     }
 
-    func stop() {}
+    func stop() {
+        mode = nil
+        onUpdate = nil
+    }
+
+    func emit(_ transcript: String, isFinal: Bool = false) {
+        onUpdate?(SpeechUpdate(
+            transcript: transcript,
+            isFinal: isFinal,
+            errorDescription: nil))
+    }
+}
+
+private actor AppModelAgentRunnerSpy: AgentHarnessRunning {
+    struct Invocation: Equatable, Sendable {
+        let profileID: UUID
+        let configuration: AgentHarnessConfiguration
+        let prompt: String
+    }
+
+    private var invocations: [Invocation] = []
+    private var resets: [Set<UUID>] = []
+    private var shouldDelayReset = false
+    private var resetContinuation: CheckedContinuation<Void, Never>?
+
+    func run(
+        profileID: UUID,
+        configuration: AgentHarnessConfiguration,
+        prompt: String,
+        onEvent: @escaping @Sendable (AgentRunEvent) async -> Void
+    ) async throws -> AgentRunResult {
+        invocations.append(Invocation(
+            profileID: profileID,
+            configuration: configuration,
+            prompt: prompt))
+        return AgentRunResult(stopReason: .endTurn)
+    }
+
+    func resolvePermission(
+        turnToken: AgentTurnToken,
+        requestID: ACPRequestID,
+        optionID: String?) async {}
+
+    func cancel() async {}
+
+    func reset(profileIDs: Set<UUID>) async {
+        resets.append(profileIDs)
+        guard shouldDelayReset else { return }
+        await withCheckedContinuation { resetContinuation = $0 }
+    }
+
+    func shutdown() async {}
+
+    func recordedInvocations() -> [Invocation] { invocations }
+    func recordedResets() -> [Set<UUID>] { resets }
+    func delayReset() { shouldDelayReset = true }
+    func resetIsWaiting() -> Bool { resetContinuation != nil }
+    func releaseReset() {
+        shouldDelayReset = false
+        resetContinuation?.resume()
+        resetContinuation = nil
+    }
 }
 
 @MainActor
@@ -282,14 +366,14 @@ struct AppModelTests {
     @MainActor
     private func waitUntil(
         timeout: Duration = .seconds(5),
-        condition: @escaping @MainActor () -> Bool) async
+        condition: @escaping @MainActor () async -> Bool) async
     {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
-        while !condition(), clock.now < deadline {
+        while !(await condition()), clock.now < deadline {
             try? await Task.sleep(for: .milliseconds(1))
         }
-        if !condition() {
+        if !(await condition()) {
             Issue.record("Condition was not satisfied before timeout")
         }
     }
@@ -310,7 +394,7 @@ struct AppModelTests {
         #expect(fixture.shortcut.startedProfiles.isEmpty)
     }
 
-    @MainActor @Test func saveSettings_WhenDraftIsValid_AppliesAndPersistsHotKey() throws {
+    @MainActor @Test func saveSettings_WhenDraftIsValid_AppliesAndPersistsHotKey() async throws {
         let fixture = try Fixture()
         let profileID = fixture.model.wakeProfiles[0].id
         let draft = try PushToTalkHotKey(
@@ -319,7 +403,7 @@ struct AppModelTests {
             keyLabel: "K")
         fixture.model.setPushToTalkHotKey(draft, for: profileID)
 
-        let saved = fixture.model.saveSettings()
+        let saved = await fixture.model.saveSettings()
 
         #expect(saved)
         #expect(fixture.model.activeWakeProfiles[0].pushToTalkHotKey == draft)
@@ -327,7 +411,7 @@ struct AppModelTests {
         #expect(fixture.shortcut.startedProfiles.last?[0].pushToTalkHotKey == draft)
     }
 
-    @MainActor @Test func saveSettings_WhenProfileIsInvalid_DoesNotApplyHotKey() throws {
+    @MainActor @Test func saveSettings_WhenProfileIsInvalid_DoesNotApplyHotKey() async throws {
         let fixture = try Fixture()
         let profileID = fixture.model.wakeProfiles[0].id
         let draft = try PushToTalkHotKey(
@@ -337,7 +421,7 @@ struct AppModelTests {
         fixture.model.setPushToTalkHotKey(draft, for: profileID)
         fixture.model.wakeProfiles[0].urlTemplate = "https://example.com/static"
 
-        let saved = fixture.model.saveSettings()
+        let saved = await fixture.model.saveSettings()
 
         #expect(!saved)
         #expect(fixture.model.activeWakeProfiles[0].pushToTalkHotKey == .defaultValue)
@@ -345,7 +429,7 @@ struct AppModelTests {
         #expect(fixture.shortcut.startedProfiles.isEmpty)
     }
 
-    @MainActor @Test func saveSettings_WhenProfilesAreValid_PersistsEveryProfile() throws {
+    @MainActor @Test func saveSettings_WhenProfilesAreValid_PersistsEveryProfile() async throws {
         let fixture = try Fixture()
         let searchHotKey = try PushToTalkHotKey(
             keyCode: 40,
@@ -368,7 +452,7 @@ struct AppModelTests {
                 pushToTalkHotKey: assistantHotKey),
         ]
 
-        let saved = fixture.model.saveSettings()
+        let saved = await fixture.model.saveSettings()
 
         #expect(saved)
         #expect(fixture.preferences.wakeProfiles.map(\.wakePhrase) == [
@@ -380,7 +464,7 @@ struct AppModelTests {
         ])
     }
 
-    @MainActor @Test func saveSettings_WhenPhrasesMatchAfterNormalization_RejectsProfiles() throws {
+    @MainActor @Test func saveSettings_WhenPhrasesMatchAfterNormalization_RejectsProfiles() async throws {
         let fixture = try Fixture()
         fixture.model.wakeProfiles = [
             WakeProfileDraft(
@@ -393,7 +477,7 @@ struct AppModelTests {
                 accent: .purple),
         ]
 
-        let saved = fixture.model.saveSettings()
+        let saved = await fixture.model.saveSettings()
 
         #expect(!saved)
         #expect(fixture.model.settingsError == "Wake phrases must be unique.")
@@ -418,6 +502,213 @@ struct AppModelTests {
         #expect(fixture.preferences.wakeProfiles.map(\.isEnabled) == [true, false])
     }
 
+    @MainActor @Test func saveSettings_WhenAgentExecutableIsMissing_PreservesActiveProfilesAndHotKeys() async throws {
+        let runner = AppModelAgentRunnerSpy()
+        let profile = try makeAgentProfile(
+            executablePath: "/missing/agent",
+            pushToTalkHotKey: .defaultValue)
+        let fixture = try Fixture(
+            profiles: [profile],
+            agentRunner: runner,
+            isExecutableFile: { _ in false },
+            isDirectory: { _ in true })
+        await fixture.model.start()
+        let activeProfiles = fixture.model.activeWakeProfiles
+        let registeredProfiles = fixture.shortcut.registeredProfiles
+        let savedLocale = fixture.preferences.localeID
+        fixture.model.localeID = "fr-FR"
+
+        let saved = await fixture.model.saveSettings()
+
+        #expect(!saved)
+        #expect(fixture.model.activeWakeProfiles == activeProfiles)
+        #expect(fixture.preferences.wakeProfiles == activeProfiles)
+        #expect(fixture.preferences.localeID == savedLocale)
+        #expect(fixture.shortcut.registeredProfiles == registeredProfiles)
+        #expect(fixture.shortcut.startedProfiles == [registeredProfiles])
+        #expect(await runner.recordedResets().isEmpty)
+    }
+
+    @MainActor @Test func saveSettings_WhenWorkingDirectoryIsNotDirectory_PreservesActiveProfiles() async throws {
+        let runner = AppModelAgentRunnerSpy()
+        let profile = try makeAgentProfile(workingDirectory: "/Users/test/not-a-directory")
+        let fixture = try Fixture(
+            profiles: [profile],
+            agentRunner: runner,
+            isExecutableFile: { _ in true },
+            isDirectory: { _ in false })
+        let activeProfiles = fixture.model.activeWakeProfiles
+
+        let saved = await fixture.model.saveSettings()
+
+        #expect(!saved)
+        #expect(fixture.model.activeWakeProfiles == activeProfiles)
+        #expect(fixture.preferences.wakeProfiles == activeProfiles)
+        #expect(fixture.shortcut.startedProfiles.isEmpty)
+        #expect(await runner.recordedResets().isEmpty)
+    }
+
+    @MainActor @Test func saveSettings_WhenCommandExecutableIsMissing_PreservesActiveProfiles() async throws {
+        let runner = AppModelAgentRunnerSpy()
+        let fixture = try Fixture(
+            agentRunner: runner,
+            isExecutableFile: { _ in false })
+        let activeProfiles = fixture.model.activeWakeProfiles
+
+        let saved = await fixture.model.saveSettings()
+
+        #expect(!saved)
+        #expect(fixture.model.activeWakeProfiles == activeProfiles)
+        #expect(fixture.preferences.wakeProfiles == activeProfiles)
+        #expect(fixture.shortcut.startedProfiles.isEmpty)
+        #expect(await runner.recordedResets().isEmpty)
+    }
+
+    @MainActor @Test func saveSettings_WhenShortcutReplacementFails_RestoresExactPreviousRegistrations() async throws {
+        let oldHotKey = try PushToTalkHotKey(
+            keyCode: 40,
+            modifiers: [.command, .shift],
+            keyLabel: "K")
+        let newHotKey = try PushToTalkHotKey(
+            keyCode: 45,
+            modifiers: [.control, .option],
+            keyLabel: "N")
+        let oldProfiles = [try WakeProfile(
+            wakePhrase: "computer",
+            urlTemplate: "https://example.com/?q={urlText}",
+            accent: .blue,
+            pushToTalkHotKey: oldHotKey)]
+        let runner = AppModelAgentRunnerSpy()
+        let fixture = try Fixture(profiles: oldProfiles, agentRunner: runner)
+        await fixture.model.start()
+        fixture.model.setPushToTalkHotKey(newHotKey, for: oldProfiles[0].id)
+        fixture.shortcut.failNextStart = true
+
+        let saved = await fixture.model.saveSettings()
+
+        #expect(!saved)
+        #expect(fixture.shortcut.startedProfiles.count == 2)
+        #expect(fixture.shortcut.startedProfiles[0] == oldProfiles)
+        #expect(fixture.shortcut.startedProfiles[1][0].pushToTalkHotKey == newHotKey)
+        #expect(fixture.shortcut.registeredProfiles == oldProfiles)
+        #expect(fixture.model.activeWakeProfiles == oldProfiles)
+        #expect(fixture.preferences.wakeProfiles == oldProfiles)
+        #expect(await runner.recordedResets().isEmpty)
+    }
+
+    @MainActor @Test func saveSettings_WhenAgentProfilesChange_ResetsOnlyAffectedCachedProfiles() async throws {
+        let changed = try makeAgentProfile(
+            id: UUID(),
+            displayName: "Changed",
+            executablePath: "/agents/changed-old")
+        let removed = try makeAgentProfile(
+            id: UUID(),
+            displayName: "Removed",
+            executablePath: "/agents/removed")
+        let convertedToCommand = try makeAgentProfile(
+            id: UUID(),
+            displayName: "Converted",
+            executablePath: "/agents/converted")
+        let metadataOnly = try makeAgentProfile(
+            id: UUID(),
+            displayName: "Metadata only",
+            executablePath: "/agents/metadata")
+        let convertedToAgent = try WakeProfile(
+            id: UUID(),
+            wakePhrase: "command",
+            executablePath: "/usr/bin/open",
+            argumentTemplates: ["https://example.com/?q={urlText}"],
+            accent: .green)
+        let runner = AppModelAgentRunnerSpy()
+        let fixture = try Fixture(
+            profiles: [changed, removed, convertedToCommand, metadataOnly, convertedToAgent],
+            agentRunner: runner,
+            isExecutableFile: { _ in true },
+            isDirectory: { _ in true })
+
+        var changedDraft = WakeProfileDraft(profile: changed)
+        changedDraft.agentHarness.executablePath = "/agents/changed-new"
+        var convertedCommandDraft = WakeProfileDraft(profile: convertedToCommand)
+        convertedCommandDraft.targetKind = .command
+        convertedCommandDraft.executablePath = "/usr/bin/open"
+        convertedCommandDraft.argumentTemplates = ["https://example.com/?q={urlText}"]
+        var metadataDraft = WakeProfileDraft(profile: metadataOnly)
+        metadataDraft.wakePhrase = "metadata renamed"
+        var convertedAgentDraft = WakeProfileDraft(profile: convertedToAgent)
+        convertedAgentDraft.targetKind = .agent
+        convertedAgentDraft.agentHarness = AgentHarnessDraft(
+            preset: .custom,
+            displayName: "New agent",
+            executablePath: "/agents/new",
+            arguments: [],
+            workingDirectory: "/projects/new",
+            permissionPolicy: .ask)
+        fixture.model.wakeProfiles = [
+            changedDraft,
+            convertedCommandDraft,
+            metadataDraft,
+            convertedAgentDraft,
+        ]
+
+        let saved = await fixture.model.saveSettings()
+
+        #expect(saved)
+        #expect(await runner.recordedResets() == [[
+            changed.id,
+            removed.id,
+            convertedToCommand.id,
+        ]])
+    }
+
+    @MainActor @Test func coordinator_WhenAgentRunnerIsInjected_UsesSameInstanceAsSettingsReset() async throws {
+        let profile = try makeAgentProfile(pushToTalkHotKey: .defaultValue)
+        let runner = AppModelAgentRunnerSpy()
+        let fixture = try Fixture(
+            profiles: [profile],
+            agentRunner: runner,
+            isExecutableFile: { _ in true },
+            isDirectory: { _ in true })
+        await fixture.model.start()
+
+        fixture.shortcut.press(profile.id)
+        await waitUntil { fixture.speech.mode == .pushToTalk }
+        fixture.speech.emit("inspect this repository")
+        fixture.shortcut.release(profile.id)
+        await waitUntil { await runner.recordedInvocations().count == 1 }
+
+        let invocation = try #require(await runner.recordedInvocations().first)
+        #expect(invocation.profileID == profile.id)
+        #expect(invocation.prompt == "inspect this repository")
+
+        fixture.model.wakeProfiles[0].agentHarness.executablePath = "/agents/changed"
+        let saved = await fixture.model.saveSettings()
+
+        #expect(saved)
+        #expect(await runner.recordedResets() == [[profile.id]])
+    }
+
+    @MainActor @Test func saveSettings_WhenSaveIsInFlight_RejectsOverlappingSave() async throws {
+        let profile = try makeAgentProfile(executablePath: "/agents/original")
+        let runner = AppModelAgentRunnerSpy()
+        let fixture = try Fixture(
+            profiles: [profile],
+            agentRunner: runner,
+            isExecutableFile: { _ in true },
+            isDirectory: { _ in true })
+        await runner.delayReset()
+        fixture.model.wakeProfiles[0].agentHarness.executablePath = "/agents/changed"
+        let firstSave = Task { @MainActor in await fixture.model.saveSettings() }
+        await waitUntil { await runner.resetIsWaiting() }
+
+        let overlappingSave = await fixture.model.saveSettings()
+
+        #expect(!overlappingSave)
+        #expect(fixture.model.isSavingSettings)
+        await runner.releaseReset()
+        #expect(await firstSave.value)
+        #expect(!fixture.model.isSavingSettings)
+    }
+
     @MainActor @Test func shortcutRecording_WhenDraftIsNotSaved_RestoresActiveHotKey() throws {
         let fixture = try Fixture()
         let profileID = fixture.model.wakeProfiles[0].id
@@ -439,9 +730,21 @@ struct AppModelTests {
     private struct Fixture {
         let preferences: AppPreferences
         let shortcut = ShortcutSpy()
+        let speech = AppModelSpeechSessionSpy()
         let model: AppModel
 
-        init(profiles: [WakeProfile]? = nil) throws {
+        init(
+            profiles: [WakeProfile]? = nil,
+            agentRunner: any AgentHarnessRunning = AppModelAgentRunnerSpy(),
+            isExecutableFile: @escaping @MainActor (String) -> Bool = { path in
+                FileManager.default.isExecutableFile(atPath: path)
+            },
+            isDirectory: @escaping @MainActor (String) -> Bool = { path in
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+                    && isDirectory.boolValue
+            }) throws
+        {
             let suite = "VoiceActivationAppModelTests.\(UUID().uuidString)"
             let defaults = try #require(UserDefaults(suiteName: suite))
             defaults.removePersistentDomain(forName: suite)
@@ -453,7 +756,34 @@ struct AppModelTests {
                 preferences: preferences,
                 recordingOverlay: AppModelOverlayStub(),
                 shortcut: shortcut,
+                speechSession: speech,
+                agentRunner: agentRunner,
+                permissionRequest: { true },
+                isExecutableFile: isExecutableFile,
+                isDirectory: isDirectory,
                 startsAutomatically: false)
         }
+    }
+
+    private func makeAgentProfile(
+        id: UUID = UUID(),
+        displayName: String = "Custom agent",
+        executablePath: String = "/agents/custom",
+        workingDirectory: String = "/Users/test/project",
+        pushToTalkHotKey: PushToTalkHotKey? = nil) throws -> WakeProfile
+    {
+        let configuration = try AgentHarnessConfiguration(
+            preset: .custom,
+            displayName: displayName,
+            executablePath: executablePath,
+            arguments: ["--stdio", "two words"],
+            workingDirectory: workingDirectory,
+            permissionPolicy: .ask)
+        return try WakeProfile(
+            id: id,
+            wakePhrase: displayName,
+            action: .agent(configuration),
+            accent: .purple,
+            pushToTalkHotKey: pushToTalkHotKey)
     }
 }

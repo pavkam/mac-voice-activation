@@ -13,10 +13,14 @@ final class AppModel {
     private(set) var activeWakeProfiles: [WakeProfile]
     var localeID: String
     var settingsError: String?
+    private(set) var isSavingSettings = false
 
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let speechSession: any SpeechSessionProtocol
     @ObservationIgnored private let commandRunner: any CommandRunning
+    @ObservationIgnored private let agentRunner: any AgentHarnessRunning
+    @ObservationIgnored private let isExecutableFile: @MainActor (String) -> Bool
+    @ObservationIgnored private let isDirectory: @MainActor (String) -> Bool
     @ObservationIgnored private let permissionRequest: @MainActor () async -> Bool
     @ObservationIgnored private let shortcut: any PushToTalkShortcutManaging
     @ObservationIgnored private let overlayPresenter: RecordingOverlayPresenter
@@ -30,6 +34,7 @@ final class AppModel {
     @ObservationIgnored private lazy var coordinator = VoiceActivationCoordinator(
         speechSession: speechSession,
         commandRunner: commandRunner,
+        agentRunner: agentRunner,
         configuration: { [weak self] in
             guard let self else { throw ModelError.unavailable }
             return try self.savedConfiguration()
@@ -41,14 +46,20 @@ final class AppModel {
         shortcut: any PushToTalkShortcutManaging = PushToTalkShortcut(),
         speechSession: any SpeechSessionProtocol = AppleSpeechSession(),
         commandRunner: any CommandRunning = CommandRunner(),
+        agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
         permissionRequest: @escaping @MainActor () async -> Bool = SpeechPermissions.request,
         soundPlayer: any CaptureSoundPlaying = SystemCaptureSoundPlayer(),
+        isExecutableFile: @escaping @MainActor (String) -> Bool = AppModel.executableFileExists,
+        isDirectory: @escaping @MainActor (String) -> Bool = AppModel.directoryExists,
         startsAutomatically: Bool = true)
     {
         self.preferences = preferences
         self.shortcut = shortcut
         self.speechSession = speechSession
         self.commandRunner = commandRunner
+        self.agentRunner = agentRunner
+        self.isExecutableFile = isExecutableFile
+        self.isDirectory = isDirectory
         self.permissionRequest = permissionRequest
         overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
         soundPresenter = CaptureSoundPresenter(player: soundPlayer)
@@ -106,11 +117,16 @@ final class AppModel {
     }
 
     @discardableResult
-    func saveSettings() -> Bool {
+    func saveSettings() async -> Bool {
+        guard !isSavingSettings else { return false }
+        isSavingSettings = true
+        defer { isSavingSettings = false }
+
         let profiles: [WakeProfile]
         do {
             profiles = try wakeProfiles.map { try $0.validatedProfile() }
             try WakeProfileCollectionValidator.validate(profiles)
+            try validateFileSystem(profiles)
         } catch {
             settingsError = error.localizedDescription
             return false
@@ -119,16 +135,21 @@ final class AppModel {
         do {
             try registerShortcuts(profiles)
         } catch {
-            try? registerShortcuts(activeWakeProfiles)
             settingsError = error.localizedDescription
             return false
         }
 
+        let profileIDsToReset = agentProfileIDsToReset(
+            oldProfiles: activeWakeProfiles,
+            newProfiles: profiles)
         preferences.wakeProfiles = profiles
         preferences.localeID = localeID
-        activeWakeProfiles = preferences.wakeProfiles
+        activeWakeProfiles = profiles
         wakeProfiles = activeWakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
+        if !profileIDsToReset.isEmpty {
+            await agentRunner.reset(profileIDs: profileIDsToReset)
+        }
         settingsError = nil
         coordinator.refreshConfiguration()
         return true
@@ -197,6 +218,44 @@ final class AppModel {
             onReleased: { [weak self] _ in self?.pushToTalkReleased() })
     }
 
+    private func validateFileSystem(_ profiles: [WakeProfile]) throws {
+        for profile in profiles {
+            switch profile.action {
+            case let .command(command):
+                guard isExecutableFile(command.executablePath) else {
+                    throw SettingsValidationError.executableIsNotRunnable(
+                        command.executablePath)
+                }
+            case let .agent(configuration):
+                guard isExecutableFile(configuration.executablePath) else {
+                    throw SettingsValidationError.agentExecutableIsNotRunnable(
+                        configuration.executablePath)
+                }
+                guard isDirectory(configuration.workingDirectory) else {
+                    throw SettingsValidationError.workingDirectoryIsNotDirectory(
+                        configuration.workingDirectory)
+                }
+            }
+        }
+    }
+
+    private func agentProfileIDsToReset(
+        oldProfiles: [WakeProfile],
+        newProfiles: [WakeProfile]) -> Set<UUID>
+    {
+        let newProfilesByID = Dictionary(uniqueKeysWithValues: newProfiles.map { ($0.id, $0) })
+        return Set(oldProfiles.compactMap { oldProfile in
+            guard case let .agent(oldConfiguration) = oldProfile.action else { return nil }
+            guard let newProfile = newProfilesByID[oldProfile.id] else { return oldProfile.id }
+            switch newProfile.action {
+            case .command:
+                return oldProfile.id
+            case let .agent(newConfiguration):
+                return oldConfiguration == newConfiguration ? nil : oldProfile.id
+            }
+        })
+    }
+
     private func pushToTalkPressed(profileID: UUID) {
         guard !hotkeyHeld else { return }
         hotkeyHeld = true
@@ -248,6 +307,36 @@ final class AppModel {
             state: state,
             transcript: currentTranscript,
             accent: activeProfile?.accent ?? activeWakeProfiles.first?.accent ?? .blue)
+    }
+
+    private static func executableFileExists(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
+            && FileManager.default.isExecutableFile(atPath: path)
+    }
+
+    private static func directoryExists(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
+    private enum SettingsValidationError: Error, LocalizedError {
+        case executableIsNotRunnable(String)
+        case agentExecutableIsNotRunnable(String)
+        case workingDirectoryIsNotDirectory(String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .executableIsNotRunnable(path):
+                "The executable is missing or not runnable: \(path)"
+            case let .agentExecutableIsNotRunnable(path):
+                "The agent executable is missing or not runnable: \(path)"
+            case let .workingDirectoryIsNotDirectory(path):
+                "The agent working directory is missing or is not a directory: \(path)"
+            }
+        }
     }
 
     private enum ModelError: Error, LocalizedError {

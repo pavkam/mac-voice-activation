@@ -18,6 +18,7 @@ struct SettingsView: View {
                 }
                 .padding(28)
             }
+            .disabled(model.isSavingSettings)
 
             Divider()
             footer
@@ -167,14 +168,17 @@ struct SettingsView: View {
             Spacer()
 
             Button("Save Settings") {
-                saved = SettingsSaveHandler.perform(
-                    save: model.saveSettings,
-                    close: {
-                        dismissWindow(id: SettingsWindowPresenter.windowID)
-                    })
+                Task { @MainActor in
+                    saved = await SettingsSaveHandler.perform(
+                        save: model.saveSettings,
+                        close: {
+                            dismissWindow(id: SettingsWindowPresenter.windowID)
+                        })
+                }
             }
             .keyboardShortcut(.defaultAction)
             .controlSize(.large)
+            .disabled(model.isSavingSettings)
         }
     }
 
@@ -250,19 +254,18 @@ struct SettingsView: View {
                 .help("Remove wake profile")
             }
 
-            TextField("URL containing {urlText}", text: profile.urlTemplate)
-                .font(.system(.body, design: .monospaced))
-                .textFieldStyle(.roundedBorder)
-
-            HStack(spacing: 6) {
-                templateToken("{urlText}")
-                Text("inserts URL-encoded speech")
-                Text("•")
-                templateToken("{text}")
-                Text("inserts literal speech")
+            Picker("Target", selection: profile.targetKind) {
+                Text("Command").tag(WakeProfileTargetKind.command)
+                Text("Agent").tag(WakeProfileTargetKind.agent)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .pickerStyle(.segmented)
+
+            switch profile.wrappedValue.targetKind {
+            case .command:
+                commandEditor(profile: profile)
+            case .agent:
+                agentEditor(profile: profile)
+            }
 
             Divider()
 
@@ -270,7 +273,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Push to talk")
                         .fontWeight(.medium)
-                    Text("Hold this shortcut to run this phrase’s URL and color.")
+                    Text("Hold this shortcut to run this voice profile.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -292,6 +295,125 @@ struct SettingsView: View {
         .background(.background.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    @ViewBuilder
+    private func commandEditor(profile: Binding<WakeProfileDraft>) -> some View {
+        settingsField(
+            "Executable",
+            hint: "/usr/bin/open",
+            text: profile.executablePath,
+            monospaced: true)
+
+        argumentEditor(
+            "Argument templates",
+            hint: "Argument containing {text} or {urlText}",
+            arguments: profile.argumentTemplates)
+
+        HStack(spacing: 6) {
+            templateToken("{urlText}")
+            Text("inserts URL-encoded speech")
+            Text("•")
+            templateToken("{text}")
+            Text("inserts literal speech")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private func agentEditor(profile: Binding<WakeProfileDraft>) -> some View {
+        HStack(alignment: .bottom, spacing: 12) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Provider")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Picker(
+                    "Provider",
+                    selection: Binding(
+                        get: { profile.wrappedValue.agentHarness.preset },
+                        set: { preset in
+                            profile.wrappedValue.agentHarness.selectPreset(preset)
+                        }))
+                {
+                    ForEach(AgentHarnessPreset.allCases, id: \.self) { preset in
+                        Text(preset.displayName).tag(preset)
+                    }
+                }
+                .labelsHidden()
+            }
+            .frame(width: 150)
+
+            settingsField(
+                "Display name",
+                hint: "Local agent",
+                text: profile.agentHarness.displayName)
+        }
+
+        settingsField(
+            "Executable",
+            hint: "/absolute/path/to/agent",
+            text: profile.agentHarness.executablePath,
+            monospaced: true)
+        settingsField(
+            "Working folder",
+            hint: "/absolute/path/to/project",
+            text: profile.agentHarness.workingDirectory,
+            monospaced: true)
+
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Permission policy")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Picker("Permission policy", selection: profile.agentHarness.permissionPolicy) {
+                ForEach(AgentPermissionPolicy.allCases, id: \.self) { policy in
+                    Text(policy.displayName).tag(policy)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 180)
+        }
+
+        argumentEditor(
+            "Adapter arguments",
+            hint: "Argument",
+            arguments: profile.agentHarness.arguments)
+    }
+
+    @ViewBuilder
+    private func argumentEditor(
+        _ title: String,
+        hint: String,
+        arguments: Binding<[String]>) -> some View
+    {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            ForEach(arguments.wrappedValue.indices, id: \.self) { index in
+                HStack(spacing: 6) {
+                    TextField(hint, text: arguments[index])
+                        .font(.system(.body, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+
+                    Button(role: .destructive) {
+                        arguments.wrappedValue.remove(at: index)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Remove argument")
+                }
+            }
+
+            Button {
+                arguments.wrappedValue.append("")
+            } label: {
+                Label("Add argument", systemImage: "plus.circle")
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
     private var nextAccent: WakeProfileAccent {
         let accents = WakeProfileAccent.allCases
         return accents[model.wakeProfiles.count % accents.count]
@@ -309,6 +431,27 @@ extension WakeProfileAccent {
         case .pink: .pink
         case .orange: .orange
         case .green: .green
+        }
+    }
+}
+
+private extension AgentHarnessPreset {
+    var displayName: String {
+        switch self {
+        case .cursor: "Cursor"
+        case .codex: "Codex"
+        case .claude: "Claude"
+        case .custom: "Custom"
+        }
+    }
+}
+
+private extension AgentPermissionPolicy {
+    var displayName: String {
+        switch self {
+        case .ask: "Ask"
+        case .allowOnce: "Allow once"
+        case .reject: "Reject"
         }
     }
 }
