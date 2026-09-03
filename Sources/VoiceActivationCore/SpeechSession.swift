@@ -3,6 +3,7 @@ import Foundation
 public enum SpeechSessionMode: Equatable, Sendable {
     case passiveWake
     case commandCapture
+    case conversation
     case pushToTalk
 }
 

@@ -44,22 +44,25 @@ stateDiagram-v2
     Disabled --> Capturing: Push-to-talk pressed
     Listening --> Capturing: Push-to-talk pressed
     Capturing --> Executing: Non-empty command transcript
-    Capturing --> AgentRunning: Non-empty agent transcript
+    Capturing --> AgentConversation: Non-empty agent transcript
     Capturing --> Listening: Empty transcript, timeout, or cancellation
     Executing --> Listening: Command finishes
-    AgentRunning --> Listening: Agent finishes or is cancelled
+    AgentConversation --> AgentConversation: Agent turn finishes
+    AgentConversation --> AgentConversation: Follow-up or turn cancellation
+    AgentConversation --> Listening: End conversation
     Listening --> Failed: Recognition or configuration error
     Capturing --> Failed: Recognition or configuration error
     Executing --> Failed: Command error
-    AgentRunning --> Failed: Agent or protocol error
+    AgentConversation --> Failed: Agent or protocol error
     Failed --> Listening: Recoverable restart
     Listening --> Disabled: Disable passive mode
 ```
 
 The visible menu-bar state is `Disabled`, `Listening`, `Capturing`, `Running
 command`, `Running agent`, or an error message. Agent presentation is separate
-from speech state so completed output can remain visible while passive wake
-listening resumes.
+from speech state. A completed turn therefore changes the panel to its listening
+phase without discarding output or the live conversation; the final panel stays
+visible after the conversation returns to passive wake listening.
 
 ## Speech modes
 
@@ -77,6 +80,10 @@ listening resumes.
   saved.
   The prior registration remains active until that save succeeds and is restored
   if the requested combination is unavailable.
+- **Agent conversation:** after an agent request, interactive recognition stays
+  active without an initial-silence timeout. Final speech or 1.5 seconds of
+  inactivity submits a follow-up, and the 30-second utterance bound still
+  applies. Push-to-talk becomes another input method for the open conversation.
 
 When a wake phrase and command arrive in one transcription, the coordinator
 uses the remaining text immediately. When the wake phrase is recognized alone,
@@ -135,6 +142,18 @@ after the tool that preceded it. Token bursts publish to SwiftUI at no more than
 expandable activity model in a non-activating floating `NSPanel`; the recording
 overlay passes its exact final frame into the initial panel morph.
 
+One presentation run identifier spans the whole conversation. User follow-ups,
+agent messages, and tools share one chronological timeline while individual ACP
+turns remain sequential. The panel's bottom-follow policy changes only on
+user-driven scrolling; output growth and animated programmatic scrolling cannot
+disable it.
+
+`AgentConversationAudioPresenter` observes typed lifecycle events through an
+injected playback boundary. It collects only user-facing agent message deltas,
+converts their Markdown to speech text at turn completion, and independently
+controls the delayed working pulse. Tests inject a silent player. The system
+adapter uses `AVSpeechSynthesizer` and a low-volume bundled cue.
+
 See [ACP agent harness](agent-harness.md) for the complete wire, permission,
 resource, and recovery contract.
 
@@ -155,9 +174,14 @@ resource, and recovery contract.
   deadlines.
 - Command execution runs asynchronously and returns to passive listening after
   a short cooldown.
-- Agent execution remains independently cancellable, resumes passive listening
-  after completion, and rejects stale events by run identifier at the
-  coordinator, app model, and presentation boundaries.
+- Agent turns remain independently cancellable while their conversation speech
+  session continues. Explicitly ending the conversation resumes passive
+  listening. Stale events are rejected by execution generation and conversation
+  run identifier at the coordinator, app model, and presentation boundaries.
+- During synthesized reply playback, conversation recognition ignores ordinary
+  speech to prevent output echo from becoming a prompt. Cancellation words stop
+  playback and close an idle conversation; recognition restarts cleanly after
+  speech ends.
 - `LaunchAtLoginSetting` reads and changes `SMAppService.mainApp` registration;
   macOS remains the source of truth instead of a duplicated preference.
 - `RecordingOverlayPresenter` maps capture state to a
@@ -177,8 +201,9 @@ resource, and recovery contract.
 - The menu profile list is a bounded scrolling region, so user-defined profile
   counts cannot grow the menu-bar panel beyond the available screen.
 - The agent panel uses the same non-activating window contract, supports pointer
-  permissions and cancellation without stealing keyboard focus, and remains
-  visible after completion for selection and copying.
+  permissions, turn cancellation, and conversation exit without stealing
+  keyboard focus. It follows live output only when already at the bottom and
+  remains visible after completion for selection and copying.
 
 ## Privacy boundary
 

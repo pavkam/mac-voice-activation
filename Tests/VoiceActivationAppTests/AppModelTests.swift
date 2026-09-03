@@ -112,6 +112,11 @@ private actor AppModelAgentRunnerSpy: AgentHarnessRunning {
     private var resets: [Set<UUID>] = []
     private var shouldDelayReset = false
     private var resetContinuation: CheckedContinuation<Void, Never>?
+    private let events: [AgentRunEvent]
+
+    init(events: [AgentRunEvent] = []) {
+        self.events = events
+    }
 
     func run(
         profileID: UUID,
@@ -123,6 +128,9 @@ private actor AppModelAgentRunnerSpy: AgentHarnessRunning {
             profileID: profileID,
             configuration: configuration,
             prompt: prompt))
+        for event in events {
+            await onEvent(event)
+        }
         return AgentRunResult(stopReason: .endTurn)
     }
 
@@ -149,6 +157,27 @@ private actor AppModelAgentRunnerSpy: AgentHarnessRunning {
         shouldDelayReset = false
         resetContinuation?.resume()
         resetContinuation = nil
+    }
+}
+
+@MainActor
+private final class AppModelAgentConversationAudioSpy: AgentConversationAudioPlaying {
+    var onSpeakingChange: ((Bool) -> Void)?
+    private(set) var spoken: [(text: String, localeID: String)] = []
+
+    func setWorking(_ working: Bool) {}
+
+    func speak(_ text: String, localeID: String) {
+        spoken.append((text, localeID))
+        onSpeakingChange?(true)
+    }
+
+    func stopSpeaking() {
+        onSpeakingChange?(false)
+    }
+
+    func stopAll() {
+        onSpeakingChange?(false)
     }
 }
 
@@ -222,6 +251,7 @@ struct AppModelTests {
             speechSession: AppModelSpeechSessionSpy(),
             permissionRequest: { true },
             soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
             startsAutomatically: false)
 
         await model.start()
@@ -247,6 +277,7 @@ struct AppModelTests {
             speechSession: speech,
             permissionRequest: { true },
             soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
             startsAutomatically: false)
 
         await model.start()
@@ -270,6 +301,7 @@ struct AppModelTests {
             speechSession: speech,
             permissionRequest: { true },
             soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
             startsAutomatically: false)
 
         await model.start()
@@ -294,6 +326,7 @@ struct AppModelTests {
             speechSession: speech,
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -322,6 +355,7 @@ struct AppModelTests {
             speechSession: AppModelSpeechSessionSpy(),
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -346,6 +380,7 @@ struct AppModelTests {
             speechSession: AppModelSpeechSessionSpy(),
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -371,6 +406,7 @@ struct AppModelTests {
             speechSession: AppModelSpeechSessionSpy(),
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
+            agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
             startsAutomatically: false)
         let startup = Task { @MainActor in await model.start() }
         await waitUntil { permission.isWaiting && !shortcut.startedProfiles.isEmpty }
@@ -789,6 +825,54 @@ struct AppModelTests {
         #expect(fixture.model.agentRunSnapshot?.output == "")
     }
 
+    @MainActor @Test func agentConversation_WhenSpeechIsPartial_ShowsLiveFollowUpText() async throws {
+        let profile = try makeAgentProfile(displayName: "Codex")
+        let fixture = try Fixture(profiles: [profile])
+        await fixture.model.start()
+        fixture.speech.emit("Codex explain this", isFinal: true)
+        await waitUntil {
+            fixture.model.agentRunSnapshot?.phase == .listening
+                && fixture.speech.mode == .conversation
+        }
+
+        fixture.speech.emit("also check the tests")
+
+        #expect(fixture.model.agentRunSnapshot?.voiceInput == "also check the tests")
+    }
+
+    @MainActor @Test func agentConversation_WhenAgentReplies_ReadsRenderedReplyWithoutUsingTestAudio() async throws {
+        let profile = try makeAgentProfile(displayName: "Codex")
+        let runner = AppModelAgentRunnerSpy(events: [
+            .agentMessageDelta(messageID: "answer", text: "**All done**"),
+        ])
+        let audio = AppModelAgentConversationAudioSpy()
+        let fixture = try Fixture(
+            profiles: [profile],
+            agentRunner: runner,
+            agentConversationAudioPlayer: audio)
+        await fixture.model.start()
+
+        fixture.speech.emit("Codex check this", isFinal: true)
+        await waitUntil { audio.spoken.count == 1 }
+
+        #expect(audio.spoken.first?.text == "All done")
+        #expect(audio.spoken.first?.localeID == fixture.preferences.localeID)
+        #expect(fixture.model.agentRunSnapshot?.phase == .listening)
+    }
+
+    @MainActor @Test func saveSettings_WhenConversationAudioChanges_PersistsOnlyOnSave() async throws {
+        let fixture = try Fixture()
+        fixture.model.readsAgentRepliesAloud = false
+        fixture.model.playsAgentWorkingSound = false
+
+        #expect(fixture.preferences.readsAgentRepliesAloud)
+        #expect(fixture.preferences.playsAgentWorkingSound)
+
+        #expect(await fixture.model.saveSettings())
+        #expect(!fixture.preferences.readsAgentRepliesAloud)
+        #expect(!fixture.preferences.playsAgentWorkingSound)
+    }
+
     @MainActor
     private struct Fixture {
         let preferences: AppPreferences
@@ -801,6 +885,8 @@ struct AppModelTests {
             profiles: [WakeProfile]? = nil,
             agentRunner: any AgentHarnessRunning = AppModelAgentRunnerSpy(),
             agentRunPanel: AppModelAgentPanelSpy = AppModelAgentPanelSpy(),
+            agentConversationAudioPlayer: any AgentConversationAudioPlaying =
+                SilentAgentConversationAudioPlayer(),
             isExecutableFile: @escaping @MainActor (String) -> Bool = { path in
                 FileManager.default.isExecutableFile(atPath: path)
             },
@@ -827,6 +913,7 @@ struct AppModelTests {
                 agentRunner: agentRunner,
                 permissionRequest: { true },
                 soundPlayer: SilentCaptureSoundPlayer(),
+                agentConversationAudioPlayer: agentConversationAudioPlayer,
                 isExecutableFile: isExecutableFile,
                 isDirectory: isDirectory,
                 startsAutomatically: false)

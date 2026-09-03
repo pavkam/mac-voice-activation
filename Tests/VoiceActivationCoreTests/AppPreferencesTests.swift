@@ -24,6 +24,8 @@ struct AppPreferencesTests {
         expectedProfile.pushToTalkHotKey = .defaultValue
 
         #expect(preferences.passiveEnabled)
+        #expect(preferences.readsAgentRepliesAloud)
+        #expect(preferences.playsAgentWorkingSound)
         #expect(preferences.wakeProfiles == [expectedProfile])
         #expect(preferences.wakePhrase == "computer")
         #expect(preferences.pushToTalkHotKey == .defaultValue)
@@ -37,6 +39,8 @@ struct AppPreferencesTests {
         defaults.removePersistentDomain(forName: suite)
         let writer = AppPreferences(defaults: defaults)
         writer.passiveEnabled = true
+        writer.readsAgentRepliesAloud = false
+        writer.playsAgentWorkingSound = false
         writer.wakeProfiles = [
             try WakeProfile(
                 wakePhrase: "assistant",
@@ -59,6 +63,8 @@ struct AppPreferencesTests {
             keyLabel: "K")
 
         #expect(reader.passiveEnabled)
+        #expect(!reader.readsAgentRepliesAloud)
+        #expect(!reader.playsAgentWorkingSound)
         #expect(reader.wakeProfiles == writer.wakeProfiles)
         #expect(reader.wakePhrase == "hey mac")
         #expect(reader.localeID == "en-GB")

@@ -26,7 +26,7 @@ enum SpeechRequestPolicy {
             }
             request.requiresOnDeviceRecognition = true
             request.contextualStrings = contextualStrings
-        case .commandCapture, .pushToTalk:
+        case .commandCapture, .conversation, .pushToTalk:
             request.requiresOnDeviceRecognition = false
         }
     }

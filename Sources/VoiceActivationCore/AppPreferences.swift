@@ -3,6 +3,8 @@ import Foundation
 public final class AppPreferences {
     private enum Key {
         static let passiveEnabled = "passiveEnabled"
+        static let readsAgentRepliesAloud = "readsAgentRepliesAloud"
+        static let playsAgentWorkingSound = "playsAgentWorkingSound"
         static let wakePhrase = "wakePhrase"
         static let wakeProfiles = "wakeProfiles"
         static let localeID = "localeID"
@@ -27,6 +29,24 @@ public final class AppPreferences {
                 : defaults.bool(forKey: Key.passiveEnabled)
         }
         set { defaults.set(newValue, forKey: Key.passiveEnabled) }
+    }
+
+    public var readsAgentRepliesAloud: Bool {
+        get {
+            defaults.object(forKey: Key.readsAgentRepliesAloud) == nil
+                ? true
+                : defaults.bool(forKey: Key.readsAgentRepliesAloud)
+        }
+        set { defaults.set(newValue, forKey: Key.readsAgentRepliesAloud) }
+    }
+
+    public var playsAgentWorkingSound: Bool {
+        get {
+            defaults.object(forKey: Key.playsAgentWorkingSound) == nil
+                ? true
+                : defaults.bool(forKey: Key.playsAgentWorkingSound)
+        }
+        set { defaults.set(newValue, forKey: Key.playsAgentWorkingSound) }
     }
 
     public var wakePhrase: String {

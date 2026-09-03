@@ -55,7 +55,8 @@ final class AgentRunPanelModel {
             optionID: optionID))
     }
 
-    func updateAutoFollowing(distanceFromBottom: CGFloat) {
+    func updateAutoFollowing(distanceFromBottom: CGFloat, userInitiated: Bool) {
+        guard userInitiated else { return }
         isAutoFollowing = distanceFromBottom <= 24
     }
 }

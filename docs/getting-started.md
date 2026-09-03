@@ -102,7 +102,14 @@ non-activating agent panel that streams an ordered Markdown response while your
 current app keeps keyboard focus. Running tools use animated compact rows;
 finished tools and answered permission prompts collapse out of the way, with
 tool details still expandable. Completed output remains available to select or
-copy.
+copy. The microphone remains active after each response: speak another request
+to continue in the same agent session. Say `stop`, `cancel`, or `dismiss` to
+cancel active work, or say it while the agent is waiting to end the
+conversation. The panel and menu also provide separate **Stop turn** and
+**End conversation** controls.
+
+Agent conversation settings can read completed replies aloud and play a quiet,
+delayed pulse during longer thinking or tool pauses.
 
 Provider credentials remain in the provider's own CLI configuration; Voice
 Activation does not ask for or persist them. Continue with the

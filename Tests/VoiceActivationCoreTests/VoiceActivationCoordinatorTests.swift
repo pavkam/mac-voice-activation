@@ -824,11 +824,189 @@ struct VoiceActivationCoordinatorTests {
 
         await fixture.agentRunner.complete(runIndex: 0)
         await waitUntil {
-            lifecycleEvents.last == .completed(
+            lifecycleEvents.last == .turnCompleted(
                 runID: runID,
                 result: AgentRunResult(stopReason: .endTurn))
-                && fixture.coordinator.state == .listening
+                && fixture.speech.mode == .conversation
         }
+        #expect(fixture.coordinator.state == .executing)
+    }
+
+    @MainActor
+    @Test func agentConversation_WhenFollowUpIsSpoken_ReusesConversationAndAgentSession() async throws {
+        let profile = try makeAgentProfile()
+        let fixture = try Fixture(profiles: [profile])
+        var lifecycleEvents: [AgentRunLifecycleEvent] = []
+        fixture.coordinator.onAgentRunEvent = { lifecycleEvents.append($0) }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent inspect the parser", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        guard case let .started(runID, _, _) = lifecycleEvents.first else {
+            Issue.record("Expected conversation start")
+            return
+        }
+        await fixture.agentRunner.complete(runIndex: 0)
+        await waitUntil { fixture.speech.mode == .conversation }
+
+        fixture.speech.emit("now show me the tests", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 2 }
+
+        #expect(await fixture.agentRunner.recordedInvocations().map(\.prompt) == [
+            "inspect the parser",
+            "now show me the tests",
+        ])
+        #expect(lifecycleEvents.contains(.followUpSubmitted(
+            runID: runID,
+            prompt: "now show me the tests")))
+        #expect(lifecycleEvents.contains(.turnStarted(runID: runID)))
+        await fixture.agentRunner.complete(runIndex: 1)
+    }
+
+    @MainActor
+    @Test func agentConversation_WhenFollowUpInterruptsTurn_CancelsBeforeStartingIt() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent inspect this", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+
+        fixture.speech.emit("actually run the tests", isFinal: true)
+        await waitUntil {
+            let cancelCount = await fixture.agentRunner.cancelCount
+            let invocationCount = await fixture.agentRunner.recordedInvocations().count
+            return cancelCount == 1 && invocationCount == 2
+        }
+
+        #expect(await fixture.agentRunner.recordedInvocations().map(\.prompt) == [
+            "inspect this",
+            "actually run the tests",
+        ])
+        await fixture.agentRunner.complete(runIndex: 0)
+        await fixture.agentRunner.complete(runIndex: 1)
+    }
+
+    @MainActor
+    @Test func agentConversation_WhenCancelIsSpoken_StopsTurnAndKeepsListening() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var lifecycleEvents: [AgentRunLifecycleEvent] = []
+        fixture.coordinator.onAgentRunEvent = { lifecycleEvents.append($0) }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent inspect this", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        guard case let .started(runID, _, _) = lifecycleEvents.first else {
+            Issue.record("Expected conversation start")
+            return
+        }
+
+        fixture.speech.emit("cancel", isFinal: true)
+        await waitUntil {
+            await fixture.agentRunner.cancelCount == 1
+                && lifecycleEvents.contains(.turnCompleted(
+                    runID: runID,
+                    result: AgentRunResult(stopReason: .cancelled)))
+        }
+
+        #expect(fixture.speech.mode == .conversation)
+        #expect(fixture.coordinator.state == .executing)
+        #expect(await fixture.agentRunner.recordedInvocations().count == 1)
+        await fixture.agentRunner.complete(runIndex: 0)
+    }
+
+    @MainActor
+    @Test func endAgentConversation_WhenWaitingForFollowUp_ReturnsToPassiveWake() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var turnCompleted = false
+        fixture.coordinator.onAgentRunEvent = { event in
+            if case .turnCompleted = event {
+                turnCompleted = true
+            }
+        }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent inspect this", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        await fixture.agentRunner.complete(runIndex: 0)
+        await waitUntil { turnCompleted }
+
+        fixture.coordinator.endAgentConversation()
+        await waitUntil { fixture.speech.mode == .passiveWake }
+
+        #expect(fixture.coordinator.state == .listening)
+    }
+
+    @MainActor
+    @Test func agentConversation_WhenCancelIsSpokenWhileIdle_EndsConversation() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var turnCompleted = false
+        fixture.coordinator.onAgentRunEvent = { event in
+            if case .turnCompleted = event {
+                turnCompleted = true
+            }
+        }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent inspect this", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        await fixture.agentRunner.complete(runIndex: 0)
+        await waitUntil { turnCompleted }
+
+        fixture.speech.emit("cancel", isFinal: true)
+        await waitUntil { fixture.speech.mode == .passiveWake }
+
+        #expect(fixture.coordinator.state == .listening)
+        #expect(await fixture.agentRunner.cancelCount == 0)
+    }
+
+    @MainActor
+    @Test func agentConversation_WhenReplyIsBeingRead_IgnoresEchoButLetsStopEndConversation() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var speechCancellationCount = 0
+        var turnCompleted = false
+        fixture.coordinator.onAgentSpeechCancellation = { speechCancellationCount += 1 }
+        fixture.coordinator.onAgentRunEvent = { event in
+            if case .turnCompleted = event {
+                turnCompleted = true
+            }
+        }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent explain this", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        await fixture.agentRunner.complete(runIndex: 0)
+        await waitUntil { turnCompleted }
+        fixture.coordinator.setAgentSpeechOutputActive(true)
+
+        fixture.speech.emit("the spoken agent reply", isFinal: true)
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(await fixture.agentRunner.recordedInvocations().count == 1)
+
+        fixture.speech.emit("stop", isFinal: true)
+        await waitUntil { fixture.speech.mode == .passiveWake }
+
+        #expect(speechCancellationCount == 1)
+        #expect(fixture.coordinator.state == .listening)
+    }
+
+    @MainActor
+    @Test func endAgentConversation_WhenSpeechStopsDuringTerminalEvent_DoesNotRestartConversationCapture() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var turnCompleted = false
+        fixture.coordinator.onAgentRunEvent = { event in
+            if case .turnCompleted = event {
+                turnCompleted = true
+            }
+            if case .completed = event {
+                fixture.coordinator.setAgentSpeechOutputActive(false)
+            }
+        }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent explain this", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        await fixture.agentRunner.complete(runIndex: 0)
+        await waitUntil { turnCompleted }
+        fixture.coordinator.setAgentSpeechOutputActive(true)
+        let startCountBeforeEnding = fixture.speech.startCount
+
+        fixture.coordinator.endAgentConversation()
+        await waitUntil { fixture.speech.mode == .passiveWake }
+
+        #expect(fixture.speech.startCount == startCountBeforeEnding + 1)
     }
 
     @MainActor @Test func resolveAgentPermission_WhenRunIsCurrent_ForwardsExactTuple() async throws {
@@ -899,17 +1077,18 @@ struct VoiceActivationCoordinatorTests {
         await fixture.agentRunner.complete(runIndex: 0)
         try await Task.sleep(for: .milliseconds(30))
 
-        #expect(lifecycleEvents.count == 2)
+        #expect(lifecycleEvents.count == 3)
         guard case let .started(runID, _, _) = lifecycleEvents.first else {
             Issue.record("Expected an agent run start")
             return
         }
-        #expect(lifecycleEvents.last == .completed(
+        #expect(lifecycleEvents[1] == .turnCancellationStarted(runID: runID))
+        #expect(lifecycleEvents.last == .turnCompleted(
             runID: runID,
             result: AgentRunResult(stopReason: .cancelled)))
     }
 
-    @MainActor @Test func cancelAgentRun_WhenAgentIsExecuting_CancelsAndResumesPassiveOnce() async throws {
+    @MainActor @Test func cancelAgentRun_WhenAgentIsExecuting_CancelsTurnAndKeepsConversationListening() async throws {
         let fixture = try Fixture(profiles: [try makeAgentProfile()])
         var lifecycleEvents: [AgentRunLifecycleEvent] = []
         fixture.coordinator.onAgentRunEvent = { lifecycleEvents.append($0) }
@@ -922,16 +1101,23 @@ struct VoiceActivationCoordinatorTests {
         fixture.coordinator.cancelAgentRun()
         fixture.coordinator.cancelAgentRun()
         await waitUntil {
-            await fixture.agentRunner.cancelCount == 1
-                && fixture.coordinator.state == .listening
+            await fixture.agentRunner.cancelCount == 1 && lifecycleEvents.count == 3
         }
         await fixture.agentRunner.emit(.diagnostic("too late"), from: 0)
         await fixture.agentRunner.complete(runIndex: 0)
         try await Task.sleep(for: .milliseconds(30))
 
         #expect(fixture.speech.startCount == 2)
-        #expect(lifecycleEvents.count == 2)
-        #expect(fixture.coordinator.state == .listening)
+        #expect(fixture.speech.mode == .conversation)
+        #expect(fixture.coordinator.state == .executing)
+        guard case let .started(runID, _, _) = lifecycleEvents.first else {
+            Issue.record("Expected an agent conversation start")
+            return
+        }
+        #expect(lifecycleEvents[1] == .turnCancellationStarted(runID: runID))
+        #expect(lifecycleEvents[2] == .turnCompleted(
+            runID: runID,
+            result: AgentRunResult(stopReason: .cancelled)))
     }
 
     @MainActor @Test func stop_WhenAgentIsExecuting_ShutsDownRunnerAndIgnoresLateEvents() async throws {
@@ -976,17 +1162,21 @@ struct VoiceActivationCoordinatorTests {
 
     @MainActor @Test func cancelAgentRun_WhenCalledBeforeRunnerEntry_DoesNotStartAgent() async throws {
         let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var lifecycleEvents: [AgentRunLifecycleEvent] = []
+        fixture.coordinator.onAgentRunEvent = { lifecycleEvents.append($0) }
         fixture.coordinator.setPassiveEnabled(true)
 
         fixture.speech.emit("agent never start", isFinal: true)
         fixture.coordinator.cancelAgentRun()
         await waitUntil {
             await fixture.agentRunner.cancelCount == 1
-                && fixture.coordinator.state == .listening
+                && lifecycleEvents.count == 3
         }
 
         #expect(await fixture.agentRunner.recordedInvocations().isEmpty)
         #expect(fixture.speech.startCount == 2)
+        #expect(fixture.speech.mode == .conversation)
+        #expect(fixture.coordinator.state == .executing)
     }
 
     @MainActor @Test func stop_WhenCalledBeforeRunnerEntry_DoesNotStartAgent() async throws {
@@ -1046,7 +1236,7 @@ struct VoiceActivationCoordinatorTests {
     }
 
     @MainActor
-    @Test func pushToTalk_WhenPreemptingAgentThenReleasedEmpty_WaitsForCancellationBeforeRestartingPassive() async throws {
+    @Test func pushToTalk_WhenConversationIsActiveAndReleasedEmpty_ResumesLiveListeningWithoutCancelling() async throws {
         let profile = try makeAgentProfile()
         let fixture = try Fixture(profiles: [profile])
         var lifecycleEvents: [AgentRunLifecycleEvent] = []
@@ -1056,40 +1246,22 @@ struct VoiceActivationCoordinatorTests {
         await waitUntil {
             await fixture.agentRunner.recordedInvocations().count == 1
         }
-        await fixture.agentRunner.delayCancellation()
-
         fixture.coordinator.pushToTalkPressed(profileID: profile.id)
-        await waitUntil { await fixture.agentRunner.cancelCount == 1 }
         fixture.coordinator.pushToTalkReleased()
         try await Task.sleep(for: .milliseconds(30))
 
         #expect(fixture.coordinator.state == .executing)
-        #expect(fixture.speech.mode == nil)
-        #expect(fixture.speech.startCount == 2)
+        #expect(fixture.speech.mode == .conversation)
+        #expect(fixture.speech.startCount == 4)
+        #expect(await fixture.agentRunner.cancelCount == 0)
         #expect(lifecycleEvents.count == 1)
-
-        await fixture.agentRunner.releaseCancellation()
-        await waitUntil {
-            fixture.coordinator.state == .listening
-                && fixture.speech.mode == .passiveWake
-        }
-
-        #expect(fixture.speech.startCount == 3)
-        guard case let .started(runID, _, _) = lifecycleEvents.first else {
-            Issue.record("Expected the original agent run start")
-            return
-        }
-        #expect(lifecycleEvents == [
-            .started(runID: runID, profile: profile, prompt: "first"),
-            .completed(
-                runID: runID,
-                result: AgentRunResult(stopReason: .cancelled)),
-        ])
         await fixture.agentRunner.complete(runIndex: 0)
+        fixture.coordinator.endAgentConversation()
+        await waitUntil { fixture.speech.mode == .passiveWake }
     }
 
     @MainActor
-    @Test func pushToTalk_WhenPreemptingAgentThenCancellationIsSpoken_WaitsForCancellationBeforeRestartingPassive() async throws {
+    @Test func pushToTalk_WhenCancellationIsSpoken_CancelsTurnAndResumesConversationListening() async throws {
         let profile = try makeAgentProfile()
         let fixture = try Fixture(profiles: [profile])
         fixture.coordinator.setPassiveEnabled(true)
@@ -1100,26 +1272,28 @@ struct VoiceActivationCoordinatorTests {
         await fixture.agentRunner.delayCancellation()
 
         fixture.coordinator.pushToTalkPressed(profileID: profile.id)
-        await waitUntil { await fixture.agentRunner.cancelCount == 1 }
         fixture.speech.emit("cancel", isFinal: true)
+        await waitUntil { await fixture.agentRunner.cancelCount == 1 }
         try await Task.sleep(for: .milliseconds(30))
 
         #expect(fixture.coordinator.state == .executing)
-        #expect(fixture.speech.mode == nil)
-        #expect(fixture.speech.startCount == 2)
+        #expect(fixture.speech.mode == .conversation)
+        #expect(fixture.speech.startCount == 4)
 
         await fixture.agentRunner.releaseCancellation()
         await waitUntil {
-            fixture.coordinator.state == .listening
-                && fixture.speech.mode == .passiveWake
+            fixture.coordinator.state == .executing
+                && fixture.speech.mode == .conversation
         }
 
-        #expect(fixture.speech.startCount == 3)
+        #expect(fixture.speech.startCount == 4)
         await fixture.agentRunner.complete(runIndex: 0)
+        fixture.coordinator.endAgentConversation()
+        await waitUntil { fixture.speech.mode == .passiveWake }
     }
 
     @MainActor
-    @Test func pushToTalk_WhenAgentPreemptionIsBlocked_PublishesOldTerminalBeforeNewStart() async throws {
+    @Test func pushToTalk_WhenAgentInterruptionIsBlocked_QueuesFollowUpInSameConversation() async throws {
         let profile = try makeAgentProfile()
         let fixture = try Fixture(profiles: [profile])
         var lifecycleEvents: [AgentRunLifecycleEvent] = []
@@ -1138,20 +1312,21 @@ struct VoiceActivationCoordinatorTests {
         try await Task.sleep(for: .milliseconds(30))
 
         #expect(await fixture.agentRunner.recordedInvocations().count == 1)
-        #expect(lifecycleEvents.count == 1)
+        #expect(lifecycleEvents.count == 3)
 
         await fixture.agentRunner.releaseCancellation()
         await waitUntil(timeout: .milliseconds(500)) {
             await fixture.agentRunner.recordedInvocations().count == 2
-                && lifecycleEvents.count == 3
+                && lifecycleEvents.count == 4
         }
 
         guard
             case let .started(firstRunID, _, firstPrompt) = lifecycleEvents[0],
-            case let .completed(completedRunID, result) = lifecycleEvents[1],
-            case let .started(secondRunID, _, secondPrompt) = lifecycleEvents[2]
+            case let .followUpSubmitted(followUpRunID, secondPrompt) = lifecycleEvents[1],
+            case let .turnCancellationStarted(cancellationRunID) = lifecycleEvents[2],
+            case let .turnStarted(secondRunID) = lifecycleEvents[3]
         else {
-            Issue.record("Expected start, cancelled completion, then replacement start")
+            Issue.record("Expected start, queued follow-up, cancellation, then the next turn")
             let invocationCount = await fixture.agentRunner.recordedInvocations().count
             for runIndex in 0..<invocationCount {
                 await fixture.agentRunner.complete(runIndex: runIndex)
@@ -1159,9 +1334,9 @@ struct VoiceActivationCoordinatorTests {
             return
         }
         #expect(firstPrompt == "first")
-        #expect(completedRunID == firstRunID)
-        #expect(result == AgentRunResult(stopReason: .cancelled))
-        #expect(secondRunID != firstRunID)
+        #expect(followUpRunID == firstRunID)
+        #expect(cancellationRunID == firstRunID)
+        #expect(secondRunID == firstRunID)
         #expect(secondPrompt == "second")
 
         await fixture.agentRunner.complete(runIndex: 0)
@@ -1190,7 +1365,7 @@ struct VoiceActivationCoordinatorTests {
         await fixture.agentRunner.complete(runIndex: 1)
     }
 
-    @MainActor @Test func setPassiveEnabled_WhenAgentIsExecuting_DefersSpeechUntilRunCompletes() async throws {
+    @MainActor @Test func setPassiveEnabled_WhenConversationIsActive_DoesNotDisturbLiveListening() async throws {
         let fixture = try Fixture(profiles: [try makeAgentProfile()])
         fixture.coordinator.setPassiveEnabled(true)
         fixture.speech.emit("agent keep working", isFinal: true)
@@ -1202,14 +1377,17 @@ struct VoiceActivationCoordinatorTests {
         fixture.coordinator.setPassiveEnabled(true)
         try await Task.sleep(for: .milliseconds(20))
 
-        #expect(fixture.speech.startCount == 1)
-        #expect(fixture.speech.mode == nil)
+        #expect(fixture.speech.startCount == 2)
+        #expect(fixture.speech.mode == .conversation)
         #expect(await fixture.agentRunner.cancelCount == 0)
         #expect(fixture.coordinator.state == .executing)
 
         await fixture.agentRunner.complete(runIndex: 0)
-        await waitUntil { fixture.coordinator.state == .listening }
+        await waitUntil { fixture.coordinator.state == .executing }
         #expect(fixture.speech.startCount == 2)
+        #expect(fixture.speech.mode == .conversation)
+        fixture.coordinator.endAgentConversation()
+        await waitUntil { fixture.coordinator.state == .listening }
     }
 
     @MainActor @Test func execution_WhenProfileChangesDuringCapture_UsesSnapshottedAgentAction() async throws {
@@ -1289,23 +1467,32 @@ struct VoiceActivationCoordinatorTests {
             await fixture.agentRunner.recordedInvocations().count == 2
         }
 
-        let runIDs = lifecycleEvents.compactMap { event -> UUID? in
+        let conversationRunIDs = lifecycleEvents.compactMap { event -> UUID? in
             guard case let .started(runID, _, _) = event else { return nil }
             return runID
         }
-        #expect(runIDs.count == 2)
-        #expect(runIDs[0] != runIDs[1])
+        #expect(conversationRunIDs.count == 1)
+        guard let conversationRunID = conversationRunIDs.first else {
+            Issue.record("Expected one conversation run identifier")
+            return
+        }
+        #expect(lifecycleEvents.contains(.followUpSubmitted(
+            runID: conversationRunID,
+            prompt: "second")))
+        #expect(lifecycleEvents.contains(.turnStarted(runID: conversationRunID)))
 
         await fixture.agentRunner.complete(runIndex: 0)
         try await Task.sleep(for: .milliseconds(30))
 
         #expect(fixture.coordinator.state == .executing)
-        #expect(fixture.speech.startCount == 2)
-        #expect(fixture.speech.mode == nil)
+        #expect(fixture.speech.startCount == 4)
+        #expect(fixture.speech.mode == .conversation)
 
         await fixture.agentRunner.complete(runIndex: 1)
+        await waitUntil { fixture.coordinator.state == .executing }
+        #expect(fixture.speech.startCount == 4)
+        fixture.coordinator.endAgentConversation()
         await waitUntil { fixture.coordinator.state == .listening }
-        #expect(fixture.speech.startCount == 3)
     }
 
     @MainActor @Test func commandCompletion_WhenNewerCommandIsRunning_IgnoresOlderCompletion() async throws {

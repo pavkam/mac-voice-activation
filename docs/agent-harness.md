@@ -2,8 +2,9 @@
 
 Voice Activation can route a completed spoken command either to the existing
 direct command target or to a local coding agent through Agent Client Protocol
-(ACP) version 1. Agent targets stream their observable work into a floating
-macOS panel while the foreground application keeps keyboard focus.
+(ACP) version 1. An agent request opens a live, voice-driven conversation that
+streams observable work into a floating macOS panel while the foreground
+application keeps keyboard focus.
 
 This document defines the first supported agent-harness contract. ACP version
 2 is experimental and is deliberately out of scope.
@@ -87,8 +88,11 @@ typed run events separately from `ActivationState`.
 `ACPAgentRunner` is an actor. It owns provider connections, serialized writes,
 request identifiers, pending JSON-RPC continuations, permission decisions, and
 process termination. It keeps one initialized ACP process and session per
-profile while configuration remains unchanged. Only one prompt turn may be
-active globally. A later phrase does not queue silently behind a running agent.
+profile while configuration remains unchanged. A conversation sends multiple
+sequential prompt turns through that same ACP session, preserving the agent's
+context. Only one prompt turn may be active globally. A spoken follow-up during
+an active turn first cancels that turn, then starts the follow-up after ACP has
+settled cancellation; additional utterances remain ordered.
 
 The process transport disables `SIGPIPE` for child stdin, uses nonblocking
 writes, closes the parent write side during termination, drains stdout and
@@ -123,7 +127,8 @@ ACP subprocess communication follows the stable protocol-owner specification:
   terminal.
 - A fresh `session/new` uses the profile's absolute working directory and an
   empty MCP server list.
-- Each utterance becomes one `session/prompt` containing a harness instruction
+- Each initial request and follow-up utterance becomes one `session/prompt` in
+  the same profile session, containing a harness instruction
   text block followed by the untouched recognized request. The instruction asks
   for user-facing GitHub-flavored Markdown; ACP v1 has no separate system-role
   field.
@@ -183,14 +188,22 @@ to a 620 by 420 point material surface. It contains:
 - compact tool rows with a top-aligned animated activity indicator while
   running and expandable details after completion;
 - permission choices when required;
-- **Cancel** while running, then **Close** and **Copy output** after completion;
+- a live microphone row that shows the current follow-up transcription;
+- **Stop turn** while running and **End conversation** throughout the live
+  conversation, then **Close** and **Copy output** after it ends;
   and
 - explicit truncation notices when a safety limit is reached.
 
-The transcript auto-follows new output until the user scrolls away from the
-bottom. Completion leaves the panel visible for inspection. The menu-bar panel
-offers **Show agent run** and **Cancel agent run** while applicable. A new run
-reuses the panel and clears the prior in-memory presentation.
+The transcript auto-follows output, tool, permission, and voice-input growth
+only while the view is already pinned near the bottom. A deliberate user scroll
+up disables following; returning to the bottom enables it again. Programmatic
+scrolling and content growth never misclassify that state.
+
+Completing one turn keeps the microphone and conversation open for a follow-up.
+Ending the conversation leaves the panel visible for inspection. The menu-bar
+panel offers **Show conversation**, **Stop turn**, and **End conversation** while
+applicable. A new conversation reuses the panel and clears the prior in-memory
+presentation.
 
 Token bursts publish on leading and trailing edges at a fixed 50-millisecond
 cadence. This preserves immediate feedback without making SwiftUI render once
@@ -203,14 +216,39 @@ protocol notices cannot be mistaken for provider output.
 Direct command profiles keep the current short execution state and do not open
 the agent panel.
 
-## Cancellation and recovery
+## Live voice, audio, cancellation, and recovery
 
-Panel and menu cancellation transition the run to `cancelling` immediately,
+After the first request, a dedicated conversation recognition session remains
+active both while the agent works and while it waits for the next turn. A normal
+utterance is appended to the ordered timeline and sent as a follow-up. The
+profile's push-to-talk shortcut also contributes a follow-up while that
+conversation is open rather than creating a second agent session.
+
+Saying only `cancel`, `stop`, or `dismiss` cancels the active turn while keeping
+the conversation available. Saying one of those words while no turn is running
+ends the conversation. The same command during spoken reply playback stops the
+playback and ends the idle conversation. Agent speech is excluded from normal
+follow-up recognition so the synthesizer cannot talk to itself.
+
+**Stop turn** transitions the turn to `cancelling` immediately,
 invalidate its execution generation, respond to pending permissions with a
 cancelled outcome, and send `session/cancel` for the active session. The client
 waits up to two seconds for the prompt to finish with `stopReason: cancelled`.
 Any other post-cancel stop reason invalidates the connection. The runner then
 terminates an unresponsive process and discards that cached connection.
+
+**End conversation** cancels an active turn when necessary, closes live
+conversation recognition, and resumes passive wake listening after the normal
+cooldown.
+
+Settings independently enable spoken agent replies and a quiet working pulse.
+Reply speech uses the selected locale's macOS system voice and strips Markdown
+formatting; fenced code is announced but not read character by character. The
+working pulse begins only after a 1.6-second pause and repeats every 3.2 seconds
+while the agent is thinking or using tools. It stops for permission choices,
+cancellation, completion, and failure. Every streamed
+response or tool update resets the initial delay, so the cue marks silence
+rather than competing with active output.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached
@@ -264,10 +302,12 @@ model or depends on installed agent CLIs.
   cancellation, EOF, and stale responses.
 - Process tests prove direct argv launch, separate stdout/stderr draining, and
   bounded cancellation escalation.
-- Coordinator tests prove routing, ordered streaming, generation isolation,
-  explicit cancellation, shutdown, and exactly-once passive restart.
+- Coordinator tests prove routing, same-session follow-ups, voice interruption,
+  ordered streaming, generation isolation, explicit cancellation, shutdown,
+  and exactly-once passive restart.
 - App tests prove draft round trips, preset resolution, bounded presentation,
-  panel actions, menu affordances, and nonactivating window configuration.
+  bottom-pinned scrolling policy, silent injected audio behavior, panel actions,
+  menu affordances, and nonactivating window configuration.
 
 The complete change must pass the normal Swift test suite, warnings-as-errors
 build, Thread Sanitizer, app packaging, property-list validation, code-sign

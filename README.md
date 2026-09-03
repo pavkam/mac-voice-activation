@@ -100,9 +100,21 @@ save.
 The app keeps the foreground application focused while a floating panel streams
 an ordered Markdown timeline. Tool work starts as a compact animated row and
 collapses to an expandable result row when it finishes; permission prompts
-disappear as soon as a choice is made.
-Use **Cancel** in the panel or **Cancel agent run** in the menu to stop a turn;
-completed output remains selectable and copyable until the panel is closed.
+disappear as soon as a choice is made. New output follows the bottom of the
+panel until you deliberately scroll upward.
+
+The microphone stays live after the first response. Speak another request—or
+use the profile's push-to-talk binding—to continue in the same ACP session and
+timeline. **Stop turn** cancels only the current work; **End conversation**
+returns to passive wake listening. Saying only `cancel`, `stop`, or `dismiss`
+does the same thing by voice: it stops an active turn, or ends the conversation
+when the agent is waiting.
+
+Settings can read completed replies aloud with the matching macOS system voice
+and play a quiet repeating pulse through long thinking/tool pauses. Both options
+are enabled by default and tests inject silent audio players, so CI never emits
+speaker sounds. Completed output remains selectable and copyable until the
+panel is closed.
 
 Provider authentication stays with the provider CLI. Voice Activation stores
 no API keys, prompt history, agent output, or raw tool payloads. See the

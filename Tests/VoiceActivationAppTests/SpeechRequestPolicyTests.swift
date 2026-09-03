@@ -45,4 +45,16 @@ struct SpeechRequestPolicyTests {
         #expect(!request.requiresOnDeviceRecognition)
         #expect(request.shouldReportPartialResults)
     }
+
+    @Test func configure_WhenConversationIsActive_AllowsRecognizerDefault() throws {
+        let request = SFSpeechAudioBufferRecognitionRequest()
+
+        try SpeechRequestPolicy.configure(
+            request,
+            mode: .conversation,
+            supportsOnDeviceRecognition: false)
+
+        #expect(!request.requiresOnDeviceRecognition)
+        #expect(request.shouldReportPartialResults)
+    }
 }

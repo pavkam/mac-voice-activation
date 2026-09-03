@@ -3,6 +3,7 @@ import VoiceActivationCore
 
 enum AgentRunPanelAction: Equatable {
     case cancel(runID: UUID)
+    case endConversation(runID: UUID)
     case permission(runID: UUID, key: AgentPermissionKey, optionID: String)
     case copy(runID: UUID)
     case close(runID: UUID)
@@ -34,6 +35,7 @@ struct SystemAgentRunPasteboardWriter: AgentRunPasteboardWriting {
 @MainActor
 final class AgentRunPanelPresenter {
     var onCancel: ((UUID) -> Void)?
+    var onEndConversation: ((UUID) -> Void)?
     var onPermission: ((UUID, AgentPermissionKey, String) -> Void)?
     var onClose: ((UUID) -> Void)?
 
@@ -41,6 +43,7 @@ final class AgentRunPanelPresenter {
     private let pasteboard: any AgentRunPasteboardWriting
     private var snapshot: AgentRunSnapshot?
     private var cancelledRunID: UUID?
+    private var endedRunID: UUID?
     private var resolvedPermissions: Set<AgentPermissionKey> = []
 
     init(
@@ -57,12 +60,16 @@ final class AgentRunPanelPresenter {
     func begin(_ snapshot: AgentRunSnapshot, from handoff: RecordingOverlayHandoff?) {
         self.snapshot = snapshot
         cancelledRunID = nil
+        endedRunID = nil
         resolvedPermissions = []
         display.begin(snapshot, from: handoff)
     }
 
     func update(_ snapshot: AgentRunSnapshot) {
         guard self.snapshot?.runID == snapshot.runID else { return }
+        if snapshot.phase == .running, self.snapshot?.phase != .running {
+            cancelledRunID = nil
+        }
         self.snapshot = snapshot
         display.update(snapshot)
     }
@@ -87,6 +94,13 @@ final class AgentRunPanelPresenter {
             else { return }
             cancelledRunID = runID
             onCancel?(runID)
+        case let .endConversation(runID):
+            guard snapshot.runID == runID,
+                  !snapshot.phase.isTerminal,
+                  endedRunID != runID
+            else { return }
+            endedRunID = runID
+            onEndConversation?(runID)
         case let .permission(runID, key, optionID):
             guard snapshot.runID == runID,
                   snapshot.phase == .running,

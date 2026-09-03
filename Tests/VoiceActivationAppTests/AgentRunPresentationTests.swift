@@ -190,6 +190,59 @@ struct AgentRunPresentationTests {
         #expect(presentation.snapshot?.phase == .completed(.maxTokens))
     }
 
+    @MainActor @Test func conversation_WhenFollowUpRuns_PreservesChronologicalMessages() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(
+            runID: runID,
+            profile: try makeAgentProfile(),
+            prompt: "Inspect the parser")
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "first-answer", text: "It is recursive."))
+        presentation.completeTurn(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn))
+
+        presentation.submitFollowUp(runID: runID, prompt: "Show me where")
+        presentation.beginTurn(runID: runID)
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "second-answer", text: "In `Parser.swift`."))
+        presentation.completeTurn(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn))
+
+        let snapshot = try #require(presentation.snapshot)
+        #expect(snapshot.phase == .listening)
+        #expect(snapshot.voiceInput.isEmpty)
+        #expect(snapshot.timeline.count == 3)
+        guard case let .message(firstAnswer) = snapshot.timeline[0],
+              case let .userMessage(followUp) = snapshot.timeline[1],
+              case let .message(secondAnswer) = snapshot.timeline[2]
+        else {
+            Issue.record("Expected answer, follow-up, answer in chronological order")
+            return
+        }
+        #expect(firstAnswer.text == "It is recursive.")
+        #expect(followUp.text == "Show me where")
+        #expect(secondAnswer.text == "In `Parser.swift`.")
+    }
+
+    @MainActor @Test func voiceInput_WhenConversationListens_PublishesLiveTranscript() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Start")
+        presentation.completeTurn(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn))
+
+        presentation.updateVoiceInput(runID: runID, transcript: "and also")
+
+        #expect(presentation.snapshot?.voiceInput == "and also")
+        #expect(presentation.snapshot?.phase == .listening)
+    }
+
     @MainActor @Test func receive_WhenMultibyteOutputExceedsLimit_RetainsValidBoundedSuffix() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let runID = UUID()

@@ -63,8 +63,10 @@ timings to cover:
 - inactivity and maximum capture timeouts;
 - push-to-talk preemption;
 - recognition startup and runtime recovery;
-- stale callback rejection; and
-- command execution and passive-listening resumption.
+- stale callback rejection;
+- command execution and passive-listening resumption; and
+- same-session agent follow-ups, mid-turn interruption, idle voice exit, and
+  speech-output echo rejection.
 
 Core ACP suites use in-memory transports and real child-process fixtures to
 cover framing at every split point, all stable update kinds, exact JSON-RPC
@@ -85,7 +87,10 @@ push-to-talk capture.
 Agent-panel tests verify run-identifier isolation, UTF-8-safe output and
 diagnostic bounds, tool eviction, simultaneous permissions, 20 Hz token
 coalescing, exact-once cancellation, menu affordances, overlay handoff geometry,
-and a panel that accepts pointer actions without becoming key or main.
+bottom-pinned automatic scrolling, chronological follow-ups, and a panel that
+accepts pointer actions without becoming key or main. Conversation-audio tests
+use injected silent players to verify Markdown speech formatting and working
+pulse state without producing sound from the test process.
 
 Run one suite while iterating:
 

@@ -8,9 +8,14 @@ struct MenuStatusPresentation: Equatable {
 
     static func make(
         state: ActivationState,
-        enabledProfileCount: Int) -> MenuStatusPresentation
+        enabledProfileCount: Int,
+        agentPhase: AgentRunPhase? = nil) -> MenuStatusPresentation
     {
-        switch state {
+        if state == .executing, let agentPhase, !agentPhase.isTerminal {
+            return agentConversationPresentation(phase: agentPhase)
+        }
+
+        return switch state {
         case .disabled:
             MenuStatusPresentation(
                 title: "Paused",
@@ -47,5 +52,36 @@ struct MenuStatusPresentation: Equatable {
     private static func listeningDetail(enabledProfileCount: Int) -> String {
         let noun = enabledProfileCount == 1 ? "wake phrase" : "wake phrases"
         return "Listening for \(enabledProfileCount) \(noun)"
+    }
+
+    private static func agentConversationPresentation(
+        phase: AgentRunPhase) -> MenuStatusPresentation
+    {
+        switch phase {
+        case .listening:
+            MenuStatusPresentation(
+                title: "In conversation",
+                detail: "Listening for a follow-up",
+                symbolName: "waveform.badge.mic",
+                isError: false)
+        case .running:
+            MenuStatusPresentation(
+                title: "Agent working",
+                detail: "You can keep speaking",
+                symbolName: "sparkles",
+                isError: false)
+        case .cancelling:
+            MenuStatusPresentation(
+                title: "Stopping turn",
+                detail: "Conversation stays open",
+                symbolName: "clock.arrow.circlepath",
+                isError: false)
+        case .completed, .failed:
+            MenuStatusPresentation(
+                title: "Running command",
+                detail: "Your request is on its way",
+                symbolName: "sparkles",
+                isError: false)
+        }
     }
 }

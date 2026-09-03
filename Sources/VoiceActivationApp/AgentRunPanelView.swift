@@ -39,18 +39,26 @@ struct AgentRunPanelView: View {
                             plan(snapshot)
                             timeline(snapshot)
                             permissions(snapshot)
+                            voiceInput(snapshot)
                             Color.clear.frame(height: 1).id("agent-run-bottom")
                         }
                         .padding(18)
                     }
-                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                        max(
+                    .onScrollPhaseChange { oldPhase, newPhase, context in
+                        guard oldPhase == .interacting
+                            || oldPhase == .decelerating
+                            || newPhase == .interacting
+                            || newPhase == .decelerating
+                        else { return }
+                        let geometry = context.geometry
+                        let distance = max(
                             0,
                             geometry.contentSize.height
                                 - geometry.contentOffset.y
                                 - geometry.containerSize.height)
-                    } action: { _, distance in
-                        model.updateAutoFollowing(distanceFromBottom: distance)
+                        model.updateAutoFollowing(
+                            distanceFromBottom: distance,
+                            userInitiated: true)
                     }
                     .onChange(of: snapshot.timeline) {
                         guard model.isAutoFollowing else { return }
@@ -59,6 +67,12 @@ struct AgentRunPanelView: View {
                         }
                     }
                     .onChange(of: snapshot.permissions) {
+                        guard model.isAutoFollowing else { return }
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            proxy.scrollTo("agent-run-bottom", anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: snapshot.voiceInput) {
                         guard model.isAutoFollowing else { return }
                         withAnimation(.easeOut(duration: 0.16)) {
                             proxy.scrollTo("agent-run-bottom", anchor: .bottom)
@@ -136,6 +150,8 @@ struct AgentRunPanelView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case let .message(message):
                     messageBlock(message)
+                case let .userMessage(message):
+                    userMessageBlock(message)
                 case let .tool(tool):
                     toolCard(tool)
                 }
@@ -161,6 +177,16 @@ struct AgentRunPanelView: View {
                     .fill(.primary.opacity(0.035))
             }
         }
+    }
+
+    private func userMessageBlock(_ message: AgentUserMessagePresentation) -> some View {
+        Text(message.text)
+            .font(.system(size: 13, weight: .medium, design: .rounded))
+            .textSelection(.enabled)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(accent.opacity(0.16), in: RoundedRectangle(cornerRadius: 13))
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     @ViewBuilder
@@ -293,10 +319,35 @@ struct AgentRunPanelView: View {
         .animation(.snappy(duration: 0.2), value: snapshot.permissions.map(\.id))
     }
 
+    @ViewBuilder
+    private func voiceInput(_ snapshot: AgentRunSnapshot) -> some View {
+        if !snapshot.phase.isTerminal {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "waveform.badge.mic")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .symbolEffect(.variableColor.iterative, isActive: true)
+                    .frame(width: 20, height: 20)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(snapshot.voiceInput.isEmpty ? "Listening for you…" : snapshot.voiceInput)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(snapshot.voiceInput.isEmpty ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Speak a follow-up, or say “stop” to cancel this turn.")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(11)
+            .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
     private func actions(_ snapshot: AgentRunSnapshot) -> some View {
         HStack {
             if snapshot.phase == .running {
-                Button("Cancel", systemImage: "xmark.circle.fill") {
+                Button("Stop turn", systemImage: "stop.circle.fill") {
                     model.onAction?(.cancel(runID: snapshot.runID))
                 }
                 .buttonStyle(.borderedProminent)
@@ -307,7 +358,12 @@ struct AgentRunPanelView: View {
                     .disabled(true)
             }
             Spacer()
-            if snapshot.phase.isTerminal {
+            if !snapshot.phase.isTerminal {
+                Button("End conversation", systemImage: "rectangle.portrait.and.arrow.right") {
+                    model.onAction?(.endConversation(runID: snapshot.runID))
+                }
+                .buttonStyle(.bordered)
+            } else {
                 Button("Copy output", systemImage: "doc.on.doc") {
                     model.onAction?(.copy(runID: snapshot.runID))
                 }
@@ -344,6 +400,7 @@ struct AgentRunPanelView: View {
 
     private func phaseLabel(_ phase: AgentRunPhase) -> String {
         switch phase {
+        case .listening: "Listening for follow-up"
         case .running: "Running"
         case .cancelling: "Cancelling"
         case let .completed(reason): reason == .cancelled ? "Cancelled" : "Completed"
@@ -353,6 +410,7 @@ struct AgentRunPanelView: View {
 
     private func phaseSymbol(_ phase: AgentRunPhase) -> String {
         switch phase {
+        case .listening: "waveform.badge.mic"
         case .running: "sparkles"
         case .cancelling: "clock.arrow.circlepath"
         case let .completed(reason): reason == .cancelled ? "xmark" : "checkmark"

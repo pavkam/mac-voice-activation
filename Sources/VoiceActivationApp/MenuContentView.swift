@@ -34,7 +34,8 @@ struct MenuContentView: View {
     private var statusHeader: some View {
         let presentation = MenuStatusPresentation.make(
             state: model.state,
-            enabledProfileCount: enabledProfileCount)
+            enabledProfileCount: enabledProfileCount,
+            agentPhase: model.agentRunSnapshot?.phase)
 
         return HStack(spacing: 13) {
             ZStack {
@@ -161,7 +162,7 @@ struct MenuContentView: View {
                 Button {
                     model.showAgentRun()
                 } label: {
-                    Label("Show agent run", systemImage: "rectangle.on.rectangle")
+                    Label("Show conversation", systemImage: "rectangle.on.rectangle")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -170,7 +171,7 @@ struct MenuContentView: View {
                     Button {
                         model.cancelAgentRun(runID: snapshot.runID)
                     } label: {
-                        Label("Cancel", systemImage: "xmark.circle.fill")
+                        Label("Stop turn", systemImage: "stop.circle.fill")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.red.opacity(0.84))
@@ -179,6 +180,18 @@ struct MenuContentView: View {
                         .buttonStyle(.bordered)
                         .disabled(true)
                 }
+            }
+
+            if !snapshot.phase.isTerminal {
+                Button {
+                    model.endAgentConversation(runID: snapshot.runID)
+                } label: {
+                    Label(
+                        "End conversation",
+                        systemImage: "rectangle.portrait.and.arrow.right")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             }
         }
         .padding(12)
@@ -193,6 +206,7 @@ struct MenuContentView: View {
 
     private func agentRunPhaseLabel(_ phase: AgentRunPhase) -> String {
         switch phase {
+        case .listening: "Listening"
         case .running: "Running"
         case .cancelling: "Cancelling"
         case let .completed(reason): reason == .cancelled ? "Cancelled" : "Completed"

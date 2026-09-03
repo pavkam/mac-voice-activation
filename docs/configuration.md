@@ -39,6 +39,20 @@ Passive recognition fails closed when the selected locale does not support
 on-device recognition. Command capture and push-to-talk may use Apple's speech
 service when on-device recognition is unavailable.
 
+## Agent conversation audio
+
+- **Read replies aloud:** enabled by default. After an agent turn completes,
+  Voice Activation removes Markdown formatting and reads the response with the
+  macOS voice matching the configured speech locale. Code blocks are not read
+  character by character.
+- **Working pulse:** enabled by default. A low-volume cue begins after a short
+  silent delay and repeats while the agent is thinking or using tools. It stops
+  when permission input is needed or the turn ends. Each streamed update resets
+  the delay, so the pulse fills genuine pauses rather than continuous output.
+
+These are saved settings: editing either toggle does not affect an active
+conversation until **Save Settings** succeeds.
+
 ## Startup
 
 Enable **Launch at Login** to register the current app bundle as a macOS login
@@ -113,6 +127,13 @@ launch environment but never persists API keys.
 
 See [ACP agent harness](agent-harness.md) for streaming, cancellation,
 permissions, safety bounds, and provider lifecycle behavior.
+
+An agent target stays in conversation mode after its first response. Speak a
+follow-up normally or use that profile's push-to-talk binding; every turn uses
+the same ACP session. A follow-up spoken while the agent is still working
+cancels the current turn before it starts. Say only `cancel`, `stop`, or
+`dismiss` to stop an active turn. Say it again while the agent is waiting to end
+the conversation, or choose **End conversation** in the panel or menu.
 
 ## Capture timing
 

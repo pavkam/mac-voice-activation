@@ -45,6 +45,46 @@ struct AgentRunPanelPresenterTests {
         #expect(cancellations == [runID])
     }
 
+    @MainActor @Test func endConversation_WhenRepeatedOrStale_IsRunScopedAndExactlyOnce() {
+        let display = AgentRunPanelDisplaySpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy())
+        let runID = UUID()
+        var endedRuns: [UUID] = []
+        presenter.onEndConversation = { endedRuns.append($0) }
+        presenter.begin(runningSnapshot(runID: runID), from: nil)
+
+        display.onAction?(.endConversation(runID: runID))
+        display.onAction?(.endConversation(runID: runID))
+        display.onAction?(.endConversation(runID: UUID()))
+
+        #expect(endedRuns == [runID])
+    }
+
+    @MainActor @Test func cancel_WhenNextTurnStarts_CanBeInvokedAgainForSameConversation() {
+        let display = AgentRunPanelDisplaySpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy())
+        let runID = UUID()
+        var cancellations: [UUID] = []
+        presenter.onCancel = { cancellations.append($0) }
+        var snapshot = runningSnapshot(runID: runID)
+        presenter.begin(snapshot, from: nil)
+        display.onAction?(.cancel(runID: runID))
+
+        snapshot = replacingPhase(.cancelling, in: snapshot)
+        presenter.update(snapshot)
+        snapshot = replacingPhase(.listening, in: snapshot)
+        presenter.update(snapshot)
+        snapshot = replacingPhase(.running, in: snapshot)
+        presenter.update(snapshot)
+        display.onAction?(.cancel(runID: runID))
+
+        #expect(cancellations == [runID, runID])
+    }
+
     @MainActor @Test func terminalActions_WhenInvoked_CopyAndHideRetainedRun() throws {
         let display = AgentRunPanelDisplaySpy()
         let pasteboard = AgentRunPasteboardSpy()
@@ -58,6 +98,7 @@ struct AgentRunPanelPresenterTests {
             prompt: snapshot.prompt,
             providerName: snapshot.providerName,
             phase: .completed(.endTurn),
+            voiceInput: "",
             output: "Finished",
             timeline: [
                 .message(AgentMessagePresentation(
@@ -112,12 +153,20 @@ struct AgentRunPanelPresenterTests {
         #expect(image.height == 420)
     }
 
-    @MainActor @Test func model_WhenUserMovesAwayFromBottom_DisablesAndReenablesFollow() {
+    @MainActor @Test func model_WhenUserScrollsAwayFromBottom_DisablesAndReenablesFollow() {
         let model = AgentRunPanelModel()
 
-        model.updateAutoFollowing(distanceFromBottom: 25)
+        model.updateAutoFollowing(distanceFromBottom: 25, userInitiated: true)
         #expect(!model.isAutoFollowing)
-        model.updateAutoFollowing(distanceFromBottom: 24)
+        model.updateAutoFollowing(distanceFromBottom: 24, userInitiated: true)
+        #expect(model.isAutoFollowing)
+    }
+
+    @MainActor @Test func model_WhenContentGrowsWithoutUserScroll_KeepsFollowingEnabled() {
+        let model = AgentRunPanelModel()
+
+        model.updateAutoFollowing(distanceFromBottom: 200, userInitiated: false)
+
         #expect(model.isAutoFollowing)
     }
 
@@ -145,6 +194,7 @@ struct AgentRunPanelPresenterTests {
             prompt: "Do the work",
             providerName: "Codex",
             phase: .running,
+            voiceInput: "",
             output: "",
             timeline: [],
             diagnostics: "",
@@ -174,6 +224,7 @@ struct AgentRunPanelPresenterTests {
             prompt: "Inspect",
             providerName: "Codex",
             phase: .running,
+            voiceInput: "",
             output: "",
             timeline: [.tool(tool)],
             diagnostics: "",
@@ -184,5 +235,30 @@ struct AgentRunPanelPresenterTests {
             elapsedSeconds: 0,
             evictedToolCount: 0,
             ignoredToolUpdateCount: 0)
+    }
+
+    @MainActor
+    private func replacingPhase(
+        _ phase: AgentRunPhase,
+        in snapshot: AgentRunSnapshot) -> AgentRunSnapshot
+    {
+        AgentRunSnapshot(
+            runID: snapshot.runID,
+            profileID: snapshot.profileID,
+            accent: snapshot.accent,
+            prompt: snapshot.prompt,
+            providerName: snapshot.providerName,
+            phase: phase,
+            voiceInput: snapshot.voiceInput,
+            output: snapshot.output,
+            timeline: snapshot.timeline,
+            diagnostics: snapshot.diagnostics,
+            plan: snapshot.plan,
+            tools: snapshot.tools,
+            permissions: snapshot.permissions,
+            notices: snapshot.notices,
+            elapsedSeconds: snapshot.elapsedSeconds,
+            evictedToolCount: snapshot.evictedToolCount,
+            ignoredToolUpdateCount: snapshot.ignoredToolUpdateCount)
     }
 }

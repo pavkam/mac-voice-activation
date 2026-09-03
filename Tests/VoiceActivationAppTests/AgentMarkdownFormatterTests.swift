@@ -50,4 +50,20 @@ struct AgentMarkdownFormatterTests {
             .code(language: "sh", text: "swift test --filter AgentRun"),
         ])
     }
+
+    @Test func spokenText_WhenResponseIsMarkdown_RemovesFormattingAndSkipsCodeDetails() {
+        let spoken = AgentMarkdownFormatter.spokenText(from: """
+            # Result
+
+            **Everything** passed. See [the report](https://example.com).
+
+            - First item
+
+            ```sh
+            dangerous --flags
+            ```
+            """)
+
+        #expect(spoken == "Result\nEverything passed. See the report.\nFirst item\nCode block omitted.")
+    }
 }

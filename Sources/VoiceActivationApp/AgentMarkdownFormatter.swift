@@ -118,6 +118,30 @@ enum AgentMarkdownFormatter {
         return blocks
     }
 
+    static func spokenText(from markdown: String) -> String {
+        blocks(from: markdown).compactMap { block in
+            switch block {
+            case let .heading(_, text),
+                 let .paragraph(text),
+                 let .unorderedListItem(_, text),
+                 let .orderedListItem(_, _, text),
+                 let .quote(text):
+                inlinePlainText(text)
+            case .code:
+                "Code block omitted."
+            case .divider:
+                nil
+            }
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
+    }
+
+    private static func inlinePlainText(_ markdown: String) -> String {
+        String(attributedString(from: markdown).characters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func fenceMarker(in line: String) -> String? {
         if line.hasPrefix("```") { return "```" }
         if line.hasPrefix("~~~") { return "~~~" }

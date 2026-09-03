@@ -91,11 +91,15 @@ before putting it into Settings.
 
 ## Agent output stops or the panel remains open
 
-Completion intentionally leaves the panel open so its selectable output can be
-copied. Choose **Close** when finished. While a turn is active, use **Cancel**
-in the panel or **Cancel agent run** in the menu; the app resolves pending
-permissions, asks the ACP session to cancel, and terminates an unresponsive
-provider after the bounded grace period.
+Turn completion intentionally keeps both the panel and conversation microphone
+open for follow-ups. Speak another request to continue in the same ACP session.
+Use **Stop turn** to cancel only active work, or **End conversation** to return
+to passive wake listening. After the conversation ends, choose **Close** to hide
+the retained output. Saying only `stop`, `cancel`, or `dismiss` stops active
+work; saying it while the agent is waiting ends the conversation.
+
+If new output does not follow the bottom, scroll to the bottom once. A deliberate
+scroll upward pauses automatic following so earlier output remains readable.
 
 If a provider exits, emits invalid JSON, exceeds a protocol bound, or closes a
 pipe unexpectedly, the panel enters a failed state with bounded diagnostics.
@@ -108,12 +112,15 @@ panel. The app does not invent a broader approval. **Allow once** selects a
 one-shot approval when offered; **Reject** returns a rejection or cancelled
 outcome. Cancelling the run also cancels every pending permission request.
 
-## Capture sounds do not play
+## Conversation speech or sounds do not play
 
-Voice Activation uses macOS system sounds and obeys the current output volume.
-Confirm the Mac is not muted and that alert volume is audible in System Settings.
-The start cue plays only when capture begins; the end cue plays for submission,
-cancellation, timeout, and capture errors.
+Confirm **Read replies aloud** and **Working pulse** are enabled in Settings and
+that **Save Settings** succeeded. Voice Activation uses the configured locale's
+macOS system voice and obeys the current output volume. The working pulse waits
+1.6 seconds before its first low-volume cue, so quick turns stay quiet.
+
+The capture start cue plays only when capture begins; the end cue plays for
+submission, cancellation, timeout, and capture errors.
 
 ## Push-to-talk does not react
 

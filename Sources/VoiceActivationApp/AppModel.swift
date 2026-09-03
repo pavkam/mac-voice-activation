@@ -12,6 +12,8 @@ final class AppModel {
     var wakeProfiles: [WakeProfileDraft]
     private(set) var activeWakeProfiles: [WakeProfile]
     var localeID: String
+    var readsAgentRepliesAloud: Bool
+    var playsAgentWorkingSound: Bool
     var settingsError: String?
     private(set) var isSavingSettings = false
     private(set) var agentRunSnapshot: AgentRunSnapshot?
@@ -28,6 +30,8 @@ final class AppModel {
     @ObservationIgnored private let agentRunPresentation: AgentRunPresentation
     @ObservationIgnored private let agentRunPanelPresenter: AgentRunPanelPresenter
     @ObservationIgnored private let soundPresenter: CaptureSoundPresenter
+    @ObservationIgnored private let agentConversationAudioPlayer: any AgentConversationAudioPlaying
+    @ObservationIgnored private let agentConversationAudioPresenter: AgentConversationAudioPresenter
     @ObservationIgnored private var started = false
     @ObservationIgnored private var permissionGranted = false
     @ObservationIgnored private var permissionTask: Task<Bool, Never>?
@@ -54,6 +58,8 @@ final class AppModel {
         agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
         permissionRequest: @escaping @MainActor () async -> Bool = SpeechPermissions.request,
         soundPlayer: any CaptureSoundPlaying = SystemCaptureSoundPlayer(),
+        agentConversationAudioPlayer: any AgentConversationAudioPlaying =
+            SystemAgentConversationAudioPlayer(),
         isExecutableFile: @escaping @MainActor (String) -> Bool = AppModel.executableFileExists,
         isDirectory: @escaping @MainActor (String) -> Bool = AppModel.directoryExists,
         startsAutomatically: Bool = true)
@@ -70,10 +76,18 @@ final class AppModel {
         agentRunPresentation = AgentRunPresentation()
         agentRunPanelPresenter = AgentRunPanelPresenter(display: agentRunPanel)
         soundPresenter = CaptureSoundPresenter(player: soundPlayer)
+        self.agentConversationAudioPlayer = agentConversationAudioPlayer
+        agentConversationAudioPresenter = AgentConversationAudioPresenter(
+            player: agentConversationAudioPlayer,
+            readsReplies: { preferences.readsAgentRepliesAloud },
+            playsWorkingSound: { preferences.playsAgentWorkingSound },
+            localeID: { preferences.localeID })
         passiveEnabled = preferences.passiveEnabled
         activeWakeProfiles = preferences.wakeProfiles
         wakeProfiles = preferences.wakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
+        readsAgentRepliesAloud = preferences.readsAgentRepliesAloud
+        playsAgentWorkingSound = preferences.playsAgentWorkingSound
         overlayPresenter.onCancel = { [weak self] in
             self?.cancelCapture()
         }
@@ -83,6 +97,9 @@ final class AppModel {
         agentRunPanelPresenter.onCancel = { [weak self] runID in
             self?.cancelAgentRun(runID: runID)
         }
+        agentRunPanelPresenter.onEndConversation = { [weak self] runID in
+            self?.endAgentConversation(runID: runID)
+        }
         agentRunPanelPresenter.onPermission = { [weak self] runID, key, optionID in
             self?.resolveAgentPermission(
                 runID: runID,
@@ -91,6 +108,9 @@ final class AppModel {
         }
         agentRunPanelPresenter.onClose = { [weak self] runID in
             self?.agentRunPresentation.close(runID: runID)
+        }
+        agentConversationAudioPlayer.onSpeakingChange = { [weak self] speaking in
+            self?.coordinator.setAgentSpeechOutputActive(speaking)
         }
 
         if startsAutomatically {
@@ -166,6 +186,9 @@ final class AppModel {
             newProfiles: profiles)
         preferences.wakeProfiles = profiles
         preferences.localeID = localeID
+        preferences.readsAgentRepliesAloud = readsAgentRepliesAloud
+        preferences.playsAgentWorkingSound = playsAgentWorkingSound
+        agentConversationAudioPresenter.refreshSettings()
         activeWakeProfiles = profiles
         wakeProfiles = activeWakeProfiles.map(WakeProfileDraft.init)
         localeID = preferences.localeID
@@ -185,6 +208,7 @@ final class AppModel {
             agentRunPanelPresenter.hide(runID: runID)
         }
         agentRunPresentation.shutdown()
+        agentConversationAudioPresenter.shutdown()
     }
 
     func setPushToTalkHotKey(_ hotKey: PushToTalkHotKey?, for profileID: UUID) {
@@ -227,8 +251,14 @@ final class AppModel {
         }
         coordinator.onTranscriptChange = { [weak self] in self?.lastTranscript = $0 }
         coordinator.onCurrentTranscriptChange = { [weak self] in
-            self?.currentTranscript = $0
-            self?.updateRecordingOverlay()
+            guard let self else { return }
+            self.currentTranscript = $0
+            if let snapshot = self.agentRunSnapshot, !snapshot.phase.isTerminal {
+                self.agentRunPresentation.updateVoiceInput(
+                    runID: snapshot.runID,
+                    transcript: $0)
+            }
+            self.updateRecordingOverlay()
         }
         coordinator.onActiveProfileChange = { [weak self] in
             self?.activeProfile = $0
@@ -236,6 +266,9 @@ final class AppModel {
         }
         coordinator.onAgentRunEvent = { [weak self] event in
             self?.handleAgentRunLifecycleEvent(event)
+        }
+        coordinator.onAgentSpeechCancellation = { [weak self] in
+            self?.agentConversationAudioPlayer.stopSpeaking()
         }
         do {
             try registerShortcuts(activeWakeProfiles)
@@ -323,6 +356,13 @@ final class AppModel {
         coordinator.cancelAgentRun()
     }
 
+    func endAgentConversation(runID: UUID) {
+        guard agentRunSnapshot?.runID == runID,
+              agentRunSnapshot?.phase.isTerminal == false
+        else { return }
+        coordinator.endAgentConversation()
+    }
+
     func resolveAgentPermission(
         runID: UUID,
         key: AgentPermissionKey,
@@ -342,13 +382,22 @@ final class AppModel {
         switch event {
         case let .started(runID, profile, prompt):
             agentRunPresentation.start(runID: runID, profile: profile, prompt: prompt)
+        case let .followUpSubmitted(runID, prompt):
+            agentRunPresentation.submitFollowUp(runID: runID, prompt: prompt)
+        case let .turnStarted(runID):
+            agentRunPresentation.beginTurn(runID: runID)
+        case let .turnCancellationStarted(runID):
+            _ = agentRunPresentation.beginCancellation(runID: runID)
         case let .event(runID, event):
             agentRunPresentation.receive(runID: runID, event: event)
+        case let .turnCompleted(runID, result):
+            agentRunPresentation.completeTurn(runID: runID, result: result)
         case let .completed(runID, result):
             agentRunPresentation.complete(runID: runID, result: result)
         case let .failed(runID, message):
             agentRunPresentation.fail(runID: runID, message: message)
         }
+        agentConversationAudioPresenter.handle(event)
     }
 
     private func ensurePermissions() async -> Bool {

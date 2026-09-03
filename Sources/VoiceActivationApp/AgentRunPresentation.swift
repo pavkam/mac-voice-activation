@@ -2,6 +2,7 @@ import Foundation
 import VoiceActivationCore
 
 enum AgentRunPhase: Equatable, Sendable {
+    case listening
     case running
     case cancelling
     case completed(AgentStopReason)
@@ -11,7 +12,7 @@ enum AgentRunPhase: Equatable, Sendable {
         switch self {
         case .completed, .failed:
             true
-        case .running, .cancelling:
+        case .listening, .running, .cancelling:
             false
         }
     }
@@ -50,21 +51,29 @@ struct AgentMessagePresentation: Equatable, Identifiable, Sendable {
     var text: String
 }
 
+struct AgentUserMessagePresentation: Equatable, Identifiable, Sendable {
+    let id: UUID
+    let text: String
+}
+
 enum AgentRunTimelineItemID: Hashable, Sendable {
     case omitted
     case message(UUID)
+    case userMessage(UUID)
     case tool(String)
 }
 
 enum AgentRunTimelineItem: Equatable, Identifiable, Sendable {
     case omitted
     case message(AgentMessagePresentation)
+    case userMessage(AgentUserMessagePresentation)
     case tool(AgentToolPresentation)
 
     var id: AgentRunTimelineItemID {
         switch self {
         case .omitted: .omitted
         case let .message(message): .message(message.id)
+        case let .userMessage(message): .userMessage(message.id)
         case let .tool(tool): .tool(tool.id)
         }
     }
@@ -77,6 +86,7 @@ struct AgentRunSnapshot: Equatable, Sendable {
     let prompt: String
     let providerName: String
     let phase: AgentRunPhase
+    let voiceInput: String
     let output: String
     let timeline: [AgentRunTimelineItem]
     let diagnostics: String
@@ -122,6 +132,7 @@ final class AgentRunPresentation {
             prompt: prompt,
             providerName: providerName,
             phase: phase,
+            voiceInput: voiceInput,
             output: outputBuffer.value,
             timeline: timeline,
             diagnostics: diagnosticBuffer.value,
@@ -142,6 +153,7 @@ final class AgentRunPresentation {
     private var prompt: String?
     private var providerName: String?
     private var phase: AgentRunPhase?
+    private var voiceInput = ""
     private var outputBuffer = AgentRunBoundedTextBuffer(
         maximumBytes: maximumOutputBytes,
         marker: "… earlier output omitted …\n")
@@ -179,6 +191,7 @@ final class AgentRunPresentation {
             providerName = "Agent"
         }
         phase = .running
+        voiceInput = ""
         outputBuffer.removeAll()
         diagnosticBuffer.removeAll()
         plan = []
@@ -209,6 +222,41 @@ final class AgentRunPresentation {
 
         flushPendingPublication()
         apply(event)
+        publishNow()
+    }
+
+    func submitFollowUp(runID: UUID, prompt: String) {
+        guard self.runID == runID, phase?.isTerminal == false else { return }
+        flushPendingPublication()
+        timeline.append(.userMessage(AgentUserMessagePresentation(id: UUID(), text: prompt)))
+        voiceInput = ""
+        enforceTimelineBounds()
+        publishNow()
+    }
+
+    func beginTurn(runID: UUID) {
+        guard self.runID == runID, phase?.isTerminal == false else { return }
+        flushPendingPublication()
+        phase = .running
+        permissions = []
+        voiceInput = ""
+        publishNow()
+    }
+
+    func completeTurn(runID: UUID, result _: AgentRunResult) {
+        guard self.runID == runID, phase?.isTerminal == false else { return }
+        flushPendingPublication()
+        phase = .listening
+        permissions = []
+        voiceInput = ""
+        publishNow()
+    }
+
+    func updateVoiceInput(runID: UUID, transcript: String) {
+        guard self.runID == runID, phase?.isTerminal == false, voiceInput != transcript else {
+            return
+        }
+        voiceInput = transcript
         publishNow()
     }
 
@@ -385,23 +433,18 @@ final class AgentRunPresentation {
     private func enforceTimelineBounds() {
         var retainedTextBytes = timelineTextByteCount
         while retainedTextBytes > Self.maximumTimelineTextBytes,
-              let index = timeline.firstIndex(where: { item in
-                  if case .message = item { return true }
-                  return false
-              }),
-              case var .message(message) = timeline[index]
+              let index = timeline.firstIndex(where: \AgentRunTimelineItem.containsText)
         {
-            let originalByteCount = message.text.utf8.count
+            let originalByteCount = timeline[index].text.utf8.count
             let excessByteCount = retainedTextBytes - Self.maximumTimelineTextBytes
             if originalByteCount <= excessByteCount {
                 timeline.remove(at: index)
                 retainedTextBytes -= originalByteCount
             } else {
-                message.text = droppingUTF8Prefix(
-                    message.text,
-                    atLeast: excessByteCount)
-                timeline[index] = .message(message)
-                retainedTextBytes -= originalByteCount - message.text.utf8.count
+                timeline[index] = timeline[index].droppingTextPrefix(
+                    atLeast: excessByteCount,
+                    using: droppingUTF8Prefix)
+                retainedTextBytes -= originalByteCount - timeline[index].text.utf8.count
             }
             markTimelineOmitted()
         }
@@ -428,8 +471,8 @@ final class AgentRunPresentation {
 
     private var timelineTextByteCount: Int {
         timeline.reduce(into: 0) { count, item in
-            guard case let .message(message) = item else { return }
-            let byteCount = message.text.utf8.count
+            guard item.containsText else { return }
+            let byteCount = item.text.utf8.count
             count = count > Int.max - byteCount ? Int.max : count + byteCount
         }
     }
@@ -594,6 +637,45 @@ private struct AgentRunBoundedTextBuffer {
         else { return }
         storage.removeSubrange(0..<head)
         head = 0
+    }
+}
+
+private extension AgentRunTimelineItem {
+    var containsText: Bool {
+        switch self {
+        case .message, .userMessage:
+            true
+        case .omitted, .tool:
+            false
+        }
+    }
+
+    var text: String {
+        switch self {
+        case let .message(message):
+            message.text
+        case let .userMessage(message):
+            message.text
+        case .omitted, .tool:
+            ""
+        }
+    }
+
+    func droppingTextPrefix(
+        atLeast byteCount: Int,
+        using transform: (String, Int) -> String) -> AgentRunTimelineItem
+    {
+        switch self {
+        case var .message(message):
+            message.text = transform(message.text, byteCount)
+            return .message(message)
+        case let .userMessage(message):
+            return .userMessage(AgentUserMessagePresentation(
+                id: message.id,
+                text: transform(message.text, byteCount)))
+        case .omitted, .tool:
+            return self
+        }
     }
 }
 

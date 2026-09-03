@@ -35,4 +35,26 @@ struct MenuStatusPresentationTests {
         #expect(presentation.symbolName == "exclamationmark.triangle.fill")
         #expect(presentation.isError)
     }
+
+    @Test func make_WhenConversationIsWaiting_DescribesLiveFollowUp() {
+        let presentation = MenuStatusPresentation.make(
+            state: .executing,
+            enabledProfileCount: 1,
+            agentPhase: .listening)
+
+        #expect(presentation.title == "In conversation")
+        #expect(presentation.detail == "Listening for a follow-up")
+        #expect(presentation.symbolName == "waveform.badge.mic")
+    }
+
+    @Test func make_WhenAgentTurnIsRunning_ExplainsThatSpeechRemainsAvailable() {
+        let presentation = MenuStatusPresentation.make(
+            state: .executing,
+            enabledProfileCount: 1,
+            agentPhase: .running)
+
+        #expect(presentation.title == "Agent working")
+        #expect(presentation.detail == "You can keep speaking")
+        #expect(presentation.symbolName == "sparkles")
+    }
 }

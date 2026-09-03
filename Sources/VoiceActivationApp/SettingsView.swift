@@ -13,6 +13,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     voiceSection
+                    conversationSection
                     startupSection
                     privacyNote
                 }
@@ -30,6 +31,8 @@ struct SettingsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: model.wakeProfiles) { saved = false }
         .onChange(of: model.localeID) { saved = false }
+        .onChange(of: model.readsAgentRepliesAloud) { saved = false }
+        .onChange(of: model.playsAgentWorkingSound) { saved = false }
     }
 
     private var header: some View {
@@ -85,6 +88,26 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             }
+        }
+    }
+
+    private var conversationSection: some View {
+        SettingsCard(
+            title: "Agent conversation",
+            subtitle: "Keep longer agent sessions audible without making them noisy.",
+            systemImage: "bubble.left.and.waveform.fill")
+        {
+            settingToggle(
+                title: "Read replies aloud",
+                detail: "Uses the selected macOS system voice after each completed response.",
+                isOn: $model.readsAgentRepliesAloud)
+
+            Divider()
+
+            settingToggle(
+                title: "Working pulse",
+                detail: "Plays a quiet cue during longer pauses while the agent is thinking or using tools.",
+                isOn: $model.playsAgentWorkingSound)
         }
     }
 
@@ -211,6 +234,27 @@ struct SettingsView: View {
             TextField(hint, text: text)
                 .font(monospaced ? .system(.body, design: .monospaced) : .body)
                 .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func settingToggle(
+        title: String,
+        detail: String,
+        isOn: Binding<Bool>) -> some View
+    {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .fontWeight(.medium)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
         }
     }
 

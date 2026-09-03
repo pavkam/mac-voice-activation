@@ -2,7 +2,11 @@ import Foundation
 
 public enum AgentRunLifecycleEvent: Equatable, Sendable {
     case started(runID: UUID, profile: WakeProfile, prompt: String)
+    case followUpSubmitted(runID: UUID, prompt: String)
+    case turnStarted(runID: UUID)
+    case turnCancellationStarted(runID: UUID)
     case event(runID: UUID, event: AgentRunEvent)
+    case turnCompleted(runID: UUID, result: AgentRunResult)
     case completed(runID: UUID, result: AgentRunResult)
     case failed(runID: UUID, message: String)
 }
@@ -32,6 +36,7 @@ public final class VoiceActivationCoordinator {
     public var onCurrentTranscriptChange: ((String) -> Void)?
     public var onActiveProfileChange: ((WakeProfile?) -> Void)?
     public var onAgentRunEvent: ((AgentRunLifecycleEvent) -> Void)?
+    public var onAgentSpeechCancellation: (() -> Void)?
 
     private let speechSession: any SpeechSessionProtocol
     private let commandRunner: any CommandRunning
@@ -56,7 +61,15 @@ public final class VoiceActivationCoordinator {
     private var executionTask: Task<Void, Never>?
     private var agentCancellationTask: Task<Void, Never>?
     private var agentCancellationToken: UUID?
-    private var agentCancellationShouldRestart = false
+    private var pendingAgentPrompts: [String] = []
+    private var conversationUtterance = ""
+    private var conversationCaptureGeneration = 0
+    private var conversationInactivityTask: Task<Void, Never>?
+    private var conversationHardStopTask: Task<Void, Never>?
+    private var conversationRestartTask: Task<Void, Never>?
+    private var pushToTalkContinuesConversation = false
+    private var endingAgentConversation = false
+    private var agentSpeechOutputActive = false
 
     public convenience init(
         speechSession: any SpeechSessionProtocol,
@@ -88,7 +101,7 @@ public final class VoiceActivationCoordinator {
 
     public func setPassiveEnabled(_ enabled: Bool) {
         passiveEnabled = enabled
-        guard !isAgentExecutionActive else { return }
+        guard !isAgentConversationActive else { return }
 
         if enabled {
             guard !pushToTalkActive else { return }
@@ -100,7 +113,7 @@ public final class VoiceActivationCoordinator {
     }
 
     public func refreshConfiguration() {
-        guard passiveEnabled, !pushToTalkActive, !isAgentExecutionActive else { return }
+        guard passiveEnabled, !pushToTalkActive, !isAgentConversationActive else { return }
         startPassiveListening()
     }
 
@@ -118,19 +131,26 @@ public final class VoiceActivationCoordinator {
                 throw CoordinatorError.profileUnavailable
             }
 
+            if isAgentConversationActive {
+                pushToTalkActive = true
+                pushToTalkContinuesConversation = true
+                stopActiveSession()
+                capturedCommand = ""
+                currentTranscript = ""
+                state = .capturing
+                startSession(
+                    mode: .pushToTalk,
+                    localeID: capturedLocaleID ?? config.localeID)
+                return
+            }
+
             executionGeneration &+= 1
             restartTask?.cancel()
             restartTask = nil
             executionTask?.cancel()
             executionTask = nil
-            if case .agent = executingAction, let runID = activeAgentRunID {
-                beginAgentCancellation(
-                    runID: runID,
-                    scheduleRestart: false)
-            } else {
-                executingAction = nil
-                activeAgentRunID = nil
-            }
+            executingAction = nil
+            activeAgentRunID = nil
             pushToTalkActive = true
             stopActiveSession()
             capturedCommand = ""
@@ -151,6 +171,21 @@ public final class VoiceActivationCoordinator {
         guard pushToTalkActive else { return }
         let transcript = capturedCommand.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        if pushToTalkContinuesConversation {
+            pushToTalkActive = false
+            pushToTalkContinuesConversation = false
+            stopActiveSession()
+            state = .executing
+            startConversationListening()
+            guard !transcript.isEmpty else { return }
+            if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
+                cancelAgentRun()
+            } else {
+                submitAgentFollowUp(transcript)
+            }
+            return
+        }
+
         if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
             cancelCapture()
             return
@@ -160,7 +195,7 @@ public final class VoiceActivationCoordinator {
         stopActiveSession()
 
         guard !transcript.isEmpty else {
-            resumePassiveAfterPendingAgentCancellation()
+            resumePassiveIfNeeded()
             return
         }
         execute(transcript)
@@ -171,23 +206,55 @@ public final class VoiceActivationCoordinator {
         pushToTalkActive = false
         capturedCommand = ""
         stopActiveSession()
-        resumePassiveAfterPendingAgentCancellation()
+        if pushToTalkContinuesConversation {
+            pushToTalkContinuesConversation = false
+            state = .executing
+            startConversationListening()
+            return
+        }
+        resumePassiveIfNeeded()
     }
 
     public func cancelAgentRun() {
         guard
-            state == .executing,
             case .agent = executingAction,
             let runID = activeAgentRunID,
+            executionTask != nil,
             agentCancellationTask == nil
         else { return }
 
+        onAgentRunEvent?(.turnCancellationStarted(runID: runID))
         executionGeneration &+= 1
         executionTask?.cancel()
         executionTask = nil
-        beginAgentCancellation(
-            runID: runID,
-            scheduleRestart: true)
+        beginAgentCancellation(runID: runID)
+    }
+
+    public func endAgentConversation() {
+        guard case .agent = executingAction, let runID = activeAgentRunID else { return }
+        pendingAgentPrompts.removeAll()
+        endingAgentConversation = true
+        stopActiveSession()
+        guard agentCancellationTask == nil else { return }
+        guard executionTask != nil else {
+            finishAgentConversation(
+                runID: runID,
+                result: AgentRunResult(stopReason: .endTurn))
+            return
+        }
+
+        onAgentRunEvent?(.turnCancellationStarted(runID: runID))
+        executionGeneration &+= 1
+        executionTask?.cancel()
+        executionTask = nil
+        beginAgentCancellation(runID: runID)
+    }
+
+    public func setAgentSpeechOutputActive(_ active: Bool) {
+        guard agentSpeechOutputActive != active else { return }
+        agentSpeechOutputActive = active
+        guard isAgentConversationActive, !pushToTalkActive else { return }
+        startConversationListening()
     }
 
     public func resolveAgentPermission(
@@ -197,7 +264,6 @@ public final class VoiceActivationCoordinator {
         optionID: String?)
     {
         guard
-            state == .executing,
             case .agent = executingAction,
             activeAgentRunID == runID
         else { return }
@@ -227,7 +293,13 @@ public final class VoiceActivationCoordinator {
         agentCancellationTask?.cancel()
         agentCancellationTask = nil
         agentCancellationToken = nil
-        agentCancellationShouldRestart = false
+        pendingAgentPrompts.removeAll()
+        pushToTalkContinuesConversation = false
+        endingAgentConversation = false
+        agentSpeechOutputActive = false
+        resetConversationCapture()
+        conversationRestartTask?.cancel()
+        conversationRestartTask = nil
         executingAction = nil
         activeAgentRunID = nil
         capturedAction = nil
@@ -239,7 +311,7 @@ public final class VoiceActivationCoordinator {
         }
     }
 
-    private var isAgentExecutionActive: Bool {
+    private var isAgentConversationActive: Bool {
         if case .agent = executingAction {
             return true
         }
@@ -293,7 +365,9 @@ public final class VoiceActivationCoordinator {
                 })
         } catch {
             state = .failed(error.localizedDescription)
-            if mode == .passiveWake || mode == .commandCapture {
+            if mode == .conversation {
+                scheduleConversationRestart()
+            } else if mode == .passiveWake || mode == .commandCapture {
                 schedulePassiveRestart()
             }
         }
@@ -305,6 +379,12 @@ public final class VoiceActivationCoordinator {
         currentTranscript = ""
         if mode == .pushToTalk {
             pushToTalkActive = false
+        }
+
+        if mode == .conversation, isAgentConversationActive {
+            state = .executing
+            scheduleConversationRestart()
+            return
         }
 
         if passiveEnabled {
@@ -319,7 +399,9 @@ public final class VoiceActivationCoordinator {
         if let error = update.errorDescription {
             stopActiveSession()
             state = .failed(error)
-            if mode == .passiveWake || mode == .commandCapture {
+            if mode == .conversation {
+                scheduleConversationRestart()
+            } else if mode == .passiveWake || mode == .commandCapture {
                 schedulePassiveRestart()
             }
             return
@@ -334,10 +416,21 @@ public final class VoiceActivationCoordinator {
                 capturedCommand,
                 isComplete: update.isFinal)
             {
-                cancelCapture()
+                if pushToTalkContinuesConversation {
+                    pushToTalkActive = false
+                    pushToTalkContinuesConversation = false
+                    stopActiveSession()
+                    state = .executing
+                    startConversationListening()
+                    cancelAgentRun()
+                } else {
+                    cancelCapture()
+                }
             }
         case .commandCapture:
             handleCommandCapture(update)
+        case .conversation:
+            handleConversationCapture(update)
         case .passiveWake:
             handlePassive(update)
         }
@@ -476,6 +569,122 @@ public final class VoiceActivationCoordinator {
         }
     }
 
+    private func startConversationListening() {
+        guard
+            isAgentConversationActive,
+            !pushToTalkActive,
+            let localeID = capturedLocaleID
+        else { return }
+
+        resetConversationCapture()
+        stopSpeechSession()
+        conversationUtterance = ""
+        currentTranscript = ""
+        state = .executing
+        startSession(
+            mode: .conversation,
+            localeID: localeID,
+            contextualStrings: ["stop", "cancel", "dismiss"])
+    }
+
+    private func handleConversationCapture(_ update: SpeechUpdate) {
+        if agentSpeechOutputActive {
+            let transcript = update.transcript
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            currentTranscript = ""
+            if CaptureCancellationMatcher.matches(transcript, isComplete: update.isFinal) {
+                agentSpeechOutputActive = false
+                onAgentSpeechCancellation?()
+                if executionTask == nil {
+                    endAgentConversation()
+                } else {
+                    cancelAgentRun()
+                }
+            } else if update.isFinal {
+                startConversationListening()
+            }
+            return
+        }
+
+        conversationUtterance = update.transcript
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        currentTranscript = conversationUtterance
+
+        guard !conversationUtterance.isEmpty else {
+            if update.isFinal {
+                startConversationListening()
+            }
+            return
+        }
+
+        scheduleConversationInactivity()
+        scheduleConversationHardStop()
+        if update.isFinal {
+            finishConversationUtterance()
+        }
+    }
+
+    private func scheduleConversationInactivity() {
+        let activeGeneration = conversationCaptureGeneration
+        conversationInactivityTask?.cancel()
+        conversationInactivityTask = Task { [weak self, timing] in
+            try? await Task.sleep(for: timing.captureInactivity)
+            guard
+                !Task.isCancelled,
+                let self,
+                self.conversationCaptureGeneration == activeGeneration
+            else { return }
+            self.finishConversationUtterance()
+        }
+    }
+
+    private func scheduleConversationHardStop() {
+        guard conversationHardStopTask == nil else { return }
+        let activeGeneration = conversationCaptureGeneration
+        conversationHardStopTask = Task { [weak self, timing] in
+            try? await Task.sleep(for: timing.captureMaximum)
+            guard
+                !Task.isCancelled,
+                let self,
+                self.conversationCaptureGeneration == activeGeneration
+            else { return }
+            self.finishConversationUtterance()
+        }
+    }
+
+    private func finishConversationUtterance() {
+        let transcript = conversationUtterance.trimmingCharacters(in: .whitespacesAndNewlines)
+        startConversationListening()
+        guard !transcript.isEmpty else { return }
+
+        if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
+            if executionTask == nil {
+                endAgentConversation()
+            } else {
+                cancelAgentRun()
+            }
+        } else {
+            submitAgentFollowUp(transcript)
+        }
+    }
+
+    private func resetConversationCapture() {
+        conversationCaptureGeneration &+= 1
+        conversationInactivityTask?.cancel()
+        conversationInactivityTask = nil
+        conversationHardStopTask?.cancel()
+        conversationHardStopTask = nil
+    }
+
+    private func scheduleConversationRestart() {
+        conversationRestartTask?.cancel()
+        conversationRestartTask = Task { [weak self, timing] in
+            try? await Task.sleep(for: timing.passiveRestart)
+            guard !Task.isCancelled, let self, self.isAgentConversationActive else { return }
+            self.startConversationListening()
+        }
+    }
+
     private func scheduleCaptureInitialSilence() {
         guard initialSilenceTask == nil else { return }
         let activeCaptureGeneration = captureGeneration
@@ -610,39 +819,99 @@ public final class VoiceActivationCoordinator {
         case let .agent(agentConfiguration):
             let runID = UUID()
             activeAgentRunID = runID
+            pendingAgentPrompts.removeAll()
+            endingAgentConversation = false
             onAgentRunEvent?(.started(
                 runID: runID,
                 profile: profile,
                 prompt: transcript))
-            executionTask = Task { @MainActor [weak self, agentRunner] in
-                do {
-                    try Task.checkCancellation()
-                    guard
-                        let self,
-                        self.executionGeneration == generation,
-                        self.activeAgentRunID == runID
-                    else { return }
-                    let result = try await agentRunner.run(
-                        profileID: profile.id,
-                        configuration: agentConfiguration,
-                        prompt: transcript,
-                        onEvent: { [weak self] event in
-                            await self?.publishAgentEvent(
-                                event,
-                                runID: runID,
-                                generation: generation)
-                        })
-                    self.finishAgentExecution(
-                        result,
-                        runID: runID,
-                        generation: generation)
-                } catch {
-                    guard let self else { return }
-                    self.failAgentExecution(
-                        error,
-                        runID: runID,
-                        generation: generation)
-                }
+            startConversationListening()
+            startAgentTurn(
+                prompt: transcript,
+                profile: profile,
+                configuration: agentConfiguration,
+                runID: runID,
+                generation: generation)
+        }
+    }
+
+    private func submitAgentFollowUp(_ prompt: String) {
+        guard case .agent = executingAction, let runID = activeAgentRunID else { return }
+        pendingAgentPrompts.append(prompt)
+        onAgentRunEvent?(.followUpSubmitted(runID: runID, prompt: prompt))
+
+        guard agentCancellationTask == nil else { return }
+        guard executionTask == nil else {
+            onAgentRunEvent?(.turnCancellationStarted(runID: runID))
+            executionGeneration &+= 1
+            executionTask?.cancel()
+            executionTask = nil
+            beginAgentCancellation(runID: runID)
+            return
+        }
+        startNextAgentPrompt()
+    }
+
+    private func startNextAgentPrompt() {
+        guard
+            agentCancellationTask == nil,
+            executionTask == nil,
+            !pendingAgentPrompts.isEmpty,
+            case let .agent(configuration) = executingAction,
+            let profile = activeProfile,
+            let runID = activeAgentRunID
+        else { return }
+
+        let prompt = pendingAgentPrompts.removeFirst()
+        executionGeneration &+= 1
+        let generation = executionGeneration
+        onAgentRunEvent?(.turnStarted(runID: runID))
+        state = .executing
+        startAgentTurn(
+            prompt: prompt,
+            profile: profile,
+            configuration: configuration,
+            runID: runID,
+            generation: generation)
+    }
+
+    private func startAgentTurn(
+        prompt: String,
+        profile: WakeProfile,
+        configuration: AgentHarnessConfiguration,
+        runID: UUID,
+        generation: Int)
+    {
+        executionTask = Task { @MainActor [weak self, agentRunner] in
+            do {
+                try Task.checkCancellation()
+                guard
+                    let self,
+                    self.executionGeneration == generation,
+                    self.activeAgentRunID == runID
+                else { return }
+                let result = try await agentRunner.run(
+                    profileID: profile.id,
+                    configuration: configuration,
+                    prompt: prompt,
+                    onEvent: { [weak self] event in
+                        await self?.publishAgentEvent(
+                            event,
+                            runID: runID,
+                            generation: generation)
+                    })
+                self.finishAgentExecution(
+                    result,
+                    runID: runID,
+                    generation: generation)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self else { return }
+                self.failAgentExecution(
+                    error,
+                    runID: runID,
+                    generation: generation)
             }
         }
     }
@@ -683,11 +952,13 @@ public final class VoiceActivationCoordinator {
             executionGeneration == generation,
             activeAgentRunID == runID
         else { return }
-        onAgentRunEvent?(.completed(runID: runID, result: result))
+        onAgentRunEvent?(.turnCompleted(runID: runID, result: result))
         executionTask = nil
-        executingAction = nil
-        activeAgentRunID = nil
-        resumePassiveAfterCooldown()
+        if pendingAgentPrompts.isEmpty {
+            state = .executing
+        } else {
+            startNextAgentPrompt()
+        }
     }
 
     private func failAgentExecution(
@@ -700,54 +971,62 @@ public final class VoiceActivationCoordinator {
             activeAgentRunID == runID
         else { return }
         let message = error.localizedDescription
+        agentSpeechOutputActive = false
         onAgentRunEvent?(.failed(runID: runID, message: message))
         executionTask = nil
         executingAction = nil
         activeAgentRunID = nil
+        pendingAgentPrompts.removeAll()
+        endingAgentConversation = false
+        resetConversationCapture()
+        conversationRestartTask?.cancel()
+        conversationRestartTask = nil
+        stopSpeechSession()
         state = .failed(message)
         resumePassiveAfterCooldown()
     }
 
-    private func beginAgentCancellation(
-        runID: UUID,
-        scheduleRestart: Bool)
-    {
-        if agentCancellationTask != nil {
-            agentCancellationShouldRestart = scheduleRestart
-            return
-        }
+    private func beginAgentCancellation(runID: UUID) {
+        guard agentCancellationTask == nil else { return }
 
         let token = UUID()
         agentCancellationToken = token
-        agentCancellationShouldRestart = scheduleRestart
         agentCancellationTask = Task { @MainActor [weak self, agentRunner] in
             await agentRunner.cancel()
             guard let self, self.agentCancellationToken == token else { return }
-            let shouldRestart = self.agentCancellationShouldRestart
             self.agentCancellationTask = nil
             self.agentCancellationToken = nil
-            self.agentCancellationShouldRestart = false
-            if self.activeAgentRunID == runID {
-                self.onAgentRunEvent?(.completed(
+            guard self.activeAgentRunID == runID else { return }
+            if self.endingAgentConversation {
+                self.finishAgentConversation(
+                    runID: runID,
+                    result: AgentRunResult(stopReason: .cancelled))
+            } else if !self.pendingAgentPrompts.isEmpty {
+                self.startNextAgentPrompt()
+            } else {
+                self.onAgentRunEvent?(.turnCompleted(
                     runID: runID,
                     result: AgentRunResult(stopReason: .cancelled)))
-                self.executingAction = nil
-                self.activeAgentRunID = nil
-            }
-            if shouldRestart {
-                self.resumePassiveAfterCooldown()
+                self.state = .executing
             }
         }
     }
 
-    private func resumePassiveAfterPendingAgentCancellation() {
-        guard agentCancellationTask != nil else {
-            resumePassiveIfNeeded()
-            return
-        }
-
-        agentCancellationShouldRestart = true
-        state = .executing
+    private func finishAgentConversation(runID: UUID, result: AgentRunResult) {
+        guard activeAgentRunID == runID else { return }
+        agentSpeechOutputActive = false
+        onAgentRunEvent?(.completed(runID: runID, result: result))
+        executionTask?.cancel()
+        executionTask = nil
+        executingAction = nil
+        activeAgentRunID = nil
+        pendingAgentPrompts.removeAll()
+        endingAgentConversation = false
+        resetConversationCapture()
+        conversationRestartTask?.cancel()
+        conversationRestartTask = nil
+        stopSpeechSession()
+        resumePassiveAfterCooldown()
     }
 
     private func resumePassiveAfterCooldown() {
@@ -783,6 +1062,9 @@ public final class VoiceActivationCoordinator {
 
     private func stopActiveSession() {
         captureGeneration &+= 1
+        resetConversationCapture()
+        conversationRestartTask?.cancel()
+        conversationRestartTask = nil
         cancelWakeHandoff()
         cancelCaptureInitialSilence()
         inactivityTask?.cancel()
