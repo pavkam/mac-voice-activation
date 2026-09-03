@@ -28,6 +28,29 @@ private actor RunnerEventRecorder {
     }
 }
 
+private actor RunnerEventGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+}
+
 private actor RunnerTransportFactory: ACPTransportCreating {
     private var transports: [FakeACPTransport]
     private var configurations: [AgentHarnessConfiguration] = []
@@ -487,6 +510,134 @@ struct ACPAgentRunnerTests {
         await runner.shutdown()
     }
 
+    @Test func processExit_WhenFinalReadsArriveAfterExitObservation_ForwardsThemBeforeRunEnds()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]))
+        let recorder = RunnerEventRecorder()
+        let profileID = UUID()
+        let activeRun = Task {
+            try await runner.run(
+                profileID: profileID,
+                configuration: try makeConfiguration(),
+                prompt: "Inspect",
+                onEvent: { event in await recorder.record(event) })
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+        _ = await recorder.nextEvent()
+
+        await transport.reportExit(status: 0)
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        try await transport.feed(agentMessageUpdate(text: "final output"))
+        await transport.feedDiagnostic("final stderr 🧪")
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        await transport.finishStreams()
+
+        #expect(try await activeRun.value == AgentRunResult(stopReason: .endTurn))
+        let events = await recorder.recordedEvents()
+        #expect(events.contains(.agentMessageDelta(messageID: nil, text: "final output")))
+        #expect(events.contains(.diagnostic("final stderr 🧪")))
+        await runner.shutdown()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func processExit_WhenReadPipeNeverReachesEOF_ClosesConnectionAfterDrainGrace() async throws {
+        let firstTransport = FakeACPTransport()
+        let secondTransport = FakeACPTransport()
+        let clock = ManualACPAgentRunnerClock()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(
+                transports: [firstTransport, secondTransport]),
+            drainClock: clock)
+        let profileID = UUID()
+        let configuration = try makeConfiguration()
+        let activeRun = run(runner, profileID: profileID, configuration: configuration)
+        try await establishConnection(firstTransport, workingDirectory: "/tmp/project")
+        _ = await firstTransport.nextSentMessage()
+
+        await firstTransport.reportExit(status: 0)
+        await clock.waitUntilSleeping()
+        await clock.advance()
+
+        await #expect(throws: ACPClientError.connectionClosed) {
+            try await activeRun.value
+        }
+        #expect(await firstTransport.observedReadStreamCloseCount() == 1)
+
+        let replacement = run(runner, profileID: profileID, configuration: configuration)
+        try await establishConnection(secondTransport, workingDirectory: "/tmp/project")
+        _ = await secondTransport.nextSentMessage()
+        try await secondTransport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await replacement.value
+        await runner.shutdown()
+    }
+
+    @Test func diagnostics_WhenHandlerIsStalled_KeepsPendingBytesBounded() async throws {
+        let transport = FakeACPTransport()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]))
+        let gate = RunnerEventGate()
+        let profileID = UUID()
+        let activeRun = Task {
+            try await runner.run(
+                profileID: profileID,
+                configuration: try makeConfiguration(),
+                prompt: "Inspect",
+                onEvent: { _ in await gate.wait() })
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+
+        for index in 0..<64 {
+            await transport.feedDiagnostic(String(repeating: "\(index % 10)", count: 4_096))
+        }
+        while await runner.retainedStandardErrorByteCountForTesting(profileID: profileID)
+            < ACPAgentRunner.maximumStandardErrorBytes
+        {
+            await Task.yield()
+        }
+
+        #expect(
+            await runner.pendingDiagnosticByteCountForTesting()
+                <= ACPAgentRunner.maximumStandardErrorBytes)
+
+        await gate.open()
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await activeRun.value
+        await runner.shutdown()
+    }
+
+    @Test func diagnostics_WhenUTF8ScalarIsSplitAcrossReads_DecodesItExactlyOnce() async throws {
+        let transport = FakeACPTransport()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]))
+        let recorder = RunnerEventRecorder()
+        let activeRun = Task {
+            try await runner.run(
+                profileID: UUID(),
+                configuration: try makeConfiguration(),
+                prompt: "Inspect",
+                onEvent: { event in await recorder.record(event) })
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+        _ = await recorder.nextEvent()
+
+        for byte in "🧪".utf8 {
+            await transport.feedDiagnostic(Data([byte]))
+        }
+
+        #expect(await recorder.nextEvent() == .diagnostic("🧪"))
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await activeRun.value
+        await runner.shutdown()
+    }
+
     private func run(
         _ runner: ACPAgentRunner,
         profileID: UUID,
@@ -592,6 +743,21 @@ struct ACPAgentRunnerTests {
                         "optionId": .string("once"),
                         "name": .string("Allow once"),
                         "kind": .string("allow_once"),
+                    ]),
+                ]),
+            ]))
+    }
+
+    private func agentMessageUpdate(text: String) -> ACPMessage {
+        .notification(
+            method: "session/update",
+            params: .object([
+                "sessionId": .string("session-1"),
+                "update": .object([
+                    "sessionUpdate": .string("agent_message_chunk"),
+                    "content": .object([
+                        "type": .string("text"),
+                        "text": .string(text),
                     ]),
                 ]),
             ]))

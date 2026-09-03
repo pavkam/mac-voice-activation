@@ -16,8 +16,11 @@ actor FakeACPTransport: ACPTransport {
     private var unobservedMessages: [ACPMessage] = []
     private var sentMessageWaiters: [CheckedContinuation<ACPMessage, Never>] = []
     private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
+    private var drainWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var exitStatus: Int32?
     private var terminationCount = 0
+    private var readStreamCloseCount = 0
+    private var streamsWereFinished = false
     private var outputCallCount = 0
     private var shouldSuspendNextSend = false
     private var sendIsSuspended = false
@@ -85,6 +88,29 @@ actor FakeACPTransport: ACPTransport {
         }
     }
 
+    func waitForDrain() async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if streamsWereFinished || Task.isCancelled {
+                    continuation.resume()
+                } else {
+                    drainWaiters[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelDrainWaiter(id: id) }
+        }
+    }
+
+    func closeReadStreams() async {
+        guard !streamsWereFinished else {
+            return
+        }
+        readStreamCloseCount += 1
+        finishStreams()
+    }
+
     func terminate() async {
         guard exitStatus == nil else {
             return
@@ -148,6 +174,28 @@ actor FakeACPTransport: ACPTransport {
         diagnosticContinuation.yield(Data(text.utf8))
     }
 
+    func feedDiagnostic(_ data: Data) {
+        diagnosticContinuation.yield(data)
+    }
+
+    func reportExit(status: Int32) {
+        finishExit(status: status)
+    }
+
+    func finishStreams() {
+        guard !streamsWereFinished else {
+            return
+        }
+        streamsWereFinished = true
+        outputContinuation.finish()
+        diagnosticContinuation.finish()
+        let pending = drainWaiters.values
+        drainWaiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+
     func allSentMessages() -> [ACPMessage] {
         sentMessages
     }
@@ -160,22 +208,33 @@ actor FakeACPTransport: ACPTransport {
         terminationCount
     }
 
+    func observedReadStreamCloseCount() -> Int {
+        readStreamCloseCount
+    }
+
     func observedOutputCallCount() -> Int {
         outputCallCount
     }
 
     private func finish(status: Int32) {
+        finishStreams()
+        finishExit(status: status)
+    }
+
+    private func finishExit(status: Int32) {
         guard exitStatus == nil else {
             return
         }
 
         exitStatus = status
-        outputContinuation.finish()
-        diagnosticContinuation.finish()
         let waiters = exitWaiters
         exitWaiters.removeAll()
         for waiter in waiters {
             waiter.resume(returning: status)
         }
+    }
+
+    private func cancelDrainWaiter(id: UUID) {
+        drainWaiters.removeValue(forKey: id)?.resume()
     }
 }

@@ -198,6 +198,10 @@ public actor ACPClientConnection {
         receiveTask = nil
     }
 
+    func waitForInputCompletion() async {
+        _ = await receiveTask?.result
+    }
+
     private func start() async throws {
         let output = await transport.output()
         receiveTask = Task {

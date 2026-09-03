@@ -33,19 +33,23 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     public static let maximumStandardErrorBytes = 16 * 1_024
 
     private static let cancellationGracePeriod = Duration.seconds(2)
+    private static let exitDrainGracePeriod = Duration.milliseconds(500)
 
     private let transportFactory: any ACPTransportCreating
     private let clock: any ACPAgentRunnerClock
+    private let drainClock: any ACPAgentRunnerClock
     private var records: [UUID: ACPAgentConnectionRecord] = [:]
     private var activeTurn: ACPAgentActiveTurn?
     private var isShutDown = false
 
     public init(
         transportFactory: any ACPTransportCreating = ACPProcessTransportFactory(),
-        clock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock())
+        clock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
+        drainClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock())
     {
         self.transportFactory = transportFactory
         self.clock = clock
+        self.drainClock = drainClock
     }
 
     public func run(
@@ -102,6 +106,10 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                     "A cancelled prompt returned a non-cancelled stopReason.")
             }
 
+            if record.exitStatus != nil {
+                _ = await record.exitTask?.result
+            }
+
             await completion.resolve(.success(result))
             delivery.finish()
             _ = await delivery.task.result
@@ -109,6 +117,9 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             return result
         } catch {
             await completion.resolve(.failure)
+            if let runRecord, runRecord.exitStatus != nil {
+                _ = await runRecord.exitTask?.result
+            }
             delivery.finish()
             _ = await delivery.task.result
             if let runRecord {
@@ -283,11 +294,28 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                     profileID: profileID,
                     recordID: recordID)
             }
+            await self?.finishedDiagnostics(
+                profileID: profileID,
+                recordID: recordID)
         }
+        let diagnosticsTask = record.diagnosticsTask
         record.exitTask = Task { [weak self] in
             let status = await transport.waitForExit()
-            await self?.processExited(
+            guard await self?.markProcessExited(
                 status: status,
+                profileID: profileID,
+                recordID: recordID) == true
+            else {
+                return
+            }
+
+            let drainResult = await self?.raceDrain(transport: transport) ?? .deadline
+            if case .deadline = drainResult {
+                await transport.closeReadStreams()
+            }
+            await transport.waitForDrain()
+            _ = await diagnosticsTask?.result
+            await self?.processDrained(
                 profileID: profileID,
                 recordID: recordID)
         }
@@ -303,37 +331,91 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                 record.standardError.count - Self.maximumStandardErrorBytes)
         }
 
-        guard let turn = activeTurn,
-              turn.profileID == profileID,
-              turn.recordID == recordID
-        else {
-            return
-        }
-        let boundedData = data.suffix(Self.maximumStandardErrorBytes)
-        let diagnostic = boundedSuffix(
-            String(decoding: boundedData, as: UTF8.self),
-            maximumBytes: Self.maximumStandardErrorBytes)
-        if !diagnostic.isEmpty {
-            turn.delivery.send(.diagnostic(diagnostic))
-        }
-    }
+        let decoded = decodeAvailableUTF8(
+            appending: data,
+            remainder: &record.diagnosticRemainder)
 
-    private func processExited(status: Int32, profileID: UUID, recordID: UUID) {
-        guard let record = records[profileID], record.id == recordID else {
-            return
-        }
-        record.exitStatus = status
-        records.removeValue(forKey: profileID)
-        record.diagnosticsTask?.cancel()
-
-        guard status != 0,
+        guard !decoded.isEmpty,
               let turn = activeTurn,
               turn.profileID == profileID,
               turn.recordID == recordID
         else {
             return
         }
-        turn.delivery.send(.diagnostic("Agent process exited with status \(status)."))
+        turn.delivery.send(.diagnostic(decoded))
+    }
+
+    private func finishedDiagnostics(profileID: UUID, recordID: UUID) {
+        guard let record = records[profileID], record.id == recordID else {
+            return
+        }
+        guard !record.diagnosticRemainder.isEmpty else {
+            return
+        }
+        let decoded = String(decoding: record.diagnosticRemainder, as: UTF8.self)
+        record.diagnosticRemainder.removeAll(keepingCapacity: true)
+        guard let turn = activeTurn,
+              turn.profileID == profileID,
+              turn.recordID == recordID
+        else {
+            return
+        }
+        turn.delivery.send(.diagnostic(decoded))
+    }
+
+    private func markProcessExited(status: Int32, profileID: UUID, recordID: UUID) -> Bool {
+        guard let record = records[profileID], record.id == recordID else {
+            return false
+        }
+        record.exitStatus = status
+
+        return true
+    }
+
+    private func processDrained(profileID: UUID, recordID: UUID) async {
+        guard let record = records[profileID], record.id == recordID else {
+            return
+        }
+        if let connection = record.connection {
+            await connection.waitForInputCompletion()
+        }
+
+        guard records[profileID]?.id == recordID else {
+            return
+        }
+        if let status = record.exitStatus,
+           status != 0,
+           let turn = activeTurn,
+           turn.profileID == profileID,
+           turn.recordID == recordID
+        {
+            turn.delivery.send(.diagnostic("Agent process exited with status \(status)."))
+        }
+        records.removeValue(forKey: profileID)
+    }
+
+    private func raceDrain(transport: any ACPTransport) async -> ACPAgentDrainRace {
+        await withTaskGroup(of: ACPAgentDrainRace.self) { group in
+            group.addTask {
+                await transport.waitForDrain()
+                return .drained
+            }
+            group.addTask { [drainClock] in
+                await drainClock.sleep(for: Self.exitDrainGracePeriod)
+                return .deadline
+            }
+            let result = await group.next() ?? .deadline
+            group.cancelAll()
+            return result
+        }
+    }
+
+    func retainedStandardErrorByteCountForTesting(profileID: UUID) -> Int {
+        records[profileID]?.standardError.count ?? 0
+    }
+
+    func pendingDiagnosticByteCountForTesting() -> Int {
+        activeTurn?.delivery.pendingDiagnosticByteCount ?? 0
     }
 
     private func forward(
@@ -391,9 +473,10 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         records.removeValue(forKey: profileID)
         turn.delivery.finish()
         activeTurn = nil
+        await record.transport.terminate()
+        await record.transport.closeReadStreams()
         record.diagnosticsTask?.cancel()
         record.exitTask?.cancel()
-        await record.transport.terminate()
         if let connection = record.connection {
             Task {
                 await connection.close()
@@ -415,9 +498,12 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 
     private func dispose(_ record: ACPAgentConnectionRecord) async {
-        record.diagnosticsTask?.cancel()
-        record.exitTask?.cancel()
         await record.transport.terminate()
+        await record.transport.closeReadStreams()
+        _ = await record.transport.waitForExit()
+        await record.transport.waitForDrain()
+        _ = await record.diagnosticsTask?.result
+        _ = await record.exitTask?.result
         if let connection = record.connection {
             await connection.close()
         }
@@ -480,6 +566,7 @@ private final class ACPAgentConnectionRecord {
     var diagnosticsTask: Task<Void, Never>?
     var exitTask: Task<Void, Never>?
     var standardError = Data()
+    var diagnosticRemainder = Data()
     var exitStatus: Int32?
 
     init(
@@ -512,6 +599,11 @@ private enum ACPAgentRunCompletion: Sendable {
 
 private enum ACPAgentCancellationRace: Sendable {
     case completion(ACPAgentRunCompletion)
+    case deadline
+}
+
+private enum ACPAgentDrainRace: Sendable {
+    case drained
     case deadline
 }
 
@@ -559,25 +651,201 @@ private actor ACPAgentRunCompletionLatch {
 
 private struct ACPAgentRunnerEventDelivery: Sendable {
     let task: Task<Void, Never>
-    private let continuation: AsyncStream<AgentRunEvent>.Continuation
+    private let state: ACPAgentRunnerEventDeliveryState
+
+    var pendingDiagnosticByteCount: Int {
+        state.pendingDiagnosticByteCount
+    }
 
     init(handler: @escaping @Sendable (AgentRunEvent) async -> Void) {
-        let events = AsyncStream<AgentRunEvent>.makeStream()
-        continuation = events.continuation
+        let state = ACPAgentRunnerEventDeliveryState()
+        self.state = state
         task = Task {
-            for await event in events.stream {
+            while let event = await state.next() {
                 await handler(event)
             }
         }
     }
 
     func send(_ event: AgentRunEvent) {
-        continuation.yield(event)
+        state.send(event)
     }
 
     func finish() {
-        continuation.finish()
+        state.finish()
     }
+}
+
+private final class ACPAgentRunnerEventDeliveryState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [AgentRunEvent] = []
+    private var waiter: CheckedContinuation<AgentRunEvent?, Never>?
+    private var isFinished = false
+    private var diagnosticBytes = 0
+
+    var pendingDiagnosticByteCount: Int {
+        lock.withLock { diagnosticBytes }
+    }
+
+    func send(_ event: AgentRunEvent) {
+        let boundedEvent: AgentRunEvent
+        if case let .diagnostic(message) = event {
+            boundedEvent = .diagnostic(boundedSuffix(
+                message,
+                maximumBytes: ACPAgentRunner.maximumStandardErrorBytes))
+        } else {
+            boundedEvent = event
+        }
+        var waiting: CheckedContinuation<AgentRunEvent?, Never>?
+        lock.withLock {
+            guard !isFinished else {
+                return
+            }
+            if let waiter {
+                self.waiter = nil
+                waiting = waiter
+                return
+            }
+            enqueue(boundedEvent)
+        }
+        waiting?.resume(returning: boundedEvent)
+    }
+
+    func finish() {
+        var waiting: CheckedContinuation<AgentRunEvent?, Never>?
+        lock.withLock {
+            guard !isFinished else {
+                return
+            }
+            isFinished = true
+            if events.isEmpty {
+                waiting = waiter
+                waiter = nil
+            }
+        }
+        waiting?.resume(returning: nil)
+    }
+
+    func next() async -> AgentRunEvent? {
+        await withCheckedContinuation { continuation in
+            var immediateEvent: AgentRunEvent?
+            var shouldFinish = false
+            lock.withLock {
+                if !events.isEmpty {
+                    immediateEvent = events.removeFirst()
+                    if case let .diagnostic(message) = immediateEvent {
+                        diagnosticBytes -= message.utf8.count
+                    }
+                } else if isFinished {
+                    shouldFinish = true
+                } else {
+                    waiter = continuation
+                }
+            }
+            if let immediateEvent {
+                continuation.resume(returning: immediateEvent)
+            } else if shouldFinish {
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    private func enqueue(_ event: AgentRunEvent) {
+        guard case let .diagnostic(message) = event else {
+            events.append(event)
+            return
+        }
+
+        if case let .diagnostic(previous)? = events.last {
+            let replacement = boundedSuffix(
+                previous + message,
+                maximumBytes: ACPAgentRunner.maximumStandardErrorBytes)
+            diagnosticBytes -= previous.utf8.count
+            diagnosticBytes += replacement.utf8.count
+            events[events.count - 1] = .diagnostic(replacement)
+        } else {
+            let bounded = boundedSuffix(
+                message,
+                maximumBytes: ACPAgentRunner.maximumStandardErrorBytes)
+            diagnosticBytes += bounded.utf8.count
+            events.append(.diagnostic(bounded))
+        }
+        trimOldestDiagnosticsToBound()
+    }
+
+    private func trimOldestDiagnosticsToBound() {
+        while diagnosticBytes > ACPAgentRunner.maximumStandardErrorBytes {
+            guard let index = events.firstIndex(where: {
+                if case .diagnostic = $0 {
+                    return true
+                }
+                return false
+            }), case let .diagnostic(message) = events[index]
+            else {
+                diagnosticBytes = 0
+                return
+            }
+
+            let excess = diagnosticBytes - ACPAgentRunner.maximumStandardErrorBytes
+            if message.utf8.count <= excess {
+                diagnosticBytes -= message.utf8.count
+                events.remove(at: index)
+            } else {
+                let replacement = boundedSuffix(
+                    message,
+                    maximumBytes: message.utf8.count - excess)
+                diagnosticBytes -= message.utf8.count
+                diagnosticBytes += replacement.utf8.count
+                events[index] = .diagnostic(replacement)
+            }
+        }
+    }
+}
+
+private func decodeAvailableUTF8(appending data: Data, remainder: inout Data) -> String {
+    remainder.append(data)
+    guard !remainder.isEmpty else {
+        return ""
+    }
+
+    let incompleteCount = trailingIncompleteUTF8ByteCount(in: remainder)
+    let readyCount = remainder.count - incompleteCount
+    guard readyCount > 0 else {
+        return ""
+    }
+    let ready = remainder.prefix(readyCount)
+    if incompleteCount == 0 {
+        remainder.removeAll(keepingCapacity: true)
+    } else {
+        remainder = Data(remainder.suffix(incompleteCount))
+    }
+    return String(decoding: ready, as: UTF8.self)
+}
+
+private func trailingIncompleteUTF8ByteCount(in data: Data) -> Int {
+    let bytes = Array(data.suffix(4))
+    guard !bytes.isEmpty else {
+        return 0
+    }
+
+    var leadingIndex = bytes.count - 1
+    while leadingIndex > 0, bytes[leadingIndex] & 0xC0 == 0x80 {
+        leadingIndex -= 1
+    }
+    let leadingByte = bytes[leadingIndex]
+    let expectedCount: Int
+    switch leadingByte {
+    case 0xC2...0xDF:
+        expectedCount = 2
+    case 0xE0...0xEF:
+        expectedCount = 3
+    case 0xF0...0xF4:
+        expectedCount = 4
+    default:
+        return 0
+    }
+    let availableCount = bytes.count - leadingIndex
+    return availableCount < expectedCount ? availableCount : 0
 }
 
 private func boundedSuffix(_ value: String, maximumBytes: Int) -> String {

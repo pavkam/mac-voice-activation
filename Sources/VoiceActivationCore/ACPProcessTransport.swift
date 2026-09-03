@@ -44,6 +44,11 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         let standardInput = Pipe()
         let standardOutput = Pipe()
         let standardError = Pipe()
+        let inputDescriptor = standardInput.fileHandleForWriting.fileDescriptor
+        guard Darwin.fcntl(inputDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+            let message = String(cString: Darwin.strerror(errno))
+            throw ACPProcessTransportError.launchFailed(message)
+        }
         process.executableURL = executableURL
         process.arguments = arguments
         process.currentDirectoryURL = currentDirectoryURL
@@ -87,8 +92,20 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         await state.waitForExit()
     }
 
+    public func waitForDrain() async {
+        await state.waitForDrain()
+    }
+
+    public func closeReadStreams() async {
+        state.closeReadStreams()
+    }
+
     public func terminate() async {
         state.terminate()
+    }
+
+    var hasPendingForcedTerminationForTesting: Bool {
+        state.hasPendingForcedTermination
     }
 }
 
@@ -107,12 +124,21 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     private let diagnosticContinuation: AsyncStream<Data>.Continuation
     private let stateLock = NSLock()
     private let sendLock = NSLock()
+    private let outputReadLock = NSLock()
+    private let diagnosticReadLock = NSLock()
     private var exitStatus: Int32?
     private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
+    private var drainWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var terminationWasRequested = false
     private var outputWasFinished = false
     private var diagnosticsWereFinished = false
     private var inputWasClosed = false
+    private var forcedTerminationID: UUID?
+    private var forcedTerminationWorkItem: DispatchWorkItem?
+
+    var hasPendingForcedTermination: Bool {
+        stateLock.withLock { forcedTerminationWorkItem != nil }
+    }
 
     init(
         process: Process,
@@ -142,24 +168,10 @@ private final class ACPProcessTransportState: @unchecked Sendable {
 
     func installHandlers() {
         outputHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                handle.readabilityHandler = nil
-                try? handle.close()
-                self?.finishOutput()
-                return
-            }
-            self?.outputContinuation.yield(data)
+            self?.readOutput(from: handle)
         }
         diagnosticHandle.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                handle.readabilityHandler = nil
-                try? handle.close()
-                self?.finishDiagnostics()
-                return
-            }
-            self?.diagnosticContinuation.yield(data)
+            self?.readDiagnostic(from: handle)
         }
         process.terminationHandler = { [weak self] completedProcess in
             self?.processExited(status: completedProcess.terminationStatus)
@@ -168,14 +180,9 @@ private final class ACPProcessTransportState: @unchecked Sendable {
 
     func finishFailedLaunch() {
         process.terminationHandler = nil
-        outputHandle.readabilityHandler = nil
-        diagnosticHandle.readabilityHandler = nil
         finishExit(status: Self.failedLaunchStatus)
-        finishOutput()
-        finishDiagnostics()
         closeHandlesAfterExit()
-        try? outputHandle.close()
-        try? diagnosticHandle.close()
+        closeReadStreams()
     }
 
     func send(_ data: Data) throws {
@@ -211,6 +218,42 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         }
     }
 
+    func waitForDrain() async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let wasCancelled = Task.isCancelled
+                let shouldResume = stateLock.withLock { () -> Bool in
+                    guard !wasCancelled,
+                          !(outputWasFinished && diagnosticsWereFinished)
+                    else {
+                        return true
+                    }
+                    drainWaiters[id] = continuation
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+        } onCancel: {
+            self.cancelDrainWaiter(id: id)
+        }
+    }
+
+    func closeReadStreams() {
+        outputReadLock.withLock {
+            outputHandle.readabilityHandler = nil
+            try? outputHandle.close()
+        }
+        diagnosticReadLock.withLock {
+            diagnosticHandle.readabilityHandler = nil
+            try? diagnosticHandle.close()
+        }
+        finishOutput()
+        finishDiagnostics()
+    }
+
     func terminate() {
         let shouldTerminate = stateLock.withLock { () -> Bool in
             guard exitStatus == nil, !terminationWasRequested else {
@@ -227,21 +270,58 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         let wasRunning = process.isRunning
         if wasRunning {
             process.terminate()
-            DispatchQueue.global(qos: .utility).asyncAfter(
-                deadline: .now() + Self.forcedTerminationDelay
-            ) { [weak self] in
-                self?.forceTerminationIfNeeded(processID: processID)
+            let forcedTerminationID = UUID()
+            let workItem = DispatchWorkItem { [weak self, weak process] in
+                guard let process else {
+                    return
+                }
+                self?.forceTerminationIfNeeded(
+                    id: forcedTerminationID,
+                    process: process,
+                    processID: processID)
+            }
+            let shouldSchedule = stateLock.withLock { () -> Bool in
+                guard exitStatus == nil else {
+                    return false
+                }
+                self.forcedTerminationID = forcedTerminationID
+                forcedTerminationWorkItem = workItem
+                return true
+            }
+            if shouldSchedule {
+                DispatchQueue.global(qos: .utility).asyncAfter(
+                    deadline: .now() + Self.forcedTerminationDelay,
+                    execute: workItem)
             }
         }
     }
 
-    private func forceTerminationIfNeeded(processID: Int32) {
+    private func forceTerminationIfNeeded(
+        id: UUID,
+        process expectedProcess: Process,
+        processID: Int32)
+    {
         let needsTermination = stateLock.withLock {
-            terminationWasRequested && exitStatus == nil
+            terminationWasRequested
+                && exitStatus == nil
+                && forcedTerminationID == id
+                && forcedTerminationWorkItem?.isCancelled == false
         }
-        if needsTermination {
-            _ = Darwin.kill(processID, SIGKILL)
+        guard needsTermination else {
+            return
         }
+
+        let identityIsCurrent = stateLock.withLock {
+            exitStatus == nil && forcedTerminationID == id
+        }
+        guard identityIsCurrent,
+              process === expectedProcess,
+              expectedProcess.processIdentifier == processID,
+              expectedProcess.isRunning
+        else {
+            return
+        }
+        _ = Darwin.kill(processID, SIGKILL)
     }
 
     private func processExited(status: Int32) {
@@ -251,44 +331,53 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     }
 
     private func finishExit(status: Int32) {
-        let waiters = stateLock.withLock { () -> [CheckedContinuation<Int32, Never>] in
+        let result = stateLock.withLock {
+            () -> ([CheckedContinuation<Int32, Never>], DispatchWorkItem?) in
             guard exitStatus == nil else {
-                return []
+                return ([], nil)
             }
             exitStatus = status
             let waiters = exitWaiters
             exitWaiters.removeAll()
-            return waiters
+            let workItem = forcedTerminationWorkItem
+            forcedTerminationID = nil
+            forcedTerminationWorkItem = nil
+            return (waiters, workItem)
         }
-        for waiter in waiters {
+        result.1?.cancel()
+        for waiter in result.0 {
             waiter.resume(returning: status)
         }
     }
 
     private func finishOutput() {
-        let shouldFinish = stateLock.withLock { () -> Bool in
+        let result = stateLock.withLock {
+            () -> (Bool, [CheckedContinuation<Void, Never>]) in
             guard !outputWasFinished else {
-                return false
+                return (false, [])
             }
             outputWasFinished = true
-            return true
+            return (true, takeDrainWaitersIfFinished())
         }
-        if shouldFinish {
+        if result.0 {
             outputContinuation.finish()
         }
+        resumeDrainWaiters(result.1)
     }
 
     private func finishDiagnostics() {
-        let shouldFinish = stateLock.withLock { () -> Bool in
+        let result = stateLock.withLock {
+            () -> (Bool, [CheckedContinuation<Void, Never>]) in
             guard !diagnosticsWereFinished else {
-                return false
+                return (false, [])
             }
             diagnosticsWereFinished = true
-            return true
+            return (true, takeDrainWaitersIfFinished())
         }
-        if shouldFinish {
+        if result.0 {
             diagnosticContinuation.finish()
         }
+        resumeDrainWaiters(result.1)
     }
 
     private func closeHandlesAfterExit() {
@@ -304,6 +393,61 @@ private final class ACPProcessTransportState: @unchecked Sendable {
             try? inputHandle.close()
         }
         sendLock.unlock()
+    }
+
+    private func readOutput(from handle: FileHandle) {
+        let data = outputReadLock.withLock { () -> Data? in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                try? handle.close()
+                return nil
+            }
+            return data
+        }
+        guard let data else {
+            finishOutput()
+            return
+        }
+        outputContinuation.yield(data)
+    }
+
+    private func readDiagnostic(from handle: FileHandle) {
+        let data = diagnosticReadLock.withLock { () -> Data? in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                try? handle.close()
+                return nil
+            }
+            return data
+        }
+        guard let data else {
+            finishDiagnostics()
+            return
+        }
+        diagnosticContinuation.yield(data)
+    }
+
+    private func takeDrainWaitersIfFinished() -> [CheckedContinuation<Void, Never>] {
+        guard outputWasFinished, diagnosticsWereFinished else {
+            return []
+        }
+        let waiters = Array(drainWaiters.values)
+        drainWaiters.removeAll()
+        return waiters
+    }
+
+    private func resumeDrainWaiters(_ waiters: [CheckedContinuation<Void, Never>]) {
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func cancelDrainWaiter(id: UUID) {
+        stateLock.withLock {
+            drainWaiters.removeValue(forKey: id)
+        }?.resume()
     }
 }
 

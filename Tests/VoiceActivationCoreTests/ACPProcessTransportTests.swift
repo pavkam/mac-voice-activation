@@ -2,6 +2,38 @@ import Foundation
 import Testing
 @testable import VoiceActivationCore
 
+private actor ACPProcessDrainObservation {
+    private var isFinished = false
+    private var isStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func started() {
+        isStarted = true
+        let pending = startWaiters
+        startWaiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+
+    func finished() {
+        isFinished = true
+    }
+
+    func waitUntilStarted() async {
+        guard !isStarted else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func observedFinish() -> Bool {
+        isFinished
+    }
+}
+
 @Suite(.serialized)
 struct ACPProcessTransportTests {
     @Test(.timeLimit(.minutes(1)))
@@ -134,6 +166,73 @@ struct ACPProcessTransportTests {
 
         await transport.terminate()
         _ = await transport.waitForExit()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func send_WhenChildClosesStandardInput_DoesNotTerminateHostProcess() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = try makeExecutableFixture(
+            in: directory,
+            body: "exec 0<&-\nprintf 'ready\\n'\n/bin/sleep 10\n")
+        let transport = try ACPProcessTransport(
+            executableURL: executable,
+            arguments: [],
+            currentDirectoryURL: directory)
+        let output = await transport.output()
+        var iterator = output.makeAsyncIterator()
+        #expect(try await iterator.next() == Data("ready\n".utf8))
+
+        await #expect(throws: ACPProcessTransportError.transportClosed) {
+            try await transport.send(Data("frame\n".utf8))
+        }
+
+        await transport.terminate()
+        _ = await transport.waitForExit()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func readStreams_WhenDescendantKeepsPipeOpen_CanBeClosedAfterParentExit() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = try makeExecutableFixture(
+            in: directory,
+            body: "(/bin/sleep 10) &\nprintf 'parent-exited\\n'\n")
+        let transport = try ACPProcessTransport(
+            executableURL: executable,
+            arguments: [],
+            currentDirectoryURL: directory)
+        let drainObservation = ACPProcessDrainObservation()
+        let drain = Task {
+            await drainObservation.started()
+            await transport.waitForDrain()
+            await drainObservation.finished()
+        }
+        await drainObservation.waitUntilStarted()
+        #expect(await transport.waitForExit() == 0)
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        let drainFinished = await drainObservation.observedFinish()
+        #expect(!drainFinished)
+
+        await transport.closeReadStreams()
+        await drain.value
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func terminate_WhenChildExits_CancelsPendingForcedTermination() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = try ACPProcessTransport(
+            executableURL: URL(fileURLWithPath: "/bin/sleep"),
+            arguments: ["0.01"],
+            currentDirectoryURL: directory)
+
+        await transport.terminate()
+        _ = await transport.waitForExit()
+
+        #expect(!transport.hasPendingForcedTerminationForTesting)
     }
 
     private func makeTemporaryDirectory() throws -> URL {
