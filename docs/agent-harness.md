@@ -138,7 +138,9 @@ An agent profile has one of three permission policies:
 
 The panel displays agent-provided choice labels; it does not invent an approval
 the agent did not offer. Cancelling a run resolves every pending permission as
-cancelled before the process is torn down.
+cancelled before the process is torn down. Each displayed choice carries an
+opaque local turn identifier as well as the wire request ID, so a delayed click
+cannot resolve a reused request ID from a later turn.
 
 ## Streaming presentation
 
@@ -173,7 +175,8 @@ Panel and menu cancellation transition the run to `cancelling` immediately,
 invalidate its execution generation, respond to pending permissions with a
 cancelled outcome, and send `session/cancel` for the active session. The client
 waits up to two seconds for the prompt to finish with `stopReason: cancelled`.
-It then terminates an unresponsive process and discards that cached connection.
+Any other post-cancel stop reason invalidates the connection. The runner then
+terminates an unresponsive process and discards that cached connection.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached
