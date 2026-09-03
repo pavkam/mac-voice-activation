@@ -210,6 +210,7 @@ struct ACPEventDecoderTests {
 
         for identifier in identifiers {
             let request = AgentPermissionRequest(
+                turnToken: AgentTurnToken(rawValue: 1),
                 requestID: identifier,
                 toolCall: AgentToolCallUpdate(id: "tool-1"),
                 options: [])

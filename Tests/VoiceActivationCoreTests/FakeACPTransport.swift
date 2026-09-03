@@ -19,6 +19,10 @@ actor FakeACPTransport: ACPTransport {
     private var exitStatus: Int32?
     private var terminationCount = 0
     private var outputCallCount = 0
+    private var shouldSuspendNextSend = false
+    private var sendIsSuspended = false
+    private var suspendedSendContinuation: CheckedContinuation<Void, Never>?
+    private var suspendedSendWaiters: [CheckedContinuation<Void, Never>] = []
 
     init() {
         let output = AsyncThrowingStream<Data, any Error>.makeStream()
@@ -47,6 +51,20 @@ actor FakeACPTransport: ACPTransport {
             throw FakeACPTransportError.invalidOutboundFrame
         }
 
+        if shouldSuspendNextSend {
+            shouldSuspendNextSend = false
+            sendIsSuspended = true
+            let waiters = suspendedSendWaiters
+            suspendedSendWaiters.removeAll()
+            for waiter in waiters {
+                waiter.resume()
+            }
+            await withCheckedContinuation { continuation in
+                suspendedSendContinuation = continuation
+            }
+            sendIsSuspended = false
+        }
+
         rawFrames.append(data)
         sentMessages.append(message)
 
@@ -69,7 +87,28 @@ actor FakeACPTransport: ACPTransport {
 
     func terminate() async {
         terminationCount += 1
+        suspendedSendContinuation?.resume()
+        suspendedSendContinuation = nil
         finish(status: -15)
+    }
+
+    func suspendNextSend() {
+        shouldSuspendNextSend = true
+    }
+
+    func waitUntilSendIsSuspended() async {
+        guard !sendIsSuspended else {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            suspendedSendWaiters.append(continuation)
+        }
+    }
+
+    func resumeSuspendedSend() {
+        suspendedSendContinuation?.resume()
+        suspendedSendContinuation = nil
     }
 
     func nextSentMessage() async -> ACPMessage {

@@ -102,15 +102,18 @@ public struct AgentPermissionOption: Equatable, Sendable {
 }
 
 public struct AgentPermissionRequest: Equatable, Sendable {
+    public let turnToken: AgentTurnToken
     public let requestID: ACPRequestID
     public let toolCall: AgentToolCallUpdate
     public let options: [AgentPermissionOption]
 
     public init(
+        turnToken: AgentTurnToken,
         requestID: ACPRequestID,
         toolCall: AgentToolCallUpdate,
         options: [AgentPermissionOption])
     {
+        self.turnToken = turnToken
         self.requestID = requestID
         self.toolCall = toolCall
         self.options = options

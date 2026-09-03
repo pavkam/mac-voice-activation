@@ -25,6 +25,74 @@ private actor AgentEventRecorder {
     }
 }
 
+private actor AgentEventGate {
+    private var entered = false
+    private var isOpen = false
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+    private var openWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause() async {
+        entered = true
+        let waiters = enteredWaiters
+        enteredWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+
+        guard !isOpen else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            openWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            enteredWaiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let waiters = openWaiters
+        openWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
+private actor AgentEventSignal {
+    private var isSignalled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func signal() {
+        isSignalled = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+
+    func wait() async {
+        guard !isSignalled else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func observedSignal() -> Bool {
+        isSignalled
+    }
+}
+
 @Suite(.serialized)
 struct ACPClientConnectionTests {
     @Test func connect_WhenAgentSupportsV1_InitializesAndCreatesSessionWithAmbientAuth() async throws {
@@ -184,6 +252,60 @@ struct ACPClientConnectionTests {
         await connection.close()
     }
 
+    @Test func prompt_WhenEventDeliveryIsDelayed_FlushesWireOrderBeforeReturning() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        let recorder = AgentEventRecorder()
+        let gate = AgentEventGate()
+        let completed = AgentEventSignal()
+        let promptTask = Task {
+            let result = try await connection.prompt("Wait for delivery") { event in
+                if event == .agentMessageDelta(messageID: nil, text: "First") {
+                    await gate.pause()
+                }
+                await recorder.record(event)
+            }
+            await completed.signal()
+            return result
+        }
+        _ = await recorder.nextEvent()
+        _ = await transport.nextSentMessage()
+
+        try await transport.feed(sessionUpdate(.object([
+            "sessionUpdate": .string("agent_message_chunk"),
+            "content": .object([
+                "type": .string("text"),
+                "text": .string("First"),
+            ]),
+        ])))
+        await gate.waitUntilEntered()
+        try await transport.feed(sessionUpdate(.object([
+            "sessionUpdate": .string("agent_message_chunk"),
+            "content": .object([
+                "type": .string("text"),
+                "text": .string(" second"),
+            ]),
+        ])))
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        try await transport.feed(.request(
+            id: .string("response-barrier"),
+            method: "unsupported/barrier",
+            params: nil))
+
+        #expect(await transport.nextSentMessage() == .errorResponse(
+            id: .string("response-barrier"),
+            error: ACPJSONRPCError(code: -32_601, message: "Method not found")))
+        #expect(await completed.observedSignal() == false)
+
+        await gate.open()
+        #expect(await recorder.nextEvent() == .agentMessageDelta(messageID: nil, text: "First"))
+        #expect(await recorder.nextEvent() == .agentMessageDelta(
+            messageID: nil,
+            text: " second"))
+        #expect(try await promptTask.value == AgentRunResult(stopReason: .endTurn))
+        await connection.close()
+    }
+
     @Test func prompt_WhenJSONRPCErrorArrives_ThrowsUserSafeError() async throws {
         let transport = FakeACPTransport()
         let connection = try await establishConnection(transport: transport)
@@ -331,7 +453,10 @@ struct ACPClientConnectionTests {
             messageID: nil,
             text: "Still receiving"))
 
-        await connection.resolvePermission(requestID: requestID, optionID: "once")
+        await connection.resolvePermission(
+            turnToken: permission.turnToken,
+            requestID: requestID,
+            optionID: "once")
         #expect(await transport.nextSentMessage() == permissionSelection(
             id: requestID,
             optionID: "once"))
@@ -351,13 +476,71 @@ struct ACPClientConnectionTests {
         try await transport.feed(permissionRequest(
             id: requestID,
             options: [permissionOption(id: "once", name: "Once", kind: "allow_once")]))
-        _ = await recorder.nextEvent()
+        guard case let .permissionRequested(permission) = await recorder.nextEvent() else {
+            Issue.record("Expected a permission event")
+            return
+        }
 
-        await connection.resolvePermission(requestID: requestID, optionID: "invented")
+        await connection.resolvePermission(
+            turnToken: permission.turnToken,
+            requestID: requestID,
+            optionID: "invented")
 
         #expect(await transport.nextSentMessage() == permissionCancellation(id: requestID))
         try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
         _ = try await promptTask.value
+        await connection.close()
+    }
+
+    @Test func permission_WhenWireIDIsReusedOnANewTurn_IgnoresStaleTurnResolution() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport, policy: .ask)
+        let firstRecorder = AgentEventRecorder()
+        let firstPrompt = prompt(connection, text: "First turn", recorder: firstRecorder)
+        _ = await firstRecorder.nextEvent()
+        _ = await transport.nextSentMessage()
+        let reusedID = ACPRequestID.string("reused-permission")
+        try await transport.feed(permissionRequest(
+            id: reusedID,
+            options: [permissionOption(id: "once", name: "Once", kind: "allow_once")]))
+        guard case let .permissionRequested(firstPermission) = await firstRecorder.nextEvent() else {
+            Issue.record("Expected the first permission event")
+            return
+        }
+
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await firstPrompt.value
+
+        let secondRecorder = AgentEventRecorder()
+        let secondPrompt = prompt(connection, text: "Second turn", recorder: secondRecorder)
+        _ = await secondRecorder.nextEvent()
+        _ = await transport.nextSentMessage()
+        try await transport.feed(permissionRequest(
+            id: reusedID,
+            options: [permissionOption(id: "once", name: "Once", kind: "allow_once")]))
+        guard case let .permissionRequested(secondPermission) = await secondRecorder.nextEvent() else {
+            Issue.record("Expected the second permission event")
+            return
+        }
+        #expect(firstPermission.turnToken != secondPermission.turnToken)
+        let messageCount = await transport.allSentMessages().count
+
+        await connection.resolvePermission(
+            turnToken: firstPermission.turnToken,
+            requestID: reusedID,
+            optionID: "once")
+
+        #expect(await transport.allSentMessages().count == messageCount)
+
+        await connection.resolvePermission(
+            turnToken: secondPermission.turnToken,
+            requestID: reusedID,
+            optionID: "once")
+        #expect(await transport.nextSentMessage() == permissionSelection(
+            id: reusedID,
+            optionID: "once"))
+        try await transport.feed(promptResponse(id: 4, stopReason: "end_turn"))
+        _ = try await secondPrompt.value
         await connection.close()
     }
 
@@ -458,6 +641,153 @@ struct ACPClientConnectionTests {
         try await transport.feed(promptResponse(id: 3, stopReason: "cancelled"))
         _ = try await promptTask.value
         await connection.close()
+    }
+
+    @Test func cancel_WhenConnectedCallbackIsSuspended_PublishesPromptBeforeCancel() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        let connectedGate = AgentEventGate()
+        let promptTask = Task {
+            try await connection.prompt("Cancel during publication") { event in
+                if case .connected = event {
+                    await connectedGate.pause()
+                }
+            }
+        }
+        await connectedGate.waitUntilEntered()
+
+        await connection.cancel()
+        await connectedGate.open()
+
+        #expect(await transport.nextSentMessage() == .request(
+            id: .integer(3),
+            method: "session/prompt",
+            params: .object([
+                "sessionId": .string("session-1"),
+                "prompt": .array([
+                    .object([
+                        "type": .string("text"),
+                        "text": .string("Cancel during publication"),
+                    ]),
+                ]),
+            ])))
+        #expect(await transport.nextSentMessage() == .notification(
+            method: "session/cancel",
+            params: .object(["sessionId": .string("session-1")])))
+
+        try await transport.feed(promptResponse(id: 3, stopReason: "cancelled"))
+        #expect(try await promptTask.value == AgentRunResult(stopReason: .cancelled))
+        await connection.close()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancel_WhenPromptWriteIsInFlight_DefersCancelUntilPromptIsPublished() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        await transport.suspendNextSend()
+        let promptTask = Task {
+            try await connection.prompt("Cancel during write") { _ in }
+        }
+        await transport.waitUntilSendIsSuspended()
+
+        await connection.cancel()
+
+        #expect(await transport.allSentMessages().count == 2)
+
+        await transport.resumeSuspendedSend()
+        #expect(await transport.nextSentMessage() == .request(
+            id: .integer(3),
+            method: "session/prompt",
+            params: .object([
+                "sessionId": .string("session-1"),
+                "prompt": .array([
+                    .object([
+                        "type": .string("text"),
+                        "text": .string("Cancel during write"),
+                    ]),
+                ]),
+            ])))
+        #expect(await transport.nextSentMessage() == .notification(
+            method: "session/cancel",
+            params: .object(["sessionId": .string("session-1")])))
+        try await transport.feed(promptResponse(id: 3, stopReason: "cancelled"))
+        #expect(try await promptTask.value == AgentRunResult(stopReason: .cancelled))
+        await connection.close()
+    }
+
+    @Test func cancel_WhenCancelledPromptReturnsEndTurn_ClosesAndThrows() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Ignore cancellation", recorder: recorder)
+        _ = await recorder.nextEvent()
+        _ = await transport.nextSentMessage()
+
+        await connection.cancel()
+        _ = await transport.nextSentMessage()
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+
+        await #expect(throws: ACPClientError.self) {
+            try await promptTask.value
+        }
+        #expect(await transport.observedTerminationCount() == 1)
+    }
+
+    @Test func cancel_WhenPromptResponseWasAlreadyReceived_DoesNotCancelCompletedTurn() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Already complete", recorder: recorder)
+        _ = await recorder.nextEvent()
+        _ = await transport.nextSentMessage()
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        try await transport.feed(.request(
+            id: .string("response-barrier"),
+            method: "unsupported/barrier",
+            params: nil))
+        _ = await transport.nextSentMessage()
+
+        await connection.cancel()
+
+        #expect(try await promptTask.value == AgentRunResult(stopReason: .endTurn))
+        #expect(await transport.allSentMessages().contains { message in
+            guard case let .notification(method, _) = message else {
+                return false
+            }
+            return method == "session/cancel"
+        } == false)
+        await connection.close()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func close_WhenEventCallbackReentersClose_DoesNotAwaitTheReceiveTaskFromItself() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        let callbackReturned = AgentEventSignal()
+        let promptTask = Task {
+            try await connection.prompt("Close from callback") { event in
+                guard case .agentMessageDelta = event else {
+                    return
+                }
+                await connection.close()
+                await callbackReturned.signal()
+            }
+        }
+        _ = await transport.nextSentMessage()
+
+        try await transport.feed(sessionUpdate(.object([
+            "sessionUpdate": .string("agent_message_chunk"),
+            "content": .object([
+                "type": .string("text"),
+                "text": .string("Close now"),
+            ]),
+        ])))
+
+        await callbackReturned.wait()
+        await #expect(throws: ACPClientError.connectionClosed) {
+            try await promptTask.value
+        }
+        #expect(await transport.observedTerminationCount() == 1)
     }
 
     @Test func receive_WhenUnknownInboundRequestArrives_ReturnsMethodNotFound() async throws {

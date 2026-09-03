@@ -24,7 +24,10 @@ public protocol AgentHarnessRunning: Sendable {
         onEvent: @escaping @Sendable (AgentRunEvent) async -> Void
     ) async throws -> AgentRunResult
 
-    func resolvePermission(requestID: ACPRequestID, optionID: String?) async
+    func resolvePermission(
+        turnToken: AgentTurnToken,
+        requestID: ACPRequestID,
+        optionID: String?) async
     func cancel() async
     func reset(profileIDs: Set<UUID>) async
     func shutdown() async

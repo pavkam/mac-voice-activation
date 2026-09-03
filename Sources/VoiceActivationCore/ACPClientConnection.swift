@@ -48,14 +48,19 @@ public actor ACPClientConnection {
     private let eventDecoder = ACPEventDecoder()
     private var receiveTask: Task<Void, Never>?
     private var nextRequestID: Int64 = 1
+    private var nextTurnTokenValue: UInt64 = 1
     private var pendingRequests: [ACPRequestID: PendingClientRequest] = [:]
-    private var pendingPermissions: [ACPRequestID: PendingPermission] = [:]
+    private var pendingPermissions: [PendingPermissionKey: PendingPermission] = [:]
     private var authenticationMethodNames: [String] = []
     private var sessionID: String?
     private var agentName: String?
-    private var eventHandler: (@Sendable (AgentRunEvent) async -> Void)?
-    private var isPromptActive = false
+    private var activeEventDelivery: AgentEventDelivery?
+    private var activeTurnToken: AgentTurnToken?
+    private var activePromptRequestID: ACPRequestID?
+    private var promptFrameWasPublished = false
+    private var promptResponseWasReceived = false
     private var isPromptCancelling = false
+    private var cancelFrameWasSent = false
     private var terminalError: ACPClientError?
     private var transportWasTerminated = false
     private var writeIsActive = false
@@ -88,27 +93,30 @@ public actor ACPClientConnection {
             throw ACPClientError.promptTooLarge(maximumBytes: Self.maximumPromptBytes)
         }
         try ensureOpen()
-        guard !isPromptActive else {
+        guard activeTurnToken == nil else {
             throw ACPClientError.promptAlreadyActive
         }
         guard let sessionID, let agentName else {
             throw ACPClientError.malformedResponse("The session is not initialized.")
         }
-
-        isPromptActive = true
-        isPromptCancelling = false
-        eventHandler = onEvent
-        defer {
-            isPromptActive = false
-            isPromptCancelling = false
-            eventHandler = nil
+        guard nextTurnTokenValue < UInt64.max else {
+            throw ACPClientError.connectionClosed
         }
 
-        await onEvent(.connected(agentName: agentName, sessionID: sessionID))
+        let turnToken = AgentTurnToken(rawValue: nextTurnTokenValue)
+        nextTurnTokenValue += 1
+        let eventDelivery = AgentEventDelivery(handler: onEvent)
+        activeTurnToken = turnToken
+        activeEventDelivery = eventDelivery
+        activePromptRequestID = nil
+        promptFrameWasPublished = false
+        promptResponseWasReceived = false
+        isPromptCancelling = false
+        cancelFrameWasSent = false
+        eventDelivery.send(.connected(agentName: agentName, sessionID: sessionID))
 
         do {
-            let result = try await sendRequest(
-                method: "session/prompt",
+            let result = try await sendPromptRequest(
                 params: .object([
                     "sessionId": .string(sessionID),
                     "prompt": .array([
@@ -125,16 +133,37 @@ public actor ACPClientConnection {
             guard let stopReason = AgentStopReason(rawValue: encodedReason) else {
                 throw ACPClientError.malformedResponse("Unknown stopReason.")
             }
+            guard !isPromptCancelling || stopReason == .cancelled else {
+                throw ACPClientError.malformedResponse(
+                    "A cancelled prompt returned a non-cancelled stopReason.")
+            }
+
+            eventDelivery.finish()
+            _ = await eventDelivery.task.result
+            finishTurn(turnToken: turnToken)
             return AgentRunResult(stopReason: stopReason)
         } catch {
             let clientError = userSafeError(error)
             await close()
+            eventDelivery.finish()
+            eventDelivery.task.cancel()
+            _ = await eventDelivery.task.result
+            finishTurn(turnToken: turnToken)
             throw clientError
         }
     }
 
-    public func resolvePermission(requestID: ACPRequestID, optionID: String?) async {
-        guard let permission = pendingPermissions.removeValue(forKey: requestID) else {
+    public func resolvePermission(
+        turnToken: AgentTurnToken,
+        requestID: ACPRequestID,
+        optionID: String?) async
+    {
+        let key = PendingPermissionKey(turnToken: turnToken, requestID: requestID)
+        guard activeTurnToken == turnToken, !promptResponseWasReceived else {
+            pendingPermissions.removeValue(forKey: key)
+            return
+        }
+        guard let permission = pendingPermissions.removeValue(forKey: key) else {
             return
         }
 
@@ -148,15 +177,16 @@ public actor ACPClientConnection {
     }
 
     public func cancel() async {
-        guard isPromptActive, !isPromptCancelling, let sessionID else {
+        guard activeTurnToken != nil,
+              !promptResponseWasReceived,
+              !isPromptCancelling
+        else {
             return
         }
 
         isPromptCancelling = true
         await cancelPendingPermissions()
-        await sendNotification(
-            method: "session/cancel",
-            params: .object(["sessionId": .string(sessionID)]))
+        await sendCancelIfPromptWasPublished()
     }
 
     public func close() async {
@@ -165,6 +195,7 @@ public actor ACPClientConnection {
             finalize(with: .connectionClosed)
         }
 
+        activeEventDelivery?.finish()
         let task = receiveTask
         await terminateTransport()
         task?.cancel()
@@ -264,12 +295,7 @@ public actor ACPClientConnection {
         params: ACPJSONValue?) async throws -> ACPJSONValue
     {
         try ensureOpen()
-        let id = ACPRequestID.integer(nextRequestID)
-        guard nextRequestID < Int64.max else {
-            throw ACPClientError.connectionClosed
-        }
-        nextRequestID += 1
-        pendingRequests[id] = PendingClientRequest()
+        let id = try reserveRequestID()
 
         do {
             try await write(.request(id: id, method: method, params: params))
@@ -282,6 +308,37 @@ public actor ACPClientConnection {
         }
 
         return try await waitForResponse(id: id)
+    }
+
+    private func sendPromptRequest(params: ACPJSONValue?) async throws -> ACPJSONValue {
+        try ensureOpen()
+        let id = try reserveRequestID()
+        activePromptRequestID = id
+
+        do {
+            try await write(.request(id: id, method: "session/prompt", params: params))
+        } catch {
+            pendingRequests.removeValue(forKey: id)
+            let failure = ACPClientError.connectionClosed
+            finalize(with: failure)
+            await terminateTransport()
+            throw failure
+        }
+
+        promptFrameWasPublished = true
+        await sendCancelIfPromptWasPublished()
+        return try await waitForResponse(id: id)
+    }
+
+    private func reserveRequestID() throws -> ACPRequestID {
+        guard nextRequestID < Int64.max else {
+            throw ACPClientError.connectionClosed
+        }
+
+        let id = ACPRequestID.integer(nextRequestID)
+        nextRequestID += 1
+        pendingRequests[id] = PendingClientRequest()
+        return id
     }
 
     private func waitForResponse(id: ACPRequestID) async throws -> ACPJSONValue {
@@ -330,12 +387,12 @@ public actor ACPClientConnection {
     private func handle(_ message: ACPMessage) async throws {
         switch message {
         case let .response(id, result):
-            await completePendingRequest(id: id, result: .success(result))
+            completePendingRequest(id: id, result: .success(result))
         case let .errorResponse(id, error):
             let message = boundedText(
                 error.message,
                 maximumBytes: Self.maximumDiagnosticBytes)
-            await completePendingRequest(
+            completePendingRequest(
                 id: id,
                 result: .failure(.remoteError(code: error.code, message: message)))
         case let .request(id, method, params):
@@ -343,10 +400,10 @@ public actor ACPClientConnection {
         case let .notification(method, _):
             if method == "session/update" {
                 if let event = try eventDecoder.event(from: message) {
-                    await emit(event)
+                    emit(event)
                 }
             } else {
-                await emit(.diagnostic(boundedText(
+                emit(.diagnostic(boundedText(
                     "Unsupported ACP notification: \(method)",
                     maximumBytes: Self.maximumDiagnosticBytes)))
             }
@@ -355,13 +412,18 @@ public actor ACPClientConnection {
 
     private func completePendingRequest(
         id: ACPRequestID,
-        result: PendingClientRequest.Result) async
+        result: PendingClientRequest.Result)
     {
         guard var pending = pendingRequests[id], pending.bufferedResult == nil else {
-            await emit(.diagnostic(boundedText(
+            emit(.diagnostic(boundedText(
                 "Ignored unknown response for request \(requestIDDescription(id)).",
                 maximumBytes: Self.maximumDiagnosticBytes)))
             return
+        }
+
+        if id == activePromptRequestID {
+            promptResponseWasReceived = true
+            activeEventDelivery?.finish()
         }
 
         if let continuation = pending.continuation {
@@ -390,7 +452,7 @@ public actor ACPClientConnection {
             }
         case "cursor/ask_question", "cursor/create_plan":
             await sendResponse(id: id, result: permissionCancellation())
-            await emit(.diagnostic(boundedText(
+            emit(.diagnostic(boundedText(
                 "Cancelled unsupported blocking extension: \(method)",
                 maximumBytes: Self.maximumDiagnosticBytes)))
         default:
@@ -405,13 +467,22 @@ public actor ACPClientConnection {
         id: ACPRequestID,
         params: ACPJSONValue?) async throws
     {
-        let request = try decodePermissionRequest(id: id, params: params)
-        guard request.sessionID == sessionID, isPromptActive else {
+        let decoded = try decodePermissionRequest(params: params)
+        guard decoded.sessionID == sessionID,
+              let turnToken = activeTurnToken,
+              !promptResponseWasReceived
+        else {
             await sendResponse(id: id, result: permissionCancellation())
             return
         }
-        guard pendingPermissions[id] == nil else {
-            await emit(.diagnostic(boundedText(
+        let request = AgentPermissionRequest(
+            turnToken: turnToken,
+            requestID: id,
+            toolCall: decoded.toolCall,
+            options: decoded.options)
+        let key = PendingPermissionKey(turnToken: turnToken, requestID: id)
+        guard pendingPermissions[key] == nil else {
+            emit(.diagnostic(boundedText(
                 "Ignored duplicate permission request \(requestIDDescription(id)).",
                 maximumBytes: Self.maximumDiagnosticBytes)))
             return
@@ -422,18 +493,18 @@ public actor ACPClientConnection {
         }
         switch configuration.permissionPolicy {
         case .ask:
-            pendingPermissions[id] = PendingPermission(options: request.permission.options)
-            await emit(.permissionRequested(request.permission))
+            pendingPermissions[key] = PendingPermission(options: request.options)
+            emit(.permissionRequested(request))
         case .allowOnce:
-            let selection = request.permission.options.first(where: { $0.kind == .allowOnce })
-                ?? request.permission.options.first(where: { $0.kind == .allowAlways })
+            let selection = request.options.first(where: { $0.kind == .allowOnce })
+                ?? request.options.first(where: { $0.kind == .allowAlways })
             if let selection {
                 await sendResponse(id: id, result: permissionSelection(optionID: selection.id))
             } else {
                 await sendResponse(id: id, result: permissionCancellation())
             }
         case .reject:
-            if let selection = request.permission.options.first(where: { $0.kind == .rejectOnce }) {
+            if let selection = request.options.first(where: { $0.kind == .rejectOnce }) {
                 await sendResponse(id: id, result: permissionSelection(optionID: selection.id))
             } else {
                 await sendResponse(id: id, result: permissionCancellation())
@@ -442,7 +513,6 @@ public actor ACPClientConnection {
     }
 
     private func decodePermissionRequest(
-        id: ACPRequestID,
         params: ACPJSONValue?) throws -> DecodedPermissionRequest
     {
         let parameters = try requiredObject(params, named: "permission params")
@@ -470,18 +540,32 @@ public actor ACPClientConnection {
 
         return DecodedPermissionRequest(
             sessionID: permissionSessionID,
-            permission: AgentPermissionRequest(
-                requestID: id,
-                toolCall: toolCall,
-                options: options))
+            toolCall: toolCall,
+            options: options)
     }
 
     private func cancelPendingPermissions() async {
         let permissions = pendingPermissions
         pendingPermissions.removeAll()
-        for id in permissions.keys {
-            await sendResponse(id: id, result: permissionCancellation())
+        for key in permissions.keys {
+            await sendResponse(id: key.requestID, result: permissionCancellation())
         }
+    }
+
+    private func sendCancelIfPromptWasPublished() async {
+        guard isPromptCancelling,
+              promptFrameWasPublished,
+              !promptResponseWasReceived,
+              !cancelFrameWasSent,
+              let sessionID
+        else {
+            return
+        }
+
+        cancelFrameWasSent = true
+        await sendNotification(
+            method: "session/cancel",
+            params: .object(["sessionId": .string(sessionID)]))
     }
 
     private func sendResponse(id: ACPRequestID, result: ACPJSONValue) async {
@@ -542,11 +626,28 @@ public actor ACPClientConnection {
         }
     }
 
-    private func emit(_ event: AgentRunEvent) async {
-        guard let eventHandler else {
+    private func emit(_ event: AgentRunEvent) {
+        activeEventDelivery?.send(event)
+    }
+
+    private func finishTurn(turnToken: AgentTurnToken) {
+        guard activeTurnToken == turnToken else {
             return
         }
-        await eventHandler(event)
+
+        let stalePermissions = pendingPermissions.keys.filter {
+            $0.turnToken == turnToken
+        }
+        for key in stalePermissions {
+            pendingPermissions.removeValue(forKey: key)
+        }
+        activeEventDelivery = nil
+        activeTurnToken = nil
+        activePromptRequestID = nil
+        promptFrameWasPublished = false
+        promptResponseWasReceived = false
+        isPromptCancelling = false
+        cancelFrameWasSent = false
     }
 
     private func ensureOpen() throws {
@@ -601,9 +702,38 @@ private struct PendingPermission {
     let options: [AgentPermissionOption]
 }
 
+private struct PendingPermissionKey: Hashable {
+    let turnToken: AgentTurnToken
+    let requestID: ACPRequestID
+}
+
 private struct DecodedPermissionRequest {
     let sessionID: String
-    let permission: AgentPermissionRequest
+    let toolCall: AgentToolCallUpdate
+    let options: [AgentPermissionOption]
+}
+
+private struct AgentEventDelivery: Sendable {
+    let task: Task<Void, Never>
+    private let continuation: AsyncStream<AgentRunEvent>.Continuation
+
+    init(handler: @escaping @Sendable (AgentRunEvent) async -> Void) {
+        let events = AsyncStream<AgentRunEvent>.makeStream()
+        continuation = events.continuation
+        task = Task {
+            for await event in events.stream {
+                await handler(event)
+            }
+        }
+    }
+
+    func send(_ event: AgentRunEvent) {
+        continuation.yield(event)
+    }
+
+    func finish() {
+        continuation.finish()
+    }
 }
 
 private func resume(
