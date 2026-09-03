@@ -138,9 +138,10 @@ An agent profile has one of three permission policies:
 
 The panel displays agent-provided choice labels; it does not invent an approval
 the agent did not offer. Cancelling a run resolves every pending permission as
-cancelled before the process is torn down. Each displayed choice carries an
-opaque local turn identifier as well as the wire request ID, so a delayed click
-cannot resolve a reused request ID from a later turn.
+cancelled before the process is torn down. Each displayed choice carries a
+globally unique opaque turn identifier as well as the wire request ID, so a
+delayed click cannot resolve a reused request ID from a later turn or replacement
+connection.
 
 ## Streaming presentation
 
