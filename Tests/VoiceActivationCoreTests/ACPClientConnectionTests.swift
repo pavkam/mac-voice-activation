@@ -1046,6 +1046,45 @@ struct ACPClientConnectionTests {
         #expect(await transport.observedTerminationCount() == 1)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func close_WhenCallbackReentersAfterPromptResponse_DoesNotReturnStaleSuccess() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        let connectedGate = AgentEventGate()
+        let callbackReturned = AgentEventSignal()
+        let promptTask = Task {
+            try await connection.prompt("Close after response") { event in
+                switch event {
+                case .connected:
+                    await connectedGate.pause()
+                case .agentMessageDelta:
+                    await connection.close()
+                    await callbackReturned.signal()
+                default:
+                    break
+                }
+            }
+        }
+        _ = await transport.nextSentMessage()
+        await connectedGate.waitUntilEntered()
+        try await transport.feed(sessionUpdate(.object([
+            "sessionUpdate": .string("agent_message_chunk"),
+            "content": .object([
+                "type": .string("text"),
+                "text": .string("Close after the response is accepted"),
+            ]),
+        ])))
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+
+        await connectedGate.open()
+        await callbackReturned.wait()
+
+        await #expect(throws: ACPClientError.connectionClosed) {
+            try await promptTask.value
+        }
+        #expect(await transport.observedTerminationCount() == 1)
+    }
+
     @Test func receive_WhenUnknownInboundRequestArrives_ReturnsMethodNotFound() async throws {
         let transport = FakeACPTransport()
         let connection = try await establishConnection(transport: transport)

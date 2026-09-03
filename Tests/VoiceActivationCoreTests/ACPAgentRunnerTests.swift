@@ -706,6 +706,33 @@ struct ACPAgentRunnerTests {
         await gate.open()
     }
 
+    @Test func shutdown_WhenSuccessIsReadyButNotPublished_InvalidatesTheRun() async throws {
+        let transport = FakeACPTransport()
+        let completionGate = RunnerEventGate()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]),
+            testingHooks: ACPAgentRunnerTestingHooks(
+                beforeSuccessIsPublished: { await completionGate.wait() }))
+        let activeRun = Task {
+            try await runner.run(
+                profileID: UUID(),
+                configuration: try makeConfiguration(),
+                prompt: "Shutdown before success",
+                onEvent: { _ in })
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        await completionGate.waitUntilEntered()
+
+        await runner.shutdown()
+        await completionGate.open()
+
+        await #expect(throws: ACPAgentRunnerError.cancelled) {
+            try await activeRun.value
+        }
+    }
+
     @Test func resolvePermission_WhenTurnTokenMatches_ForwardsExactDecision() async throws {
         let transport = FakeACPTransport()
         let runner = ACPAgentRunner(

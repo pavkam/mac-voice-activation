@@ -34,11 +34,14 @@ public struct ContinuousACPAgentRunnerClock: ACPAgentRunnerClock, Sendable {
 
 struct ACPAgentRunnerTestingHooks: Sendable {
     let beforeCancelledExitWaitReturns: @Sendable () async -> Void
+    let beforeSuccessIsPublished: @Sendable () async -> Void
 
     init(
-        beforeCancelledExitWaitReturns: @escaping @Sendable () async -> Void = {})
+        beforeCancelledExitWaitReturns: @escaping @Sendable () async -> Void = {},
+        beforeSuccessIsPublished: @escaping @Sendable () async -> Void = {})
     {
         self.beforeCancelledExitWaitReturns = beforeCancelledExitWaitReturns
+        self.beforeSuccessIsPublished = beforeSuccessIsPublished
     }
 }
 
@@ -157,8 +160,18 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             guard activeTurn?.deliveryOverflowed == false else {
                 throw ACPAgentRunnerError.eventDeliveryOverflow
             }
-            await completion.resolve(.success(result))
+            await testingHooks.beforeSuccessIsPublished()
+            guard activeTurn?.token == token else {
+                throw ACPAgentRunnerError.cancelled
+            }
+            guard activeTurn?.deliveryOverflowed == false else {
+                throw ACPAgentRunnerError.eventDeliveryOverflow
+            }
+            if isActiveTurnCancelling(token), result.stopReason != .cancelled {
+                throw ACPAgentRunnerError.cancelled
+            }
             clearActiveTurn(token: token)
+            await completion.resolve(.success(result))
             return result
         } catch {
             let reportedError: any Error = activeTurn?.token == token

@@ -66,6 +66,8 @@ public actor ACPClientConnection {
     private var cancelFrameWasSent = false
     private var terminalError: ACPClientError?
     private var transportWasTerminated = false
+    private var isClosing = false
+    private let closeCompletion = ACPClientCloseCompletion()
     private var writeIsActive = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
     private var writeWaiterHead = 0
@@ -142,6 +144,9 @@ public actor ACPClientConnection {
             }
 
             await eventDelivery.finish(.drain)
+            guard activeTurnToken == turnToken else {
+                throw terminalError ?? ACPClientError.connectionClosed
+            }
             finishTurn(turnToken: turnToken)
             return AgentRunResult(stopReason: stopReason)
         } catch {
@@ -190,7 +195,22 @@ public actor ACPClientConnection {
     }
 
     public func close() async {
-        await activeEventDelivery?.finish(.discard)
+        guard !isClosing else {
+            await closeCompletion.wait()
+            return
+        }
+        isClosing = true
+
+        let eventDelivery = activeEventDelivery
+        activeEventDelivery = nil
+        activeTurnToken = nil
+        activePromptRequestID = nil
+        promptFrameWasPublished = false
+        promptResponseWasReceived = false
+        isPromptCancelling = false
+        cancelFrameWasSent = false
+
+        await eventDelivery?.finish(.discard)
         await cancelPendingPermissions()
         if terminalError == nil {
             finalize(with: .connectionClosed)
@@ -201,6 +221,7 @@ public actor ACPClientConnection {
         task?.cancel()
         _ = await task?.result
         receiveTask = nil
+        closeCompletion.resolve()
     }
 
     func waitForInputCompletion() async {
@@ -616,7 +637,9 @@ public actor ACPClientConnection {
 
     private func sendResponse(id: ACPRequestID, result: ACPJSONValue) async {
         do {
-            try await write(.response(id: id, result: result))
+            try await write(
+                .response(id: id, result: result),
+                allowWhileClosing: true)
         } catch {
             finalize(with: .connectionClosed)
             await terminateTransport()
@@ -627,7 +650,8 @@ public actor ACPClientConnection {
         do {
             try await write(.errorResponse(
                 id: id,
-                error: ACPJSONRPCError(code: code, message: message)))
+                error: ACPJSONRPCError(code: code, message: message)),
+                allowWhileClosing: true)
         } catch {
             finalize(with: .connectionClosed)
             await terminateTransport()
@@ -643,10 +667,19 @@ public actor ACPClientConnection {
         }
     }
 
-    private func write(_ message: ACPMessage) async throws {
+    private func write(
+        _ message: ACPMessage,
+        allowWhileClosing: Bool = false) async throws
+    {
         await acquireWritePermit()
         defer { releaseWritePermit() }
-        try ensureOpen()
+        if allowWhileClosing {
+            if let terminalError {
+                throw terminalError
+            }
+        } else {
+            try ensureOpen()
+        }
 
         var data = try JSONEncoder().encode(message)
         data.append(0x0A)
@@ -717,6 +750,9 @@ public actor ACPClientConnection {
         if let terminalError {
             throw terminalError
         }
+        if isClosing {
+            throw ACPClientError.connectionClosed
+        }
     }
 
     private func finalize(with error: ACPClientError) {
@@ -747,6 +783,43 @@ public actor ACPClientConnection {
             return clientError
         }
         return terminalError ?? .connectionClosed
+    }
+}
+
+private final class ACPClientCloseCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isResolved = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func resolve() {
+        var continuations: [CheckedContinuation<Void, Never>] = []
+        lock.withLock {
+            guard !isResolved else {
+                return
+            }
+            isResolved = true
+            continuations = waiters
+            waiters.removeAll()
+        }
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            var shouldResume = false
+            lock.withLock {
+                if isResolved {
+                    shouldResume = true
+                } else {
+                    waiters.append(continuation)
+                }
+            }
+            if shouldResume {
+                continuation.resume()
+            }
+        }
     }
 }
 
