@@ -79,6 +79,15 @@ process termination. It keeps one initialized ACP process and session per
 profile while configuration remains unchanged. Only one prompt turn may be
 active globally. A later phrase does not queue silently behind a running agent.
 
+The process transport disables `SIGPIPE` for child stdin, uses nonblocking
+writes, closes the parent write side during termination, drains stdout and
+stderr independently, and marks an exited process unavailable immediately. It
+keeps current-generation delivery alive for a bounded drain grace so final
+updates are not truncated, then closes inherited pipe handles and fails any
+pending request. A short post-response settle window catches cross-pipe
+diagnostics that arrive with process exit. Stderr is decoded incrementally and
+coalesced within its 16 KiB bound before UI delivery.
+
 All events and completions carry the coordinator's execution generation. A
 cancelled, replaced, or shut-down run cannot mutate the current UI even if an
 old process emits late data.
