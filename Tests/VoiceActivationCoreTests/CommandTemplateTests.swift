@@ -3,6 +3,26 @@ import Testing
 @testable import VoiceActivationCore
 
 struct CommandTemplateTests {
+    @Test func decoding_WhenExecutableIsRelative_ThrowsValidationError() throws {
+        let data = try #require("""
+        {"executablePath":"open","argumentTemplates":["{text}"]}
+        """.data(using: .utf8))
+
+        #expect(throws: CommandTemplate.ValidationError.executableMustBeAbsolute) {
+            try JSONDecoder().decode(CommandTemplate.self, from: data)
+        }
+    }
+
+    @Test func decoding_WhenTemplateHasNoTranscriptPlaceholder_ThrowsValidationError() throws {
+        let data = try #require("""
+        {"executablePath":"/usr/bin/open","argumentTemplates":["https://example.com"]}
+        """.data(using: .utf8))
+
+        #expect(throws: CommandTemplate.ValidationError.missingTranscriptPlaceholder) {
+            try JSONDecoder().decode(CommandTemplate.self, from: data)
+        }
+    }
+
     @Test func init_WhenExecutableIsRelative_ThrowsValidationError() {
         #expect(throws: CommandTemplate.ValidationError.executableMustBeAbsolute) {
             try CommandTemplate(executablePath: "open", argumentTemplates: ["{text}"])
