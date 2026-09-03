@@ -23,6 +23,10 @@ private actor AgentEventRecorder {
             waiters.append(continuation)
         }
     }
+
+    func recordedEvents() -> [AgentRunEvent] {
+        events
+    }
 }
 
 private actor AgentEventGate {
@@ -206,6 +210,31 @@ struct ACPClientConnectionTests {
         #expect(await transport.allSentMessages().count == 2)
     }
 
+    @Test func connect_WhenSessionIdentifierExceedsOpaqueBound_ClosesAndThrows() async throws {
+        let transport = FakeACPTransport()
+        let connectionTask = Task {
+            try await ACPClientConnection.connect(
+                transport: transport,
+                configuration: try makeConfiguration())
+        }
+        _ = await transport.nextSentMessage()
+        try await transport.feed(initializeResponse())
+        _ = await transport.nextSentMessage()
+        let oversized = String(
+            repeating: "s",
+            count: ACPEventDecoder.maximumOpaqueIdentifierBytes + 1)
+
+        try await transport.feed(.response(
+            id: .integer(2),
+            result: .object(["sessionId": .string(oversized)])))
+
+        await #expect(throws: ACPClientError.malformedResponse(
+            "sessionId exceeds the opaque identifier limit.")) {
+            try await connectionTask.value
+        }
+        #expect(await transport.observedTerminationCount() == 1)
+    }
+
     @Test func prompt_WhenUpdatesArriveBeforeResponse_PublishesThemInWireOrder() async throws {
         let transport = FakeACPTransport()
         let connection = try await establishConnection(transport: transport)
@@ -304,6 +333,58 @@ struct ACPClientConnectionTests {
             text: " second"))
         #expect(try await promptTask.value == AgentRunResult(stopReason: .endTurn))
         await connection.close()
+    }
+
+    @Test func prompt_WhenControlOnlyDeliveryOverflows_DrainsPrefixThenFailsAndCloses()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        let recorder = AgentEventRecorder()
+        let gate = AgentEventGate()
+        let promptTask = Task {
+            try await connection.prompt("Overflow") { event in
+                if case .connected = event {
+                    await gate.pause()
+                }
+                await recorder.record(event)
+            }
+        }
+        await gate.waitUntilEntered()
+        _ = await transport.nextSentMessage()
+
+        for index in 0..<AgentRunEventDelivery.maximumPendingEntries {
+            try await transport.feed(sessionUpdate(.object([
+                "sessionUpdate": .string("current_mode_update"),
+                "currentModeId": .string("mode-\(index)"),
+            ])))
+        }
+        while await connection.eventDeliverySnapshotForTesting()?.pendingEntryCount
+            != AgentRunEventDelivery.maximumPendingEntries
+        {
+            await Task.yield()
+        }
+        try await transport.feed(sessionUpdate(.object([
+            "sessionUpdate": .string("current_mode_update"),
+            "currentModeId": .string("mode-\(AgentRunEventDelivery.maximumPendingEntries)"),
+        ])))
+        while await connection.eventDeliverySnapshotForTesting()?.state != .draining {
+            await Task.yield()
+        }
+        await gate.open()
+
+        await #expect(throws: ACPClientError.eventDeliveryOverflow) {
+            try await promptTask.value
+        }
+        let expected = [
+            AgentRunEvent.connected(agentName: "Test Agent", sessionID: "session-1"),
+        ] + (0..<AgentRunEventDelivery.maximumPendingEntries).map { index in
+            AgentRunEvent.metadata(
+                kind: "current_mode_update",
+                summary: "Current mode: mode-\(index)")
+        }
+        #expect(await recorder.recordedEvents() == expected)
+        #expect(await transport.observedTerminationCount() == 1)
     }
 
     @Test func prompt_WhenJSONRPCErrorArrives_ThrowsUserSafeError() async throws {
@@ -492,6 +573,117 @@ struct ACPClientConnectionTests {
         await connection.close()
     }
 
+    @Test func permission_WhenThirtyThirdAskRequestArrives_CancelsOnlyTheExcessAndResolvesEachOnce()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport, policy: .ask)
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Many permissions", recorder: recorder)
+        _ = await recorder.nextEvent()
+        _ = await transport.nextSentMessage()
+        let labels = (0...ACPClientConnection.maximumPendingPermissions).map { "Exact label 🧪 \($0)" }
+
+        for index in labels.indices {
+            try await transport.feed(permissionRequest(
+                id: .string("permission-\(index)"),
+                options: [permissionOption(
+                    id: "once-\(index)",
+                    name: labels[index],
+                    kind: "allow_once")]))
+        }
+
+        #expect(await transport.nextSentMessage() == permissionCancellation(
+            id: .string("permission-\(ACPClientConnection.maximumPendingPermissions)")))
+        var admittedLabels: [String] = []
+        for _ in 0..<ACPClientConnection.maximumPendingPermissions {
+            guard case let .permissionRequested(permission) = await recorder.nextEvent() else {
+                Issue.record("Expected an admitted permission")
+                return
+            }
+            admittedLabels.append(permission.options[0].label)
+        }
+        #expect(admittedLabels == Array(labels.prefix(ACPClientConnection.maximumPendingPermissions)))
+
+        await connection.close()
+        await #expect(throws: ACPClientError.connectionClosed) {
+            try await promptTask.value
+        }
+        let responses = await transport.allSentMessages().compactMap { message -> ACPRequestID? in
+            guard case let .response(id, result) = message,
+                  result == .object([
+                      "outcome": .object(["outcome": .string("cancelled")]),
+                  ])
+            else {
+                return nil
+            }
+            return id
+        }
+        #expect(responses.count == ACPClientConnection.maximumPendingPermissions + 1)
+        #expect(Set(responses).count == responses.count)
+    }
+
+    @Test func permission_WhenOpaqueValuesOrOptionCountAreOversized_CancelsWithoutRetention()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport, policy: .ask)
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Reject oversized", recorder: recorder)
+        _ = await recorder.nextEvent()
+        _ = await transport.nextSentMessage()
+        let oversizedID = String(
+            repeating: "i",
+            count: ACPEventDecoder.maximumOpaqueIdentifierBytes + 1)
+        let fixtures: [(ACPRequestID, String, [ACPJSONValue])] = [
+            (
+                .string(oversizedID),
+                "tool",
+                [permissionOption(id: "once", name: "Once", kind: "allow_once")]),
+            (
+                .string("oversized-tool"),
+                oversizedID,
+                [permissionOption(id: "once", name: "Once", kind: "allow_once")]),
+            (
+                .string("oversized-option"),
+                "tool",
+                [permissionOption(id: oversizedID, name: "Once", kind: "allow_once")]),
+            (
+                .string("too-many-options"),
+                "tool",
+                (0...AgentRunEventDelivery.maximumPermissionOptions).map { index in
+                    permissionOption(id: "option-\(index)", name: "Option \(index)", kind: "allow_once")
+                }),
+            (
+                .string("oversized-label"),
+                "tool",
+                [permissionOption(
+                    id: "once",
+                    name: String(
+                        repeating: "l",
+                        count: AgentRunEventDelivery.maximumPendingControlBytes + 1),
+                    kind: "allow_once")]),
+        ]
+
+        for (id, toolID, options) in fixtures {
+            try await transport.feed(permissionRequest(id: id, toolID: toolID, options: options))
+            #expect(await transport.nextSentMessage() == permissionCancellation(id: id))
+        }
+        #expect(await recorder.recordedEvents().isEmpty)
+
+        await connection.close()
+        await #expect(throws: ACPClientError.connectionClosed) {
+            try await promptTask.value
+        }
+        let responses = await transport.allSentMessages().filter { message in
+            guard case let .response(id, _) = message else {
+                return false
+            }
+            return fixtures.contains { $0.0 == id }
+        }
+        #expect(responses.count == fixtures.count)
+    }
+
     @Test func permission_WhenWireIDIsReusedOnANewTurn_IgnoresStaleTurnResolution() async throws {
         let transport = FakeACPTransport()
         let connection = try await establishConnection(transport: transport, policy: .ask)
@@ -509,6 +701,7 @@ struct ACPClientConnectionTests {
         }
 
         try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        #expect(await transport.nextSentMessage() == permissionCancellation(id: reusedID))
         _ = try await firstPrompt.value
 
         let secondRecorder = AgentEventRecorder()
@@ -1084,6 +1277,7 @@ struct ACPClientConnectionTests {
 
     private func permissionRequest(
         id: ACPRequestID,
+        toolID: String = "tool-1",
         options: [ACPJSONValue]) -> ACPMessage
     {
         .request(
@@ -1092,7 +1286,7 @@ struct ACPClientConnectionTests {
             params: .object([
                 "sessionId": .string("session-1"),
                 "toolCall": .object([
-                    "toolCallId": .string("tool-1"),
+                    "toolCallId": .string(toolID),
                     "title": .string("Edit a file"),
                     "kind": .string("edit"),
                     "status": .string("pending"),

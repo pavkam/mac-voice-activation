@@ -29,15 +29,32 @@ private actor RunnerEventRecorder {
 }
 
 private actor RunnerEventGate {
+    private var didEnter = false
     private var isOpen = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func wait() async {
+        didEnter = true
+        let observers = entryWaiters
+        entryWaiters.removeAll()
+        for observer in observers {
+            observer.resume()
+        }
         guard !isOpen else {
             return
         }
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
+        }
+    }
+
+    func waitUntilEntered() async {
+        guard !didEnter else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            entryWaiters.append(continuation)
         }
     }
 
@@ -71,6 +88,44 @@ private actor RunnerTransportFactory: ACPTransportCreating {
 
     func createdConfigurations() -> [AgentHarnessConfiguration] {
         configurations
+    }
+}
+
+private actor SuspendedRunnerTransportFactory: ACPTransportCreating {
+    private let transport: FakeACPTransport
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var observers: [CheckedContinuation<Void, Never>] = []
+
+    init(transport: FakeACPTransport) {
+        self.transport = transport
+    }
+
+    func makeTransport(
+        configuration: AgentHarnessConfiguration) async throws -> any ACPTransport
+    {
+        let waiting = observers
+        observers.removeAll()
+        for observer in waiting {
+            observer.resume()
+        }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+        return transport
+    }
+
+    func waitUntilRequested() async {
+        guard continuation == nil else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            observers.append(continuation)
+        }
+    }
+
+    func resume() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 
@@ -460,6 +515,133 @@ struct ACPAgentRunnerTests {
         await runner.shutdown()
     }
 
+    @Test func run_WhenSuccessArrivesWithStalledHandler_DrainsEventsBeforeReturning()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]))
+        let gate = RunnerEventGate()
+        let completion = RunnerCompletionObservation()
+        let activeRun = Task {
+            let result = try await runner.run(
+                profileID: UUID(),
+                configuration: try makeConfiguration(),
+                prompt: "Drain success",
+                onEvent: { _ in await gate.wait() })
+            await completion.complete()
+            return result
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+        await gate.waitUntilEntered()
+
+        try await transport.feed(agentMessageUpdate(text: "queued"))
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        for _ in 0..<50 {
+            await Task.yield()
+        }
+        #expect(await completion.completed() == false)
+
+        await gate.open()
+        #expect(try await activeRun.value == AgentRunResult(stopReason: .endTurn))
+        #expect(await completion.completed())
+        await runner.shutdown()
+    }
+
+    @Test func run_WhenFailureArrivesWithStalledHandler_DrainsEventsBeforeThrowing()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]))
+        let gate = RunnerEventGate()
+        let completion = RunnerCompletionObservation()
+        let activeRun = Task {
+            do {
+                _ = try await runner.run(
+                    profileID: UUID(),
+                    configuration: try makeConfiguration(),
+                    prompt: "Drain failure",
+                    onEvent: { _ in await gate.wait() })
+            } catch {
+                await completion.complete()
+                throw error
+            }
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+        await gate.waitUntilEntered()
+
+        try await transport.feed(agentMessageUpdate(text: "queued"))
+        try await transport.feed(.errorResponse(
+            id: .integer(3),
+            error: ACPJSONRPCError(code: -32_603, message: "Failed")))
+        for _ in 0..<50 {
+            await Task.yield()
+        }
+        #expect(await completion.completed() == false)
+
+        await gate.open()
+        await #expect(throws: ACPClientError.remoteError(code: -32_603, message: "Failed")) {
+            try await activeRun.value
+        }
+        #expect(await completion.completed())
+        await runner.shutdown()
+    }
+
+    @Test func run_WhenRunnerControlDeliveryOverflows_DrainsPrefixAndCannotRaceToSuccess()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]))
+        let recorder = RunnerEventRecorder()
+        let gate = RunnerEventGate()
+        let activeRun = Task {
+            try await runner.run(
+                profileID: UUID(),
+                configuration: try makeConfiguration(),
+                prompt: "Overflow runner",
+                onEvent: { event in
+                    await gate.wait()
+                    await recorder.record(event)
+                })
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+        await gate.waitUntilEntered()
+
+        for index in 0..<AgentRunEventDelivery.maximumPendingEntries {
+            try await transport.feed(modeUpdate(id: "mode-\(index)"))
+        }
+        while await runner.eventDeliverySnapshotForTesting()?.pendingEntryCount
+            != AgentRunEventDelivery.maximumPendingEntries
+        {
+            await Task.yield()
+        }
+        try await transport.feed(modeUpdate(
+            id: "mode-\(AgentRunEventDelivery.maximumPendingEntries)"))
+        while await runner.eventDeliverySnapshotForTesting()?.state != .draining {
+            await Task.yield()
+        }
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        await gate.open()
+
+        await #expect(throws: ACPAgentRunnerError.eventDeliveryOverflow) {
+            try await activeRun.value
+        }
+        let expected = [
+            AgentRunEvent.connected(agentName: "Test Agent", sessionID: "session-1"),
+        ] + (0..<AgentRunEventDelivery.maximumPendingEntries).map { index in
+            AgentRunEvent.metadata(
+                kind: "current_mode_update",
+                summary: "Current mode: mode-\(index)")
+        }
+        #expect(await recorder.recordedEvents() == expected)
+        #expect(await transport.observedTerminationCount() == 1)
+    }
+
     @Test func shutdown_WhenConnectionsAreCached_ClosesEveryProcess() async throws {
         let firstTransport = FakeACPTransport()
         let secondTransport = FakeACPTransport()
@@ -492,6 +674,36 @@ struct ACPAgentRunnerTests {
                 prompt: "After shutdown",
                 onEvent: { _ in })
         }
+    }
+
+    @Test func shutdown_WhenNaturalCompletionIsDraining_InvalidatesBeforeDiscardCanResumeRun()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(transports: [transport]))
+        let gate = RunnerEventGate()
+        let activeRun = Task {
+            try await runner.run(
+                profileID: UUID(),
+                configuration: try makeConfiguration(),
+                prompt: "Shutdown while draining",
+                onEvent: { _ in await gate.wait() })
+        }
+        try await establishConnection(transport, workingDirectory: "/tmp/project")
+        _ = await transport.nextSentMessage()
+        await gate.waitUntilEntered()
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        while await runner.eventDeliverySnapshotForTesting()?.state != .draining {
+            await Task.yield()
+        }
+
+        await runner.shutdown()
+
+        await #expect(throws: ACPAgentRunnerError.cancelled) {
+            try await activeRun.value
+        }
+        await gate.open()
     }
 
     @Test func resolvePermission_WhenTurnTokenMatches_ForwardsExactDecision() async throws {
@@ -570,6 +782,29 @@ struct ACPAgentRunnerTests {
         await runner.shutdown()
     }
 
+    @Test func reset_WhenTransportCreationIsSuspended_InvalidatesAndDiscardsTheActiveTurn()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let factory = SuspendedRunnerTransportFactory(transport: transport)
+        let runner = ACPAgentRunner(transportFactory: factory)
+        let profileID = UUID()
+        let activeRun = run(
+            runner,
+            profileID: profileID,
+            configuration: try makeConfiguration())
+        await factory.waitUntilRequested()
+
+        await runner.reset(profileIDs: [profileID])
+        await factory.resume()
+
+        await #expect(throws: ACPAgentRunnerError.cancelled) {
+            try await activeRun.value
+        }
+        #expect(await transport.observedTerminationCount() == 1)
+        await runner.shutdown()
+    }
+
     @Test func diagnostics_WhenChunkExceedsLimit_PublishesOnlyNewestSixteenKiB() async throws {
         let transport = FakeACPTransport()
         let runner = ACPAgentRunner(
@@ -588,6 +823,12 @@ struct ACPAgentRunnerTests {
 
         await transport.feedDiagnostic("old-marker" + String(repeating: "n", count: 20_000))
 
+        guard case let .deliveryNotice(notice) = await recorder.nextEvent() else {
+            Issue.record("Expected a typed truncation notice")
+            return
+        }
+        #expect(notice.kind == .diagnosticTruncated)
+        #expect(notice.discardedBytes == 3_626)
         guard case let .diagnostic(message) = await recorder.nextEvent() else {
             Issue.record("Expected bounded stderr diagnostic")
             return
@@ -983,6 +1224,18 @@ struct ACPAgentRunnerTests {
                         "type": .string("text"),
                         "text": .string(text),
                     ]),
+                ]),
+            ]))
+    }
+
+    private func modeUpdate(id: String) -> ACPMessage {
+        .notification(
+            method: "session/update",
+            params: .object([
+                "sessionId": .string("session-1"),
+                "update": .object([
+                    "sessionUpdate": .string("current_mode_update"),
+                    "currentModeId": .string(id),
                 ]),
             ]))
     }

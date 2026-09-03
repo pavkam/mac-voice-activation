@@ -2,6 +2,7 @@ import Foundation
 
 public struct ACPEventDecoder: Sendable {
     public static let maximumSummaryBytes = 256
+    public static let maximumOpaqueIdentifierBytes = AgentRunEventDelivery.maximumOpaqueIdentifierBytes
 
     public enum EventError: Error, Equatable, Sendable {
         case malformedSessionUpdate(String)
@@ -17,7 +18,7 @@ public struct ACPEventDecoder: Sendable {
         }
 
         let parameters = try object(params, named: "params")
-        _ = try string(parameters["sessionId"], named: "sessionId")
+        _ = try opaqueString(parameters["sessionId"], named: "sessionId")
         let update = try object(parameters["update"], named: "update")
         let discriminator = try string(update["sessionUpdate"], named: "sessionUpdate")
 
@@ -74,7 +75,7 @@ public struct ACPEventDecoder: Sendable {
     private func contentChunk(_ update: [String: ACPJSONValue]) throws -> ContentChunk {
         let content = try object(update["content"], named: "content")
         let contentType = try string(content["type"], named: "content.type")
-        let messageID = try optionalString(update["messageId"], named: "messageId")
+        let messageID = try optionalOpaqueString(update["messageId"], named: "messageId")
 
         switch contentType {
         case "text":
@@ -116,7 +117,7 @@ public struct ACPEventDecoder: Sendable {
 
     private func toolCall(_ update: [String: ACPJSONValue]) throws -> AgentToolCall {
         AgentToolCall(
-            id: try string(update["toolCallId"], named: "toolCallId"),
+            id: try opaqueString(update["toolCallId"], named: "toolCallId"),
             title: try string(update["title"], named: "title"),
             kind: try optionalRawValue(update["kind"], named: "kind"),
             status: try optionalRawValue(update["status"], named: "status"))
@@ -124,7 +125,7 @@ public struct ACPEventDecoder: Sendable {
 
     private func toolCallUpdate(_ update: [String: ACPJSONValue]) throws -> AgentToolCallUpdate {
         AgentToolCallUpdate(
-            id: try string(update["toolCallId"], named: "toolCallId"),
+            id: try opaqueString(update["toolCallId"], named: "toolCallId"),
             title: try optionalString(update["title"], named: "title"),
             kind: try optionalRawValue(update["kind"], named: "kind"),
             status: try optionalRawValue(update["status"], named: "status"))
@@ -290,6 +291,24 @@ public struct ACPEventDecoder: Sendable {
             return nil
         }
         return try string(value, named: name)
+    }
+
+    private func opaqueString(_ value: ACPJSONValue?, named name: String) throws -> String {
+        let identifier = try string(value, named: name)
+        guard identifier.utf8.count <= Self.maximumOpaqueIdentifierBytes else {
+            throw malformed(name)
+        }
+        return identifier
+    }
+
+    private func optionalOpaqueString(
+        _ value: ACPJSONValue?,
+        named name: String) throws -> String?
+    {
+        guard let value, value != .null else {
+            return nil
+        }
+        return try opaqueString(value, named: name)
     }
 
     private func rawValue<Value>(

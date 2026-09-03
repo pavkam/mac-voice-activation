@@ -6,6 +6,7 @@ public enum ACPClientError: Error, Equatable, LocalizedError, Sendable {
     case authenticationRequired(methods: [String])
     case promptTooLarge(maximumBytes: Int)
     case promptAlreadyActive
+    case eventDeliveryOverflow
     case malformedResponse(String)
     case remoteError(code: Int64, message: String)
 
@@ -26,6 +27,8 @@ public enum ACPClientError: Error, Equatable, LocalizedError, Sendable {
             "The prompt exceeds the \(maximumBytes)-byte UTF-8 limit."
         case .promptAlreadyActive:
             "An agent prompt is already active on this connection."
+        case .eventDeliveryOverflow:
+            "The agent produced more control events than can be delivered safely."
         case let .malformedResponse(description):
             "The agent sent an invalid ACP response: \(description)"
         case let .remoteError(code, message):
@@ -37,6 +40,7 @@ public enum ACPClientError: Error, Equatable, LocalizedError, Sendable {
 public actor ACPClientConnection {
     public static let maximumPromptBytes = 8_192
     public static let maximumDiagnosticBytes = 256
+    public static let maximumPendingPermissions = 32
 
     private static let maximumAdvertisedAuthenticationMethods = 8
     private static let clientName = "voice-activation"
@@ -53,7 +57,7 @@ public actor ACPClientConnection {
     private var authenticationMethodNames: [String] = []
     private var sessionID: String?
     private var agentName: String?
-    private var activeEventDelivery: AgentEventDelivery?
+    private var activeEventDelivery: AgentRunEventDelivery?
     private var activeTurnToken: AgentTurnToken?
     private var activePromptRequestID: ACPRequestID?
     private var promptFrameWasPublished = false
@@ -64,6 +68,7 @@ public actor ACPClientConnection {
     private var transportWasTerminated = false
     private var writeIsActive = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+    private var writeWaiterHead = 0
 
     private init(
         transport: any ACPTransport,
@@ -100,7 +105,7 @@ public actor ACPClientConnection {
         }
 
         let turnToken = AgentTurnToken()
-        let eventDelivery = AgentEventDelivery(handler: onEvent)
+        let eventDelivery = AgentRunEventDelivery(handler: onEvent)
         activeTurnToken = turnToken
         activeEventDelivery = eventDelivery
         activePromptRequestID = nil
@@ -108,9 +113,12 @@ public actor ACPClientConnection {
         promptResponseWasReceived = false
         isPromptCancelling = false
         cancelFrameWasSent = false
-        eventDelivery.send(.connected(agentName: agentName, sessionID: sessionID))
-
         do {
+            guard eventDelivery.send(.connected(agentName: agentName, sessionID: sessionID))
+                    == .accepted
+            else {
+                throw ACPClientError.eventDeliveryOverflow
+            }
             let result = try await sendPromptRequest(
                 params: .object([
                     "sessionId": .string(sessionID),
@@ -133,16 +141,13 @@ public actor ACPClientConnection {
                     "A cancelled prompt returned a non-cancelled stopReason.")
             }
 
-            eventDelivery.finish()
-            _ = await eventDelivery.task.result
+            await eventDelivery.finish(.drain)
             finishTurn(turnToken: turnToken)
             return AgentRunResult(stopReason: stopReason)
         } catch {
             let clientError = userSafeError(error)
+            await eventDelivery.finish(.drain)
             await close()
-            eventDelivery.finish()
-            eventDelivery.task.cancel()
-            _ = await eventDelivery.task.result
             finishTurn(turnToken: turnToken)
             throw clientError
         }
@@ -185,12 +190,12 @@ public actor ACPClientConnection {
     }
 
     public func close() async {
+        await activeEventDelivery?.finish(.discard)
+        await cancelPendingPermissions()
         if terminalError == nil {
-            await cancelPendingPermissions()
             finalize(with: .connectionClosed)
         }
 
-        activeEventDelivery?.finish()
         let task = receiveTask
         await terminateTransport()
         task?.cancel()
@@ -200,6 +205,10 @@ public actor ACPClientConnection {
 
     func waitForInputCompletion() async {
         _ = await receiveTask?.result
+    }
+
+    func eventDeliverySnapshotForTesting() -> AgentRunEventDeliverySnapshot? {
+        activeEventDelivery?.snapshotForTesting
     }
 
     private func start() async throws {
@@ -247,6 +256,10 @@ public actor ACPClientConnection {
                 named: "sessionId")
             guard !decodedSessionID.isEmpty else {
                 throw ACPClientError.malformedResponse("sessionId is empty.")
+            }
+            guard decodedSessionID.utf8.count <= ACPEventDecoder.maximumOpaqueIdentifierBytes else {
+                throw ACPClientError.malformedResponse(
+                    "sessionId exceeds the opaque identifier limit.")
             }
             sessionID = decodedSessionID
         } catch {
@@ -360,6 +373,7 @@ public actor ACPClientConnection {
     private func receive(_ output: AsyncThrowingStream<Data, any Error>) async {
         var framer = ACPLineFramer()
 
+        var receiveFailure = ACPClientError.connectionClosed
         do {
             for try await chunk in output {
                 if Task.isCancelled {
@@ -373,36 +387,36 @@ public actor ACPClientConnection {
             }
             try framer.finish()
         } catch {
-            // Every transport, framing, and decoding failure shares one safe terminal result.
+            receiveFailure = userSafeError(error)
         }
 
         guard terminalError == nil else {
             return
         }
-        finalize(with: .connectionClosed)
+        finalize(with: receiveFailure)
         await terminateTransport()
     }
 
     private func handle(_ message: ACPMessage) async throws {
         switch message {
         case let .response(id, result):
-            completePendingRequest(id: id, result: .success(result))
+            try await completePendingRequest(id: id, result: .success(result))
         case let .errorResponse(id, error):
             let message = boundedText(
                 error.message,
                 maximumBytes: Self.maximumDiagnosticBytes)
-            completePendingRequest(
+            try await completePendingRequest(
                 id: id,
                 result: .failure(.remoteError(code: error.code, message: message)))
         case let .request(id, method, params):
-            await handleRequest(id: id, method: method, params: params)
+            try await handleRequest(id: id, method: method, params: params)
         case let .notification(method, _):
             if method == "session/update" {
                 if let event = try eventDecoder.event(from: message) {
-                    emit(event)
+                    try await deliver(event)
                 }
             } else {
-                emit(.diagnostic(boundedText(
+                try await deliver(.diagnostic(boundedText(
                     "Unsupported ACP notification: \(method)",
                     maximumBytes: Self.maximumDiagnosticBytes)))
             }
@@ -411,10 +425,10 @@ public actor ACPClientConnection {
 
     private func completePendingRequest(
         id: ACPRequestID,
-        result: PendingClientRequest.Result)
+        result: PendingClientRequest.Result) async throws
     {
         guard var pending = pendingRequests[id], pending.bufferedResult == nil else {
-            emit(.diagnostic(boundedText(
+            try await deliver(.diagnostic(boundedText(
                 "Ignored unknown response for request \(requestIDDescription(id)).",
                 maximumBytes: Self.maximumDiagnosticBytes)))
             return
@@ -422,7 +436,8 @@ public actor ACPClientConnection {
 
         if id == activePromptRequestID {
             promptResponseWasReceived = true
-            activeEventDelivery?.finish()
+            activeEventDelivery?.stopAdmission()
+            await cancelPendingPermissions()
         }
 
         if let continuation = pending.continuation {
@@ -437,12 +452,14 @@ public actor ACPClientConnection {
     private func handleRequest(
         id: ACPRequestID,
         method: String,
-        params: ACPJSONValue?) async
+        params: ACPJSONValue?) async throws
     {
         switch method {
         case "session/request_permission":
             do {
                 try await handlePermissionRequest(id: id, params: params)
+            } catch PermissionRequestError.oversized {
+                await sendResponse(id: id, result: permissionCancellation())
             } catch {
                 await sendErrorResponse(
                     id: id,
@@ -451,7 +468,7 @@ public actor ACPClientConnection {
             }
         case "cursor/ask_question", "cursor/create_plan":
             await sendResponse(id: id, result: permissionCancellation())
-            emit(.diagnostic(boundedText(
+            try await deliver(.diagnostic(boundedText(
                 "Cancelled unsupported blocking extension: \(method)",
                 maximumBytes: Self.maximumDiagnosticBytes)))
         default:
@@ -466,6 +483,11 @@ public actor ACPClientConnection {
         id: ACPRequestID,
         params: ACPJSONValue?) async throws
     {
+        if case let .string(identifier) = id,
+           identifier.utf8.count > ACPEventDecoder.maximumOpaqueIdentifierBytes
+        {
+            throw PermissionRequestError.oversized
+        }
         let decoded = try decodePermissionRequest(params: params)
         guard decoded.sessionID == sessionID,
               let turnToken = activeTurnToken,
@@ -479,9 +501,14 @@ public actor ACPClientConnection {
             requestID: id,
             toolCall: decoded.toolCall,
             options: decoded.options)
+        guard permissionRetainedByteCount(request)
+                <= AgentRunEventDelivery.maximumPendingControlBytes
+        else {
+            throw PermissionRequestError.oversized
+        }
         let key = PendingPermissionKey(turnToken: turnToken, requestID: id)
         guard pendingPermissions[key] == nil else {
-            emit(.diagnostic(boundedText(
+            try await deliver(.diagnostic(boundedText(
                 "Ignored duplicate permission request \(requestIDDescription(id)).",
                 maximumBytes: Self.maximumDiagnosticBytes)))
             return
@@ -492,8 +519,12 @@ public actor ACPClientConnection {
         }
         switch configuration.permissionPolicy {
         case .ask:
+            guard pendingPermissions.count < Self.maximumPendingPermissions else {
+                await sendResponse(id: id, result: permissionCancellation())
+                return
+            }
             pendingPermissions[key] = PendingPermission(options: request.options)
-            emit(.permissionRequested(request))
+            try await deliver(.permissionRequested(request))
         case .allowOnce:
             let selection = request.options.first(where: { $0.kind == .allowOnce })
                 ?? request.options.first(where: { $0.kind == .allowAlways })
@@ -515,27 +546,43 @@ public actor ACPClientConnection {
         params: ACPJSONValue?) throws -> DecodedPermissionRequest
     {
         let parameters = try requiredObject(params, named: "permission params")
-        let permissionSessionID = try requiredString(
+        let permissionSessionID = try requiredOpaqueString(
             parameters["sessionId"],
             named: "permission sessionId")
         let toolValue = try requiredObject(
             parameters["toolCall"],
             named: "permission toolCall")
         let toolCall = AgentToolCallUpdate(
-            id: try requiredString(toolValue["toolCallId"], named: "toolCallId"),
+            id: try requiredOpaqueString(toolValue["toolCallId"], named: "toolCallId"),
             title: try optionalString(toolValue["title"], named: "toolCall title"),
             kind: try optionalRawValue(toolValue["kind"], named: "toolCall kind"),
             status: try optionalRawValue(toolValue["status"], named: "toolCall status"))
-        let options = try requiredArray(
+        let optionValues = try requiredArray(
             parameters["options"],
             named: "permission options")
-            .map { optionValue in
+        guard optionValues.count <= AgentRunEventDelivery.maximumPermissionOptions else {
+            throw PermissionRequestError.oversized
+        }
+        let options = try optionValues.map { optionValue in
                 let option = try requiredObject(optionValue, named: "permission option")
                 return AgentPermissionOption(
-                    id: try requiredString(option["optionId"], named: "permission optionId"),
+                    id: try requiredOpaqueString(
+                        option["optionId"],
+                        named: "permission optionId"),
                     label: try requiredString(option["name"], named: "permission name"),
                     kind: try requiredRawValue(option["kind"], named: "permission kind"))
             }
+
+        let retainedBytes = toolCall.id.utf8.count
+            + (toolCall.title?.utf8.count ?? 0)
+            + options.reduce(0) { partial, option in
+                saturatingByteCount(
+                    saturatingByteCount(partial, option.id.utf8.count),
+                    option.label.utf8.count)
+            }
+        guard retainedBytes <= AgentRunEventDelivery.maximumPendingControlBytes else {
+            throw PermissionRequestError.oversized
+        }
 
         return DecodedPermissionRequest(
             sessionID: permissionSessionID,
@@ -618,15 +665,32 @@ public actor ACPClientConnection {
     }
 
     private func releaseWritePermit() {
-        if writeWaiters.isEmpty {
+        if writeWaiterHead == writeWaiters.count {
+            writeWaiters.removeAll(keepingCapacity: true)
+            writeWaiterHead = 0
             writeIsActive = false
         } else {
-            writeWaiters.removeFirst().resume()
+            let waiter = writeWaiters[writeWaiterHead]
+            writeWaiterHead += 1
+            if writeWaiterHead >= 128, writeWaiterHead * 2 >= writeWaiters.count {
+                writeWaiters.removeSubrange(0..<writeWaiterHead)
+                writeWaiterHead = 0
+            }
+            waiter.resume()
         }
     }
 
-    private func emit(_ event: AgentRunEvent) {
-        activeEventDelivery?.send(event)
+    private func deliver(_ event: AgentRunEvent) async throws {
+        guard let delivery = activeEventDelivery else {
+            return
+        }
+        switch delivery.send(event) {
+        case .accepted, .ignored, .stopped:
+            return
+        case .capacityExceeded, .invalid:
+            await delivery.finish(.drain)
+            throw ACPClientError.eventDeliveryOverflow
+        }
     }
 
     private func finishTurn(turnToken: AgentTurnToken) {
@@ -663,7 +727,6 @@ public actor ACPClientConnection {
         terminalError = error
         let requests = pendingRequests
         pendingRequests.removeAll()
-        pendingPermissions.removeAll()
         for pending in requests.values {
             if let continuation = pending.continuation {
                 continuation.resume(throwing: error)
@@ -710,29 +773,6 @@ private struct DecodedPermissionRequest {
     let sessionID: String
     let toolCall: AgentToolCallUpdate
     let options: [AgentPermissionOption]
-}
-
-private struct AgentEventDelivery: Sendable {
-    let task: Task<Void, Never>
-    private let continuation: AsyncStream<AgentRunEvent>.Continuation
-
-    init(handler: @escaping @Sendable (AgentRunEvent) async -> Void) {
-        let events = AsyncStream<AgentRunEvent>.makeStream()
-        continuation = events.continuation
-        task = Task {
-            for await event in events.stream {
-                await handler(event)
-            }
-        }
-    }
-
-    func send(_ event: AgentRunEvent) {
-        continuation.yield(event)
-    }
-
-    func finish() {
-        continuation.finish()
-    }
 }
 
 private func resume(
@@ -787,6 +827,14 @@ private func requiredString(_ value: ACPJSONValue?, named name: String) throws -
         throw ACPClientError.malformedResponse("Invalid or missing \(name).")
     }
     return string
+}
+
+private func requiredOpaqueString(_ value: ACPJSONValue?, named name: String) throws -> String {
+    let identifier = try requiredString(value, named: name)
+    guard identifier.utf8.count <= AgentRunEventDelivery.maximumOpaqueIdentifierBytes else {
+        throw PermissionRequestError.oversized
+    }
+    return identifier
 }
 
 private func optionalString(_ value: ACPJSONValue?, named name: String) throws -> String? {
@@ -858,4 +906,25 @@ private func requestIDDescription(_ id: ACPRequestID) -> String {
     case .string:
         "string ID"
     }
+}
+
+private enum PermissionRequestError: Error {
+    case oversized
+}
+
+private func saturatingByteCount(_ lhs: Int, _ rhs: Int) -> Int {
+    let (result, overflow) = lhs.addingReportingOverflow(rhs)
+    return overflow ? Int.max : result
+}
+
+private func permissionRetainedByteCount(_ request: AgentPermissionRequest) -> Int {
+    var count = request.toolCall.id.utf8.count + (request.toolCall.title?.utf8.count ?? 0)
+    if case let .string(identifier) = request.requestID {
+        count = saturatingByteCount(count, identifier.utf8.count)
+    }
+    for option in request.options {
+        count = saturatingByteCount(count, option.id.utf8.count)
+        count = saturatingByteCount(count, option.label.utf8.count)
+    }
+    return count
 }

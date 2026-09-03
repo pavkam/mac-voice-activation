@@ -4,6 +4,7 @@ public enum ACPAgentRunnerError: Error, Equatable, LocalizedError, Sendable {
     case cancelled
     case shutDown
     case turnAlreadyActive
+    case eventDeliveryOverflow
 
     public var errorDescription: String? {
         switch self {
@@ -13,6 +14,8 @@ public enum ACPAgentRunnerError: Error, Equatable, LocalizedError, Sendable {
             "The agent runner has shut down."
         case .turnAlreadyActive:
             "Another agent prompt is already active."
+        case .eventDeliveryOverflow:
+            "The agent produced more control events than can be delivered safely."
         }
     }
 }
@@ -98,7 +101,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
 
         let token = UUID()
         let completion = ACPAgentRunCompletionLatch()
-        let delivery = ACPAgentRunnerEventDelivery(handler: onEvent)
+        let delivery = AgentRunEventDelivery(handler: onEvent)
         activeTurn = ACPAgentActiveTurn(
             token: token,
             profileID: profileID,
@@ -106,7 +109,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             connection: nil,
             completion: completion,
             delivery: delivery,
-            isCancelling: false)
+            isCancelling: false,
+            deliveryOverflowed: false)
 
         var runRecord: ACPAgentConnectionRecord?
         do {
@@ -115,7 +119,13 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                 configuration: configuration,
                 turnToken: token)
             runRecord = record
-            guard ownsActiveTurn(token), !isActiveTurnCancelling(token) else {
+            guard ownsActiveTurn(token),
+                  !isActiveTurnCancelling(token),
+                  activeTurn?.deliveryOverflowed == false
+            else {
+                if activeTurn?.token == token, activeTurn?.deliveryOverflowed == true {
+                    throw ACPAgentRunnerError.eventDeliveryOverflow
+                }
                 throw ACPAgentRunnerError.cancelled
             }
             guard let connection = record.connection else {
@@ -140,18 +150,26 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                 _ = await record.exitTask?.result
             }
 
+            await delivery.finish(.drain)
+            guard activeTurn?.token == token else {
+                throw ACPAgentRunnerError.cancelled
+            }
+            guard activeTurn?.deliveryOverflowed == false else {
+                throw ACPAgentRunnerError.eventDeliveryOverflow
+            }
             await completion.resolve(.success(result))
-            delivery.finish()
-            _ = await delivery.task.result
             clearActiveTurn(token: token)
             return result
         } catch {
-            await completion.resolve(.failure)
+            let reportedError: any Error = activeTurn?.token == token
+                && activeTurn?.deliveryOverflowed == true
+                ? ACPAgentRunnerError.eventDeliveryOverflow
+                : error
             if let runRecord, runRecord.exitStatus != nil {
                 _ = await runRecord.exitTask?.result
             }
-            delivery.finish()
-            _ = await delivery.task.result
+            await delivery.finish(.drain)
+            await completion.resolve(.failure)
             if let runRecord {
                 await discardRecord(
                     profileID: profileID,
@@ -159,7 +177,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                     fallbackRecord: runRecord)
             }
             clearActiveTurn(token: token)
-            throw error
+            throw reportedError
         }
     }
 
@@ -212,16 +230,20 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 
     public func reset(profileIDs: Set<UUID>) async {
-        let removed = profileIDs.compactMap { profileID -> ACPAgentConnectionRecord? in
-            guard let record = records.removeValue(forKey: profileID) else {
-                return nil
-            }
-            if activeTurn?.recordID == record.id {
-                activeTurn?.delivery.finish()
-                activeTurn = nil
-            }
-            return record
+        var removed: [ACPAgentConnectionRecord] = []
+        var discardedDelivery: AgentRunEventDelivery?
+        if let turn = activeTurn, profileIDs.contains(turn.profileID) {
+            discardedDelivery = turn.delivery
+            activeTurn = nil
         }
+        for profileID in profileIDs {
+            guard let record = records.removeValue(forKey: profileID) else {
+                continue
+            }
+            removed.append(record)
+        }
+
+        await discardedDelivery?.finish(.discard)
 
         for record in removed {
             await dispose(record)
@@ -235,14 +257,14 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         isShutDown = true
 
         if let turn = activeTurn {
-            turn.delivery.finish()
+            activeTurn = nil
+            await turn.delivery.finish(.discard)
             if let connection = turn.connection {
                 Task {
                     await connection.cancel()
                 }
             }
         }
-        activeTurn = nil
 
         let cachedRecords = Array(records.values)
         records.removeAll()
@@ -373,7 +395,11 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         else {
             return
         }
-        turn.delivery.send(.diagnostic(decoded))
+        admit(
+            .diagnostic(decoded),
+            turnToken: turn.token,
+            profileID: profileID,
+            recordID: recordID)
     }
 
     private func finishedDiagnostics(profileID: UUID, recordID: UUID) {
@@ -391,7 +417,11 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         else {
             return
         }
-        turn.delivery.send(.diagnostic(decoded))
+        admit(
+            .diagnostic(decoded),
+            turnToken: turn.token,
+            profileID: profileID,
+            recordID: recordID)
     }
 
     private func markProcessExited(status: Int32, profileID: UUID, recordID: UUID) async -> Bool {
@@ -421,7 +451,11 @@ public actor ACPAgentRunner: AgentHarnessRunning {
            turn.profileID == profileID,
            turn.recordID == recordID
         {
-            turn.delivery.send(.diagnostic("Agent process exited with status \(status)."))
+            admit(
+                .diagnostic("Agent process exited with status \(status)."),
+                turnToken: turn.token,
+                profileID: profileID,
+                recordID: recordID)
         }
         records.removeValue(forKey: profileID)
     }
@@ -477,7 +511,11 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 
     func pendingDiagnosticByteCountForTesting() -> Int {
-        activeTurn?.delivery.pendingDiagnosticByteCount ?? 0
+        activeTurn?.delivery.snapshotForTesting.pendingDiagnosticBytes ?? 0
+    }
+
+    func eventDeliverySnapshotForTesting() -> AgentRunEventDeliverySnapshot? {
+        activeTurn?.delivery.snapshotForTesting
     }
 
     private func forward(
@@ -494,7 +532,55 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         else {
             return
         }
-        turn.delivery.send(event)
+        admit(
+            event,
+            turnToken: turnToken,
+            profileID: profileID,
+            recordID: recordID)
+    }
+
+    private func admit(
+        _ event: AgentRunEvent,
+        turnToken: UUID,
+        profileID: UUID,
+        recordID: UUID)
+    {
+        guard let turn = activeTurn,
+              turn.token == turnToken,
+              turn.profileID == profileID,
+              turn.recordID == recordID,
+              records[profileID]?.id == recordID
+        else {
+            return
+        }
+        switch turn.delivery.send(event) {
+        case .accepted, .ignored, .stopped:
+            return
+        case .capacityExceeded, .invalid:
+            guard !turn.deliveryOverflowed else {
+                return
+            }
+            var failedTurn = turn
+            failedTurn.deliveryOverflowed = true
+            activeTurn = failedTurn
+            Task {
+                await self.failOverflowedDelivery(turnToken: turnToken)
+            }
+        }
+    }
+
+    private func failOverflowedDelivery(turnToken: UUID) async {
+        guard let turn = activeTurn,
+              turn.token == turnToken,
+              let connection = turn.connection
+        else {
+            return
+        }
+        await turn.delivery.finish(.drain)
+        guard activeTurn?.token == turnToken else {
+            return
+        }
+        await connection.close()
     }
 
     private func raceCancellation(
@@ -522,19 +608,18 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         guard let turn = activeTurn, turn.token == turnToken else {
             return
         }
+        activeTurn = nil
         let recordID = capturedRecordID ?? turn.recordID
         guard let recordID,
               let record = records[profileID],
               record.id == recordID
         else {
-            turn.delivery.finish()
-            activeTurn = nil
+            await turn.delivery.finish(.discard)
             return
         }
 
         records.removeValue(forKey: profileID)
-        turn.delivery.finish()
-        activeTurn = nil
+        await turn.delivery.finish(.discard)
         await record.transport.terminate()
         await record.transport.closeReadStreams()
         record.diagnosticsTask?.cancel()
@@ -654,8 +739,9 @@ private struct ACPAgentActiveTurn {
     var recordID: UUID?
     var connection: ACPClientConnection?
     let completion: ACPAgentRunCompletionLatch
-    let delivery: ACPAgentRunnerEventDelivery
+    let delivery: AgentRunEventDelivery
     var isCancelling: Bool
+    var deliveryOverflowed: Bool
 }
 
 private enum ACPAgentRunCompletion: Sendable {
@@ -779,159 +865,6 @@ private actor ACPAgentRunCompletionLatch {
     }
 }
 
-private struct ACPAgentRunnerEventDelivery: Sendable {
-    let task: Task<Void, Never>
-    private let state: ACPAgentRunnerEventDeliveryState
-
-    var pendingDiagnosticByteCount: Int {
-        state.pendingDiagnosticByteCount
-    }
-
-    init(handler: @escaping @Sendable (AgentRunEvent) async -> Void) {
-        let state = ACPAgentRunnerEventDeliveryState()
-        self.state = state
-        task = Task {
-            while let event = await state.next() {
-                await handler(event)
-            }
-        }
-    }
-
-    func send(_ event: AgentRunEvent) {
-        state.send(event)
-    }
-
-    func finish() {
-        state.finish()
-    }
-}
-
-private final class ACPAgentRunnerEventDeliveryState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var events: [AgentRunEvent] = []
-    private var waiter: CheckedContinuation<AgentRunEvent?, Never>?
-    private var isFinished = false
-    private var diagnosticBytes = 0
-
-    var pendingDiagnosticByteCount: Int {
-        lock.withLock { diagnosticBytes }
-    }
-
-    func send(_ event: AgentRunEvent) {
-        let boundedEvent: AgentRunEvent
-        if case let .diagnostic(message) = event {
-            boundedEvent = .diagnostic(boundedSuffix(
-                message,
-                maximumBytes: ACPAgentRunner.maximumStandardErrorBytes))
-        } else {
-            boundedEvent = event
-        }
-        var waiting: CheckedContinuation<AgentRunEvent?, Never>?
-        lock.withLock {
-            guard !isFinished else {
-                return
-            }
-            if let waiter {
-                self.waiter = nil
-                waiting = waiter
-                return
-            }
-            enqueue(boundedEvent)
-        }
-        waiting?.resume(returning: boundedEvent)
-    }
-
-    func finish() {
-        var waiting: CheckedContinuation<AgentRunEvent?, Never>?
-        lock.withLock {
-            guard !isFinished else {
-                return
-            }
-            isFinished = true
-            if events.isEmpty {
-                waiting = waiter
-                waiter = nil
-            }
-        }
-        waiting?.resume(returning: nil)
-    }
-
-    func next() async -> AgentRunEvent? {
-        await withCheckedContinuation { continuation in
-            var immediateEvent: AgentRunEvent?
-            var shouldFinish = false
-            lock.withLock {
-                if !events.isEmpty {
-                    immediateEvent = events.removeFirst()
-                    if case let .diagnostic(message) = immediateEvent {
-                        diagnosticBytes -= message.utf8.count
-                    }
-                } else if isFinished {
-                    shouldFinish = true
-                } else {
-                    waiter = continuation
-                }
-            }
-            if let immediateEvent {
-                continuation.resume(returning: immediateEvent)
-            } else if shouldFinish {
-                continuation.resume(returning: nil)
-            }
-        }
-    }
-
-    private func enqueue(_ event: AgentRunEvent) {
-        guard case let .diagnostic(message) = event else {
-            events.append(event)
-            return
-        }
-
-        if case let .diagnostic(previous)? = events.last {
-            let replacement = boundedSuffix(
-                previous + message,
-                maximumBytes: ACPAgentRunner.maximumStandardErrorBytes)
-            diagnosticBytes -= previous.utf8.count
-            diagnosticBytes += replacement.utf8.count
-            events[events.count - 1] = .diagnostic(replacement)
-        } else {
-            let bounded = boundedSuffix(
-                message,
-                maximumBytes: ACPAgentRunner.maximumStandardErrorBytes)
-            diagnosticBytes += bounded.utf8.count
-            events.append(.diagnostic(bounded))
-        }
-        trimOldestDiagnosticsToBound()
-    }
-
-    private func trimOldestDiagnosticsToBound() {
-        while diagnosticBytes > ACPAgentRunner.maximumStandardErrorBytes {
-            guard let index = events.firstIndex(where: {
-                if case .diagnostic = $0 {
-                    return true
-                }
-                return false
-            }), case let .diagnostic(message) = events[index]
-            else {
-                diagnosticBytes = 0
-                return
-            }
-
-            let excess = diagnosticBytes - ACPAgentRunner.maximumStandardErrorBytes
-            if message.utf8.count <= excess {
-                diagnosticBytes -= message.utf8.count
-                events.remove(at: index)
-            } else {
-                let replacement = boundedSuffix(
-                    message,
-                    maximumBytes: message.utf8.count - excess)
-                diagnosticBytes -= message.utf8.count
-                diagnosticBytes += replacement.utf8.count
-                events[index] = .diagnostic(replacement)
-            }
-        }
-    }
-}
-
 private func decodeAvailableUTF8(appending data: Data, remainder: inout Data) -> String {
     remainder.append(data)
     guard !remainder.isEmpty else {
@@ -976,22 +909,4 @@ private func trailingIncompleteUTF8ByteCount(in data: Data) -> Int {
     }
     let availableCount = bytes.count - leadingIndex
     return availableCount < expectedCount ? availableCount : 0
-}
-
-private func boundedSuffix(_ value: String, maximumBytes: Int) -> String {
-    guard value.utf8.count > maximumBytes else {
-        return value
-    }
-
-    var result = ""
-    var bytes = 0
-    for character in value.reversed() {
-        let characterBytes = String(character).utf8.count
-        guard bytes + characterBytes <= maximumBytes else {
-            break
-        }
-        result.insert(character, at: result.startIndex)
-        bytes += characterBytes
-    }
-    return result
 }

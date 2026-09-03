@@ -120,6 +120,28 @@ public struct AgentPermissionRequest: Equatable, Sendable {
     }
 }
 
+public enum AgentRunEventDeliveryNoticeKind: Equatable, Sendable {
+    case outputTruncated
+    case diagnosticTruncated
+    case controlTruncated
+}
+
+public struct AgentRunEventDeliveryNotice: Equatable, Sendable {
+    public let kind: AgentRunEventDeliveryNoticeKind
+    public let discardedBytes: UInt64
+    public let discardedEntries: UInt64
+
+    public init(
+        kind: AgentRunEventDeliveryNoticeKind,
+        discardedBytes: UInt64,
+        discardedEntries: UInt64)
+    {
+        self.kind = kind
+        self.discardedBytes = discardedBytes
+        self.discardedEntries = discardedEntries
+    }
+}
+
 public enum AgentRunEvent: Equatable, Sendable {
     case connected(agentName: String, sessionID: String)
     case agentMessageDelta(messageID: String?, text: String)
@@ -131,4 +153,5 @@ public enum AgentRunEvent: Equatable, Sendable {
     case diagnostic(String)
     case permissionRequested(AgentPermissionRequest)
     case unknown(discriminator: String, summary: String)
+    case deliveryNotice(AgentRunEventDeliveryNotice)
 }

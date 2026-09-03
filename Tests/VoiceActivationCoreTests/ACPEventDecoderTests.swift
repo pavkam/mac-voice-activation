@@ -171,6 +171,27 @@ struct ACPEventDecoderTests {
         #expect(!summary.contains("provider-private-payload"))
     }
 
+    @Test func event_WhenOpaqueCorrelationIdentifierExceedsBound_Throws() throws {
+        let oversized = String(
+            repeating: "i",
+            count: ACPEventDecoder.maximumOpaqueIdentifierBytes + 1)
+        let updates = [
+            #"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"x"},"messageId":"\#(oversized)"}"#,
+            #"{"sessionUpdate":"tool_call","toolCallId":"\#(oversized)","title":"Read"}"#,
+            #"{"sessionUpdate":"tool_call_update","toolCallId":"\#(oversized)"}"#,
+        ]
+        let decoder = ACPEventDecoder()
+
+        for update in updates {
+            #expect(throws: (any Error).self) {
+                try decoder.event(from: message(update: update))
+            }
+        }
+        #expect(throws: (any Error).self) {
+            try decoder.event(from: message(update: updates[0], sessionID: oversized))
+        }
+    }
+
     @Test func event_WhenEnvelopeIsNotSessionUpdate_ReturnsNil() throws {
         let data = Data(#"{"jsonrpc":"2.0","method":"other/event","params":{"value":1}}"#.utf8)
         let message = try JSONDecoder().decode(ACPMessage.self, from: data)
@@ -219,9 +240,9 @@ struct ACPEventDecoderTests {
         }
     }
 
-    private func message(update: String) throws -> ACPMessage {
+    private func message(update: String, sessionID: String = "session-1") throws -> ACPMessage {
         let data = Data(
-            #"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":\#(update)}}"#.utf8)
+            #"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"\#(sessionID)","update":\#(update)}}"#.utf8)
         return try JSONDecoder().decode(ACPMessage.self, from: data)
     }
 }
