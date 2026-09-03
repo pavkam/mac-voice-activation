@@ -1,7 +1,9 @@
-public struct AgentTurnToken: Equatable, Hashable, Sendable {
-    private let rawValue: UInt64
+import Foundation
 
-    init(rawValue: UInt64) {
-        self.rawValue = rawValue
+public struct AgentTurnToken: Equatable, Hashable, Sendable {
+    private let rawValue: UUID
+
+    init() {
+        rawValue = UUID()
     }
 }

@@ -48,7 +48,6 @@ public actor ACPClientConnection {
     private let eventDecoder = ACPEventDecoder()
     private var receiveTask: Task<Void, Never>?
     private var nextRequestID: Int64 = 1
-    private var nextTurnTokenValue: UInt64 = 1
     private var pendingRequests: [ACPRequestID: PendingClientRequest] = [:]
     private var pendingPermissions: [PendingPermissionKey: PendingPermission] = [:]
     private var authenticationMethodNames: [String] = []
@@ -99,12 +98,8 @@ public actor ACPClientConnection {
         guard let sessionID, let agentName else {
             throw ACPClientError.malformedResponse("The session is not initialized.")
         }
-        guard nextTurnTokenValue < UInt64.max else {
-            throw ACPClientError.connectionClosed
-        }
 
-        let turnToken = AgentTurnToken(rawValue: nextTurnTokenValue)
-        nextTurnTokenValue += 1
+        let turnToken = AgentTurnToken()
         let eventDelivery = AgentEventDelivery(handler: onEvent)
         activeTurnToken = turnToken
         activeEventDelivery = eventDelivery

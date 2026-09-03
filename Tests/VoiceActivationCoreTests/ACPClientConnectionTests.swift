@@ -544,6 +544,69 @@ struct ACPClientConnectionTests {
         await connection.close()
     }
 
+    @Test func permission_WhenConnectionsReuseWireID_IgnoresOtherConnectionTurnToken() async throws {
+        let firstTransport = FakeACPTransport()
+        let firstConnection = try await establishConnection(transport: firstTransport)
+        let firstRecorder = AgentEventRecorder()
+        let firstPrompt = prompt(
+            firstConnection,
+            text: "First connection",
+            recorder: firstRecorder)
+        _ = await firstRecorder.nextEvent()
+        _ = await firstTransport.nextSentMessage()
+        let reusedID = ACPRequestID.string("reused-across-connections")
+        try await firstTransport.feed(permissionRequest(
+            id: reusedID,
+            options: [permissionOption(id: "once", name: "Once", kind: "allow_once")]))
+        guard case let .permissionRequested(firstPermission) = await firstRecorder.nextEvent() else {
+            Issue.record("Expected the first connection permission event")
+            return
+        }
+
+        let secondTransport = FakeACPTransport()
+        let secondConnection = try await establishConnection(transport: secondTransport)
+        let secondRecorder = AgentEventRecorder()
+        let secondPrompt = prompt(
+            secondConnection,
+            text: "Second connection",
+            recorder: secondRecorder)
+        _ = await secondRecorder.nextEvent()
+        _ = await secondTransport.nextSentMessage()
+        try await secondTransport.feed(permissionRequest(
+            id: reusedID,
+            options: [permissionOption(id: "once", name: "Once", kind: "allow_once")]))
+        guard case let .permissionRequested(secondPermission) = await secondRecorder.nextEvent()
+        else {
+            Issue.record("Expected the second connection permission event")
+            return
+        }
+        #expect(firstPermission.turnToken != secondPermission.turnToken)
+        let secondMessageCount = await secondTransport.allSentMessages().count
+
+        await secondConnection.resolvePermission(
+            turnToken: firstPermission.turnToken,
+            requestID: reusedID,
+            optionID: "once")
+
+        #expect(await secondTransport.allSentMessages().count == secondMessageCount)
+
+        await secondConnection.resolvePermission(
+            turnToken: secondPermission.turnToken,
+            requestID: reusedID,
+            optionID: "once")
+        #expect(await secondTransport.nextSentMessage() == permissionSelection(
+            id: reusedID,
+            optionID: "once"))
+
+        await firstConnection.close()
+        await #expect(throws: ACPClientError.connectionClosed) {
+            try await firstPrompt.value
+        }
+        try await secondTransport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await secondPrompt.value
+        await secondConnection.close()
+    }
+
     @Test func permission_WhenPolicyRejects_ReturnsOfferedRejectOption() async throws {
         let transport = FakeACPTransport()
         let connection = try await establishConnection(transport: transport, policy: .reject)
