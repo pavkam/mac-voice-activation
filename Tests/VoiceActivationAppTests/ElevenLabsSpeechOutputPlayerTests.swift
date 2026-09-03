@@ -85,6 +85,7 @@ private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
     }
 }
 
+@Suite(.timeLimit(.minutes(1)))
 struct ElevenLabsSpeechOutputPlayerTests {
     @MainActor @Test func speak_WhenChunksArrive_RequestsAndPlaysThemInOrder() async throws {
         let synthesizer = ElevenLabsSpeechSynthesizerSpy()
@@ -93,12 +94,15 @@ struct ElevenLabsSpeechOutputPlayerTests {
             synthesizer: synthesizer,
             audioPlayer: audioPlayer)
         var speakingStates: [Bool] = []
-        player.onSpeakingChange = { speakingStates.append($0) }
-
-        player.speak("First sentence.", apiKey: "secret", voiceID: "voice-1")
-        player.speak("Second sentence.", apiKey: "secret", voiceID: "voice-1")
-
-        await waitUntil { audioPlayer.payloads.count == 2 }
+        await withCheckedContinuation { continuation in
+            player.onSpeakingChange = { speaking in
+                speakingStates.append(speaking)
+                guard !speaking else { return }
+                continuation.resume()
+            }
+            player.speak("First sentence.", apiKey: "secret", voiceID: "voice-1")
+            player.speak("Second sentence.", apiKey: "secret", voiceID: "voice-1")
+        }
 
         #expect(await synthesizer.calls == [
             .init(text: "First sentence.", apiKey: "secret", voiceID: "voice-1"),
@@ -158,14 +162,17 @@ struct ElevenLabsSpeechOutputPlayerTests {
             synthesizer: synthesizer,
             audioPlayer: audioPlayer)
         var failures: [(text: String, localeID: String)] = []
-        player.onFailure = { failures.append((text: $0, localeID: $1)) }
-
-        player.speak(
-            "Fallback please.",
-            apiKey: "secret",
-            voiceID: "voice-1",
-            localeID: "en-GB")
-        await waitUntil { failures.count == 1 }
+        await withCheckedContinuation { continuation in
+            player.onFailure = {
+                failures.append((text: $0, localeID: $1))
+                continuation.resume()
+            }
+            player.speak(
+                "Fallback please.",
+                apiKey: "secret",
+                voiceID: "voice-1",
+                localeID: "en-GB")
+        }
 
         #expect(failures.map(\.text) == ["Fallback please."])
         #expect(failures.map(\.localeID) == ["en-GB"])
@@ -180,11 +187,14 @@ struct ElevenLabsSpeechOutputPlayerTests {
             synthesizer: synthesizer,
             audioPlayer: audioPlayer)
         var failedTexts: [String] = []
-        player.onFailure = { text, _ in failedTexts.append(text) }
-
-        player.speak("First.", apiKey: "secret", voiceID: "voice-1")
-        player.speak("Second.", apiKey: "secret", voiceID: "voice-1")
-        await waitUntil { failedTexts.count == 1 }
+        await withCheckedContinuation { continuation in
+            player.onFailure = { text, _ in
+                failedTexts.append(text)
+                continuation.resume()
+            }
+            player.speak("First.", apiKey: "secret", voiceID: "voice-1")
+            player.speak("Second.", apiKey: "secret", voiceID: "voice-1")
+        }
 
         #expect(failedTexts == ["First. Second."])
         #expect(await synthesizer.texts == ["First."])

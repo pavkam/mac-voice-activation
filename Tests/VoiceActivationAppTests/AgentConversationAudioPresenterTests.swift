@@ -34,10 +34,12 @@ private final class AgentSystemSpeechSynthesizerSpy: AgentSystemSpeechSynthesizi
     private(set) var utterances: [AVSpeechUtterance] = []
     private(set) var stopCount = 0
     var isSpeaking = false
+    var onSpeak: (() -> Void)?
 
     func speak(_ utterance: AVSpeechUtterance) {
         utterances.append(utterance)
         isSpeaking = true
+        onSpeak?()
     }
 
     func stopSpeaking(at boundary: AVSpeechBoundary) -> Bool {
@@ -139,7 +141,8 @@ struct AgentConversationAudioPresenterTests {
         player.stopAll()
     }
 
-    @MainActor @Test func systemPlayer_WhenElevenLabsFails_FallsBackToSystemVoice() async {
+    @MainActor @Test(.timeLimit(.minutes(1)))
+    func systemPlayer_WhenElevenLabsFails_FallsBackToSystemVoice() async {
         let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
         let player = AgentConversationAudioPlayer(
             speechSynthesizer: systemSynthesizer,
@@ -152,8 +155,10 @@ struct AgentConversationAudioPresenterTests {
             elevenLabsSynthesizer: FailingAgentElevenLabsSpeechSynthesizer(),
             elevenLabsAudioPlayer: AgentAudioDataPlayerSpy())
 
-        player.speak("Still audible.", localeID: "en-GB")
-        await waitUntil { systemSynthesizer.utterances.count == 1 }
+        await withCheckedContinuation { continuation in
+            systemSynthesizer.onSpeak = { continuation.resume() }
+            player.speak("Still audible.", localeID: "en-GB")
+        }
 
         #expect(systemSynthesizer.utterances.map(\.speechString) == ["Still audible."])
         #expect(systemSynthesizer.utterances.first?.voice?.language == "en-GB")
