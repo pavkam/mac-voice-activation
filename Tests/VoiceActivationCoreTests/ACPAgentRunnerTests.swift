@@ -545,6 +545,60 @@ struct ACPAgentRunnerTests {
         await runner.shutdown()
     }
 
+    @Test func run_WhenResponsePrecedesFinalDiagnosticAndExit_SettlesTheOriginalTurn()
+        async throws
+    {
+        let firstTransport = FakeACPTransport()
+        let secondTransport = FakeACPTransport()
+        let settleClock = ManualACPAgentRunnerClock()
+        let runner = ACPAgentRunner(
+            transportFactory: RunnerTransportFactory(
+                transports: [firstTransport, secondTransport]),
+            settleClock: settleClock)
+        let profileID = UUID()
+        let configuration = try makeConfiguration()
+        let firstRecorder = RunnerEventRecorder()
+        let firstRun = Task {
+            try await runner.run(
+                profileID: profileID,
+                configuration: configuration,
+                prompt: "First",
+                onEvent: { event in await firstRecorder.record(event) })
+        }
+        try await establishConnection(firstTransport, workingDirectory: "/tmp/project")
+        _ = await firstTransport.nextSentMessage()
+        _ = await firstRecorder.nextEvent()
+
+        try await firstTransport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        await settleClock.waitUntilSleeping()
+        await firstTransport.feedDiagnostic("final stderr")
+        await firstTransport.reportExit(status: 0)
+        await firstTransport.finishStreams()
+
+        #expect(try await firstRun.value == AgentRunResult(stopReason: .endTurn))
+        #expect(await firstRecorder.recordedEvents().contains(.diagnostic("final stderr")))
+
+        let secondRecorder = RunnerEventRecorder()
+        let secondRun = Task {
+            try await runner.run(
+                profileID: profileID,
+                configuration: configuration,
+                prompt: "Second",
+                onEvent: { event in await secondRecorder.record(event) })
+        }
+        try await establishConnection(secondTransport, workingDirectory: "/tmp/project")
+        _ = await secondTransport.nextSentMessage()
+        _ = await secondRecorder.nextEvent()
+        try await secondTransport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        await settleClock.waitUntilSleeping()
+        await settleClock.advance()
+
+        #expect(try await secondRun.value == AgentRunResult(stopReason: .endTurn))
+        let secondEvents = await secondRecorder.recordedEvents()
+        #expect(!secondEvents.contains(.diagnostic("final stderr")))
+        await runner.shutdown()
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func processExit_WhenReadPipeNeverReachesEOF_ClosesConnectionAfterDrainGrace() async throws {
         let firstTransport = FakeACPTransport()

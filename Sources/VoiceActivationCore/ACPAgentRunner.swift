@@ -34,10 +34,12 @@ public actor ACPAgentRunner: AgentHarnessRunning {
 
     private static let cancellationGracePeriod = Duration.seconds(2)
     private static let exitDrainGracePeriod = Duration.milliseconds(500)
+    private static let promptSettlePeriod = Duration.milliseconds(25)
 
     private let transportFactory: any ACPTransportCreating
     private let clock: any ACPAgentRunnerClock
     private let drainClock: any ACPAgentRunnerClock
+    private let settleClock: any ACPAgentRunnerClock
     private var records: [UUID: ACPAgentConnectionRecord] = [:]
     private var activeTurn: ACPAgentActiveTurn?
     private var isShutDown = false
@@ -45,11 +47,13 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     public init(
         transportFactory: any ACPTransportCreating = ACPProcessTransportFactory(),
         clock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
-        drainClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock())
+        drainClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
+        settleClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock())
     {
         self.transportFactory = transportFactory
         self.clock = clock
         self.drainClock = drainClock
+        self.settleClock = settleClock
     }
 
     public func run(
@@ -106,7 +110,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                     "A cancelled prompt returned a non-cancelled stopReason.")
             }
 
-            if record.exitStatus != nil {
+            if await processExitWasObservedDuringPromptSettlement(record: record) {
                 _ = await record.exitTask?.result
             }
 
@@ -363,11 +367,12 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         turn.delivery.send(.diagnostic(decoded))
     }
 
-    private func markProcessExited(status: Int32, profileID: UUID, recordID: UUID) -> Bool {
+    private func markProcessExited(status: Int32, profileID: UUID, recordID: UUID) async -> Bool {
         guard let record = records[profileID], record.id == recordID else {
             return false
         }
         record.exitStatus = status
+        await record.exitObservation.resolve()
 
         return true
     }
@@ -407,6 +412,28 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             let result = await group.next() ?? .deadline
             group.cancelAll()
             return result
+        }
+    }
+
+    private func processExitWasObservedDuringPromptSettlement(
+        record: ACPAgentConnectionRecord) async -> Bool
+    {
+        let exitObservation = record.exitObservation
+        return await withTaskGroup(of: ACPAgentPromptSettleRace.self) { group in
+            group.addTask {
+                await exitObservation.wait()
+                return .processExited
+            }
+            group.addTask { [settleClock] in
+                await settleClock.sleep(for: Self.promptSettlePeriod)
+                return .settled
+            }
+            let result = await group.next() ?? .settled
+            group.cancelAll()
+            if case .processExited = result {
+                return true
+            }
+            return false
         }
     }
 
@@ -568,6 +595,7 @@ private final class ACPAgentConnectionRecord {
     var standardError = Data()
     var diagnosticRemainder = Data()
     var exitStatus: Int32?
+    let exitObservation = ACPAgentProcessExitLatch()
 
     init(
         id: UUID,
@@ -605,6 +633,47 @@ private enum ACPAgentCancellationRace: Sendable {
 private enum ACPAgentDrainRace: Sendable {
     case drained
     case deadline
+}
+
+private enum ACPAgentPromptSettleRace: Sendable {
+    case processExited
+    case settled
+}
+
+private actor ACPAgentProcessExitLatch {
+    private var wasResolved = false
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    func resolve() {
+        guard !wasResolved else {
+            return
+        }
+        wasResolved = true
+        let pending = waiters.values
+        waiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+
+    func wait() async {
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if wasResolved || Task.isCancelled {
+                    continuation.resume()
+                } else {
+                    waiters[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id: id) }
+        }
+    }
+
+    private func cancelWaiter(id: UUID) {
+        waiters.removeValue(forKey: id)?.resume()
+    }
 }
 
 private actor ACPAgentRunCompletionLatch {

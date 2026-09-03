@@ -21,6 +21,24 @@ public enum ACPProcessTransportError: Error, Equatable, LocalizedError, Sendable
     }
 }
 
+enum ACPProcessTransportReadStream: Hashable, Sendable {
+    case output
+    case diagnostic
+}
+
+struct ACPProcessTransportTestingHooks: Sendable {
+    let beforeYield: @Sendable (ACPProcessTransportReadStream) -> Void
+    let beforeDrainWaiterRegistration: @Sendable () -> Void
+
+    init(
+        beforeYield: @escaping @Sendable (ACPProcessTransportReadStream) -> Void = { _ in },
+        beforeDrainWaiterRegistration: @escaping @Sendable () -> Void = {})
+    {
+        self.beforeYield = beforeYield
+        self.beforeDrainWaiterRegistration = beforeDrainWaiterRegistration
+    }
+}
+
 public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
     private let state: ACPProcessTransportState
 
@@ -31,10 +49,23 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
             currentDirectoryURL: URL(fileURLWithPath: configuration.workingDirectory))
     }
 
-    public init(
+    public convenience init(
         executableURL: URL,
         arguments: [String],
         currentDirectoryURL: URL) throws
+    {
+        try self.init(
+            executableURL: executableURL,
+            arguments: arguments,
+            currentDirectoryURL: currentDirectoryURL,
+            testingHooks: ACPProcessTransportTestingHooks())
+    }
+
+    init(
+        executableURL: URL,
+        arguments: [String],
+        currentDirectoryURL: URL,
+        testingHooks: ACPProcessTransportTestingHooks) throws
     {
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             throw ACPProcessTransportError.executableIsNotRunnable(executableURL.path)
@@ -46,6 +77,13 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         let standardError = Pipe()
         let inputDescriptor = standardInput.fileHandleForWriting.fileDescriptor
         guard Darwin.fcntl(inputDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+            let message = String(cString: Darwin.strerror(errno))
+            throw ACPProcessTransportError.launchFailed(message)
+        }
+        let inputFlags = Darwin.fcntl(inputDescriptor, F_GETFL)
+        guard inputFlags >= 0,
+              Darwin.fcntl(inputDescriptor, F_SETFL, inputFlags | O_NONBLOCK) == 0
+        else {
             let message = String(cString: Darwin.strerror(errno))
             throw ACPProcessTransportError.launchFailed(message)
         }
@@ -61,7 +99,8 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
             process: process,
             standardInput: standardInput,
             standardOutput: standardOutput,
-            standardError: standardError)
+            standardError: standardError,
+            testingHooks: testingHooks)
         self.state = state
         state.installHandlers()
 
@@ -107,6 +146,10 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
     var hasPendingForcedTerminationForTesting: Bool {
         state.hasPendingForcedTermination
     }
+
+    var pendingDrainWaiterCountForTesting: Int {
+        state.pendingDrainWaiterCount
+    }
 }
 
 private final class ACPProcessTransportState: @unchecked Sendable {
@@ -122,6 +165,7 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     private let diagnosticHandle: FileHandle
     private let outputContinuation: AsyncThrowingStream<Data, any Error>.Continuation
     private let diagnosticContinuation: AsyncStream<Data>.Continuation
+    private let testingHooks: ACPProcessTransportTestingHooks
     private let stateLock = NSLock()
     private let sendLock = NSLock()
     private let outputReadLock = NSLock()
@@ -140,13 +184,19 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         stateLock.withLock { forcedTerminationWorkItem != nil }
     }
 
+    var pendingDrainWaiterCount: Int {
+        stateLock.withLock { drainWaiters.count }
+    }
+
     init(
         process: Process,
         standardInput: Pipe,
         standardOutput: Pipe,
-        standardError: Pipe)
+        standardError: Pipe,
+        testingHooks: ACPProcessTransportTestingHooks)
     {
         self.process = process
+        self.testingHooks = testingHooks
         inputHandle = standardInput.fileHandleForWriting
         outputHandle = standardOutput.fileHandleForReading
         diagnosticHandle = standardError.fileHandleForReading
@@ -190,15 +240,27 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         defer { sendLock.unlock() }
 
         let isClosed = stateLock.withLock {
-            terminationWasRequested || exitStatus != nil
+            terminationWasRequested || exitStatus != nil || inputWasClosed
         }
         guard !isClosed else {
             throw ACPProcessTransportError.transportClosed
         }
 
-        do {
-            try inputHandle.write(contentsOf: data)
-        } catch {
+        let didWriteCompleteFrame = data.withUnsafeBytes { bytes -> Bool in
+            guard let address = bytes.baseAddress else {
+                return false
+            }
+            var writtenByteCount: Int
+            repeat {
+                writtenByteCount = Darwin.write(
+                    inputHandle.fileDescriptor,
+                    address,
+                    bytes.count)
+            } while writtenByteCount < 0 && errno == EINTR
+            return writtenByteCount == bytes.count
+        }
+        guard didWriteCompleteFrame else {
+            closeInputWhileSendLocked()
             throw ACPProcessTransportError.transportClosed
         }
     }
@@ -222,9 +284,9 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         let id = UUID()
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                let wasCancelled = Task.isCancelled
+                testingHooks.beforeDrainWaiterRegistration()
                 let shouldResume = stateLock.withLock { () -> Bool in
-                    guard !wasCancelled,
+                    guard !Task.isCancelled,
                           !(outputWasFinished && diagnosticsWereFinished)
                     else {
                         return true
@@ -245,13 +307,13 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         outputReadLock.withLock {
             outputHandle.readabilityHandler = nil
             try? outputHandle.close()
+            finishOutputWhileReadLocked()
         }
         diagnosticReadLock.withLock {
             diagnosticHandle.readabilityHandler = nil
             try? diagnosticHandle.close()
+            finishDiagnosticsWhileReadLocked()
         }
-        finishOutput()
-        finishDiagnostics()
     }
 
     func terminate() {
@@ -294,6 +356,7 @@ private final class ACPProcessTransportState: @unchecked Sendable {
                     execute: workItem)
             }
         }
+        closeInput()
     }
 
     private func forceTerminationIfNeeded(
@@ -351,7 +414,13 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     }
 
     private func finishOutput() {
-        let result = stateLock.withLock {
+        outputReadLock.withLock {
+            finishOutputWhileReadLocked()
+        }
+    }
+
+    private func markOutputFinished() -> (Bool, [CheckedContinuation<Void, Never>]) {
+        stateLock.withLock {
             () -> (Bool, [CheckedContinuation<Void, Never>]) in
             guard !outputWasFinished else {
                 return (false, [])
@@ -359,14 +428,16 @@ private final class ACPProcessTransportState: @unchecked Sendable {
             outputWasFinished = true
             return (true, takeDrainWaitersIfFinished())
         }
-        if result.0 {
-            outputContinuation.finish()
-        }
-        resumeDrainWaiters(result.1)
     }
 
     private func finishDiagnostics() {
-        let result = stateLock.withLock {
+        diagnosticReadLock.withLock {
+            finishDiagnosticsWhileReadLocked()
+        }
+    }
+
+    private func markDiagnosticsFinished() -> (Bool, [CheckedContinuation<Void, Never>]) {
+        stateLock.withLock {
             () -> (Bool, [CheckedContinuation<Void, Never>]) in
             guard !diagnosticsWereFinished else {
                 return (false, [])
@@ -374,14 +445,21 @@ private final class ACPProcessTransportState: @unchecked Sendable {
             diagnosticsWereFinished = true
             return (true, takeDrainWaitersIfFinished())
         }
-        if result.0 {
-            diagnosticContinuation.finish()
-        }
-        resumeDrainWaiters(result.1)
     }
 
     private func closeHandlesAfterExit() {
         sendLock.lock()
+        closeInputWhileSendLocked()
+        sendLock.unlock()
+    }
+
+    private func closeInput() {
+        sendLock.lock()
+        closeInputWhileSendLocked()
+        sendLock.unlock()
+    }
+
+    private func closeInputWhileSendLocked() {
         let shouldCloseInput = stateLock.withLock { () -> Bool in
             guard !inputWasClosed else {
                 return false
@@ -392,41 +470,50 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         if shouldCloseInput {
             try? inputHandle.close()
         }
-        sendLock.unlock()
     }
 
     private func readOutput(from handle: FileHandle) {
-        let data = outputReadLock.withLock { () -> Data? in
+        outputReadLock.withLock {
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
                 try? handle.close()
-                return nil
+                finishOutputWhileReadLocked()
+                return
             }
-            return data
+            testingHooks.beforeYield(.output)
+            outputContinuation.yield(data)
         }
-        guard let data else {
-            finishOutput()
-            return
-        }
-        outputContinuation.yield(data)
     }
 
     private func readDiagnostic(from handle: FileHandle) {
-        let data = diagnosticReadLock.withLock { () -> Data? in
+        diagnosticReadLock.withLock {
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
                 try? handle.close()
-                return nil
+                finishDiagnosticsWhileReadLocked()
+                return
             }
-            return data
+            testingHooks.beforeYield(.diagnostic)
+            diagnosticContinuation.yield(data)
         }
-        guard let data else {
-            finishDiagnostics()
-            return
+    }
+
+    private func finishOutputWhileReadLocked() {
+        let result = markOutputFinished()
+        if result.0 {
+            outputContinuation.finish()
         }
-        diagnosticContinuation.yield(data)
+        resumeDrainWaiters(result.1)
+    }
+
+    private func finishDiagnosticsWhileReadLocked() {
+        let result = markDiagnosticsFinished()
+        if result.0 {
+            diagnosticContinuation.finish()
+        }
+        resumeDrainWaiters(result.1)
     }
 
     private func takeDrainWaitersIfFinished() -> [CheckedContinuation<Void, Never>] {

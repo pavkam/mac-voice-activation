@@ -34,6 +34,94 @@ private actor ACPProcessDrainObservation {
     }
 }
 
+private final class ACPProcessReadRaceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let outputRelease = DispatchSemaphore(value: 0)
+    private let diagnosticRelease = DispatchSemaphore(value: 0)
+    private var pausedStreams: Set<ACPProcessTransportReadStream> = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause(_ stream: ACPProcessTransportReadStream) {
+        let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            pausedStreams.insert(stream)
+            guard pausedStreams.count == 2 else {
+                return []
+            }
+            let pending = waiters
+            waiters.removeAll()
+            return pending
+        }
+        for waiter in pending {
+            waiter.resume()
+        }
+        switch stream {
+        case .output:
+            outputRelease.wait()
+        case .diagnostic:
+            diagnosticRelease.wait()
+        }
+    }
+
+    func waitUntilBothStreamsPause() async {
+        await withCheckedContinuation { continuation in
+            let shouldResume = lock.withLock { () -> Bool in
+                guard pausedStreams.count < 2 else {
+                    return true
+                }
+                waiters.append(continuation)
+                return false
+            }
+            if shouldResume {
+                continuation.resume()
+            }
+        }
+    }
+
+    func releaseBothStreams() {
+        outputRelease.signal()
+        diagnosticRelease.signal()
+    }
+}
+
+private final class ACPProcessRegistrationRaceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let release = DispatchSemaphore(value: 0)
+    private var didPause = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause() {
+        let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            didPause = true
+            let pending = waiters
+            waiters.removeAll()
+            return pending
+        }
+        for waiter in pending {
+            waiter.resume()
+        }
+        release.wait()
+    }
+
+    func waitUntilPaused() async {
+        await withCheckedContinuation { continuation in
+            let shouldResume = lock.withLock { () -> Bool in
+                guard !didPause else {
+                    return true
+                }
+                waiters.append(continuation)
+                return false
+            }
+            if shouldResume {
+                continuation.resume()
+            }
+        }
+    }
+
+    func resume() {
+        release.signal()
+    }
+}
+
 @Suite(.serialized)
 struct ACPProcessTransportTests {
     @Test(.timeLimit(.minutes(1)))
@@ -235,6 +323,108 @@ struct ACPProcessTransportTests {
         #expect(!transport.hasPendingForcedTerminationForTesting)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func terminate_WhenDescendantsRetainFullStandardInput_UnblocksWriterPromptly() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = try makeStandardInputRetainingFixture(in: directory)
+        let transport = try ACPProcessTransport(
+            executableURL: executable,
+            arguments: [],
+            currentDirectoryURL: directory)
+        let output = await transport.output()
+        var iterator = output.makeAsyncIterator()
+        #expect(try await iterator.next() == Data("ready\n".utf8))
+        var frame = Data(repeating: 0x78, count: 4_095)
+        frame.append(0x0A)
+        let sendStarted = ACPProcessDrainObservation()
+        let send = Task {
+            await sendStarted.started()
+            do {
+                while true {
+                    try await transport.send(frame)
+                }
+                return false
+            } catch ACPProcessTransportError.transportClosed {
+                return true
+            } catch {
+                return false
+            }
+        }
+        await sendStarted.waitUntilStarted()
+        try await ContinuousClock().sleep(for: .milliseconds(100))
+
+        let start = ContinuousClock.now
+        await transport.terminate()
+        let sendWasClosed = await send.value
+        let elapsed = start.duration(to: .now)
+
+        #expect(sendWasClosed)
+        #expect(elapsed < .seconds(1))
+        await transport.closeReadStreams()
+        _ = await transport.waitForExit()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func closeReadStreams_WhenBothReadersAlreadyHaveBytes_DeliversBytesBeforeEOF() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gate = ACPProcessReadRaceGate()
+        let hooks = ACPProcessTransportTestingHooks(
+            beforeYield: { stream in gate.pause(stream) })
+        let executable = try makeExecutableFixture(
+            in: directory,
+            body: "printf 'protocol-output\\n'\nprintf 'private-diagnostic\\n' >&2\n/bin/sleep 10\n")
+        let transport = try ACPProcessTransport(
+            executableURL: executable,
+            arguments: [],
+            currentDirectoryURL: directory,
+            testingHooks: hooks)
+        let output = await transport.output()
+        let diagnostics = await transport.diagnostics()
+        async let outputData = collect(output)
+        async let diagnosticData = collect(diagnostics)
+        await gate.waitUntilBothStreamsPause()
+        let close = Task { await transport.closeReadStreams() }
+        try await ContinuousClock().sleep(for: .milliseconds(100))
+
+        gate.releaseBothStreams()
+        await close.value
+
+        #expect(try await outputData == Data("protocol-output\n".utf8))
+        #expect(await diagnosticData == Data("private-diagnostic\n".utf8))
+        await transport.terminate()
+        _ = await transport.waitForExit()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func waitForDrain_WhenCancelledBeforeRegistration_DoesNotLeaveAWaiter() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gate = ACPProcessRegistrationRaceGate()
+        let hooks = ACPProcessTransportTestingHooks(
+            beforeDrainWaiterRegistration: { gate.pause() })
+        let transport = try ACPProcessTransport(
+            executableURL: URL(fileURLWithPath: "/bin/sleep"),
+            arguments: ["10"],
+            currentDirectoryURL: directory,
+            testingHooks: hooks)
+        let drain = Task { await transport.waitForDrain() }
+        await gate.waitUntilPaused()
+
+        drain.cancel()
+        gate.resume()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        #expect(transport.pendingDrainWaiterCountForTesting == 0)
+        await transport.closeReadStreams()
+        await drain.value
+        await transport.terminate()
+        _ = await transport.waitForExit()
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -250,6 +440,51 @@ struct ACPProcessTransportTests {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o700],
             ofItemAtPath: executable.path)
+        return executable
+    }
+
+    private func makeStandardInputRetainingFixture(in directory: URL) throws -> URL {
+        let source = directory.appendingPathComponent("stdin-retainer.c")
+        let executable = directory.appendingPathComponent("stdin-retainer")
+        let program = """
+        #include <signal.h>
+        #include <stdlib.h>
+        #include <unistd.h>
+
+        int main(void) {
+            int ready_pipe[2];
+            if (pipe(ready_pipe) != 0) return 1;
+            pid_t child = fork();
+            if (child < 0) return 2;
+            if (child == 0) {
+                close(ready_pipe[0]);
+                signal(SIGHUP, SIG_IGN);
+                signal(SIGTERM, SIG_IGN);
+                char ready = '1';
+                if (write(ready_pipe[1], &ready, 1) != 1) _exit(3);
+                close(ready_pipe[1]);
+                sleep(3);
+                _exit(0);
+            }
+            close(ready_pipe[1]);
+            char ready = 0;
+            if (read(ready_pipe[0], &ready, 1) != 1) return 4;
+            close(ready_pipe[0]);
+            if (write(STDOUT_FILENO, "ready\\n", 6) != 6) return 5;
+            pause();
+            return 0;
+        }
+        """
+        try Data(program.utf8).write(to: source)
+
+        let compiler = Process()
+        compiler.executableURL = URL(fileURLWithPath: "/usr/bin/clang")
+        compiler.arguments = [source.path, "-o", executable.path]
+        try compiler.run()
+        compiler.waitUntilExit()
+        guard compiler.terminationStatus == 0 else {
+            throw CocoaError(.executableLoad)
+        }
         return executable
     }
 
