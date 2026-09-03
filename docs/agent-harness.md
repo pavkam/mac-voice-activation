@@ -90,6 +90,8 @@ ACP subprocess communication follows the stable protocol-owner specification:
 - UTF-8 JSON-RPC 2.0 over standard input and standard output.
 - Exactly one compact JSON value per line; protocol messages contain no
   embedded literal newline bytes.
+- Incoming request identifiers preserve the full ACP `int64 | string | null`
+  union so permission responses use exactly the identifier sent by the agent.
 - Standard error is a separate diagnostic stream and never parsed as ACP.
 - Startup calls `initialize` with `protocolVersion: 1`, no filesystem,
   terminal, terminal-authentication, or elicitation capabilities, and Voice
