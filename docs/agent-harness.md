@@ -118,8 +118,9 @@ The client handles every stable ACP v1 update discriminator:
 
 Unknown update types and provider extensions do not crash or end the run. They
 appear as bounded diagnostics. Unknown inbound requests receive JSON-RPC
-`method not found`; blocking Cursor extensions that ask a question are
-explicitly cancelled and reported rather than left pending.
+`method not found`; Cursor's blocking question and plan-approval extensions
+receive their documented cancelled result and are reported rather than left
+pending.
 
 The client does not claim to expose private chain-of-thought. It displays only
 content the agent sends through ACP.
