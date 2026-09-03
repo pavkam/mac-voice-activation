@@ -7,6 +7,7 @@ enum AgentRunPanelAction: Equatable {
     case permission(runID: UUID, key: AgentPermissionKey, optionID: String)
     case copy(runID: UUID)
     case close(runID: UUID)
+    case delete(runID: UUID)
 }
 
 @MainActor
@@ -38,6 +39,7 @@ final class AgentRunPanelPresenter {
     var onEndConversation: ((UUID) -> Void)?
     var onPermission: ((UUID, AgentPermissionKey, String) -> Void)?
     var onClose: ((UUID) -> Void)?
+    var onDelete: ((UUID) -> Void)?
 
     private let display: any AgentRunPanelDisplaying
     private let pasteboard: any AgentRunPasteboardWriting
@@ -85,6 +87,10 @@ final class AgentRunPanelPresenter {
         display.hide(runID: runID)
     }
 
+    func delete(runID: UUID) {
+        handle(.delete(runID: runID))
+    }
+
     private func handle(_ action: AgentRunPanelAction) {
         guard let snapshot else { return }
         switch action {
@@ -119,6 +125,11 @@ final class AgentRunPanelPresenter {
             guard snapshot.runID == runID, snapshot.phase.isTerminal else { return }
             display.hide(runID: runID)
             onClose?(runID)
+        case let .delete(runID):
+            guard snapshot.runID == runID, snapshot.phase.isTerminal else { return }
+            self.snapshot = nil
+            display.hide(runID: runID)
+            onDelete?(runID)
         }
     }
 }

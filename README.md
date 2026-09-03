@@ -120,7 +120,9 @@ an unfinished sentence is queued after a short output pause, so narration starts
 before the agent turn ends without overlapping itself. The working pulse pauses
 while speech plays. Voice cancellation says “Stopped” when reply speech is
 enabled, and tests inject silent audio players, so CI never emits speaker sounds.
-Completed output remains selectable and copyable until the panel is closed.
+Closing the completed panel keeps its bounded output available from **Open** in
+the menu. **Delete** is available both there and in the conversation panel; it
+hides the panel and releases that retained output from memory.
 Copied output contains the request, response Markdown, and bounded diagnostics.
 Its response section separates conversation turns and excludes provider thought
 updates.

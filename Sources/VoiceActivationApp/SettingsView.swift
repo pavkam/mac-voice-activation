@@ -154,7 +154,7 @@ struct SettingsView: View {
 
             settingToggle(
                 title: "Working pulse",
-                detail: "Plays a quiet cue during longer pauses while the agent is thinking or using tools.",
+                detail: "Plays an audible cue during longer pauses while the agent is thinking or using tools.",
                 isOn: $model.playsAgentWorkingSound)
         }
     }

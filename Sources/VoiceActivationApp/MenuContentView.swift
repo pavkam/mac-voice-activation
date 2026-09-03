@@ -158,40 +158,63 @@ struct MenuContentView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 8) {
-                Button {
-                    model.showAgentRun()
-                } label: {
-                    Label("Show conversation", systemImage: "rectangle.on.rectangle")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
+            if snapshot.phase.isTerminal {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
 
-                if snapshot.phase == .running {
-                    Button {
-                        model.cancelAgentRun(runID: snapshot.runID)
+                    Button(role: .destructive) {
+                        model.deleteAgentRun()
                     } label: {
-                        Label("Stop turn", systemImage: "stop.circle.fill")
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        model.showAgentRun()
+                    } label: {
+                        Label("Open", systemImage: "rectangle.on.rectangle")
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.red.opacity(0.84))
-                } else if snapshot.phase == .cancelling {
-                    Button("Cancelling…") {}
-                        .buttonStyle(.bordered)
-                        .disabled(true)
+                    .tint(snapshot.accent.swiftUIColor)
                 }
-            }
+            } else {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
 
-            if !snapshot.phase.isTerminal {
-                Button {
-                    model.endAgentConversation(runID: snapshot.runID)
-                } label: {
-                    Label(
-                        "End conversation",
-                        systemImage: "rectangle.portrait.and.arrow.right")
-                        .frame(maxWidth: .infinity)
+                    Button {
+                        model.showAgentRun()
+                    } label: {
+                        Label("Open", systemImage: "rectangle.on.rectangle")
+                    }
+                    .buttonStyle(.bordered)
+
+                    if snapshot.phase == .running {
+                        Button {
+                            model.cancelAgentRun(runID: snapshot.runID)
+                        } label: {
+                            Label("Stop turn", systemImage: "stop.circle.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red.opacity(0.84))
+                    } else if snapshot.phase == .cancelling {
+                        Button("Cancelling…") {}
+                            .buttonStyle(.bordered)
+                            .disabled(true)
+                    }
                 }
-                .buttonStyle(.bordered)
+
+                HStack {
+                    Spacer(minLength: 0)
+
+                    Button {
+                        model.endAgentConversation(runID: snapshot.runID)
+                    } label: {
+                        Label(
+                            "End conversation",
+                            systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .padding(12)

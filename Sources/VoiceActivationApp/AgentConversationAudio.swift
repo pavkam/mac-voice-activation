@@ -40,30 +40,58 @@ protocol AgentWorkingPulsePlaying: AnyObject {
 }
 
 @MainActor
-final class SystemAgentWorkingPulsePlayer: AgentWorkingPulsePlaying {
+protocol AgentWorkingPulseAssetPlaying: AnyObject {
+    func playBundled(named name: String, volume: Float) -> Bool
+    func playSystem(named name: String)
+    func stop()
+}
+
+@MainActor
+final class AppAgentWorkingPulseAssets: AgentWorkingPulseAssetPlaying {
     private var sound: NSSound?
 
-    func play() {
-        let sound: NSSound
-        if let existingSound = self.sound {
-            sound = existingSound
-        } else {
-            guard let url = Bundle.main.url(forResource: "CaptureStart", withExtension: "wav"),
-                  let loadedSound = NSSound(contentsOf: url, byReference: true)
-            else { return }
-            loadedSound.volume = 0.12
-            self.sound = loadedSound
-            sound = loadedSound
-        }
+    func playBundled(named name: String, volume: Float) -> Bool {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "wav"),
+              let sound = NSSound(contentsOf: url, byReference: true)
+        else { return false }
+        sound.volume = volume
+        play(sound)
+        return true
+    }
 
-        if sound.isPlaying {
-            sound.stop()
-        }
-        sound.play()
+    func playSystem(named name: String) {
+        guard let sound = NSSound(named: NSSound.Name(name)) else { return }
+        play(sound)
     }
 
     func stop() {
         sound?.stop()
+        sound = nil
+    }
+
+    private func play(_ sound: NSSound) {
+        self.sound?.stop()
+        self.sound = sound
+        sound.play()
+    }
+}
+
+@MainActor
+final class SystemAgentWorkingPulsePlayer: AgentWorkingPulsePlaying {
+    private let assetPlayer: any AgentWorkingPulseAssetPlaying
+
+    init(assetPlayer: any AgentWorkingPulseAssetPlaying = AppAgentWorkingPulseAssets()) {
+        self.assetPlayer = assetPlayer
+    }
+
+    func play() {
+        if !assetPlayer.playBundled(named: "CaptureStart", volume: 0.32) {
+            assetPlayer.playSystem(named: "Pop")
+        }
+    }
+
+    func stop() {
+        assetPlayer.stop()
     }
 }
 
@@ -112,12 +140,7 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
     }
 
     func setWorking(_ working: Bool) {
-        guard workingRequested != working else {
-            if working {
-                refreshWorkingPulse()
-            }
-            return
-        }
+        guard workingRequested != working else { return }
         workingRequested = working
         refreshWorkingPulse()
     }

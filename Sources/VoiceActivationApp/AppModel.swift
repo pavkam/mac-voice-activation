@@ -132,6 +132,11 @@ final class AppModel {
         agentRunPanelPresenter.onClose = { [weak self] runID in
             self?.agentRunPresentation.close(runID: runID)
         }
+        agentRunPanelPresenter.onDelete = { [weak self] runID in
+            guard let self, self.agentRunSnapshot?.runID == runID else { return }
+            self.agentRunPresentation.discard(runID: runID)
+            self.agentRunSnapshot = nil
+        }
         resolvedAgentConversationAudioPlayer.onSpeakingChange = { [weak self] speaking in
             self?.coordinator.setAgentSpeechOutputActive(speaking)
         }
@@ -412,6 +417,11 @@ final class AppModel {
     func showAgentRun() {
         guard let runID = agentRunSnapshot?.runID else { return }
         agentRunPanelPresenter.show(runID: runID)
+    }
+
+    func deleteAgentRun() {
+        guard let snapshot = agentRunSnapshot, snapshot.phase.isTerminal else { return }
+        agentRunPanelPresenter.delete(runID: snapshot.runID)
     }
 
     func cancelAgentRun(runID: UUID) {

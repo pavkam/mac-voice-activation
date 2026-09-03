@@ -159,6 +159,44 @@ struct AgentRunPanelPresenterTests {
         #expect(display.shown == [runID])
     }
 
+    @MainActor @Test func delete_WhenRunIsTerminal_HidesAndForgetsItExactlyOnce() {
+        let display = AgentRunPanelDisplaySpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy())
+        let runID = UUID()
+        var deletedRuns: [UUID] = []
+        presenter.onDelete = { deletedRuns.append($0) }
+        presenter.begin(
+            replacingPhase(.completed(.endTurn), in: runningSnapshot(runID: runID)),
+            from: nil)
+
+        display.onAction?(.delete(runID: runID))
+        display.onAction?(.delete(runID: runID))
+        display.onAction?(.delete(runID: UUID()))
+        presenter.show(runID: runID)
+
+        #expect(display.hidden == [runID])
+        #expect(display.shown.isEmpty)
+        #expect(deletedRuns == [runID])
+    }
+
+    @MainActor @Test func delete_WhenRunIsActive_DoesNothing() {
+        let display = AgentRunPanelDisplaySpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy())
+        let runID = UUID()
+        var deletedRuns: [UUID] = []
+        presenter.onDelete = { deletedRuns.append($0) }
+        presenter.begin(runningSnapshot(runID: runID), from: nil)
+
+        display.onAction?(.delete(runID: runID))
+
+        #expect(display.hidden.isEmpty)
+        #expect(deletedRuns.isEmpty)
+    }
+
     @MainActor @Test func panel_WhenConstructed_IsFloatingAndCannotBecomeKeyOrMain() {
         let controller = AgentRunPanelController()
         let panel = controller.panelForTesting

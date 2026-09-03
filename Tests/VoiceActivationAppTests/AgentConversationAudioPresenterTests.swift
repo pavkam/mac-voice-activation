@@ -88,6 +88,7 @@ private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
 @MainActor
 private final class AgentWorkingPulsePlayerSpy: AgentWorkingPulsePlaying {
     private(set) var playCount = 0
+    private(set) var stopCount = 0
     var onPlay: (() -> Void)?
 
     func play() {
@@ -95,11 +96,70 @@ private final class AgentWorkingPulsePlayerSpy: AgentWorkingPulsePlaying {
         onPlay?()
     }
 
-    func stop() {}
+    func stop() {
+        stopCount += 1
+    }
+}
+
+@MainActor
+private final class AgentWorkingPulseAssetSpy: AgentWorkingPulseAssetPlaying {
+    var bundledResult = true
+    private(set) var bundledRequests: [(name: String, volume: Float)] = []
+    private(set) var systemNames: [String] = []
+    private(set) var stopCount = 0
+
+    func playBundled(named name: String, volume: Float) -> Bool {
+        bundledRequests.append((name: name, volume: volume))
+        return bundledResult
+    }
+
+    func playSystem(named name: String) {
+        systemNames.append(name)
+    }
+
+    func stop() {
+        stopCount += 1
+    }
 }
 
 @Suite(.timeLimit(.minutes(1)))
 struct AgentConversationAudioPresenterTests {
+    @MainActor @Test func systemPlayer_WhenWorkingStateRepeats_DoesNotRestartPulseDelay() {
+        let workingPulse = AgentWorkingPulsePlayerSpy()
+        let player = AgentConversationAudioPlayer(workingPulse: workingPulse)
+
+        player.setWorking(true)
+        let stopCountAfterStarting = workingPulse.stopCount
+        player.setWorking(true)
+        player.setWorking(true)
+
+        #expect(workingPulse.stopCount == stopCountAfterStarting)
+        player.stopAll()
+    }
+
+    @MainActor @Test func workingPulse_WhenBundledCueExists_PlaysAtAudibleVolumeAndStops() {
+        let assets = AgentWorkingPulseAssetSpy()
+        let pulse = SystemAgentWorkingPulsePlayer(assetPlayer: assets)
+
+        pulse.play()
+        pulse.stop()
+
+        #expect(assets.bundledRequests.map(\.name) == ["CaptureStart"])
+        #expect(assets.bundledRequests.map(\.volume) == [0.32])
+        #expect(assets.systemNames.isEmpty)
+        #expect(assets.stopCount == 1)
+    }
+
+    @MainActor @Test func workingPulse_WhenBundledCueIsUnavailable_UsesSystemFallback() {
+        let assets = AgentWorkingPulseAssetSpy()
+        assets.bundledResult = false
+        let pulse = SystemAgentWorkingPulsePlayer(assetPlayer: assets)
+
+        pulse.play()
+
+        #expect(assets.systemNames == ["Pop"])
+    }
+
     @MainActor @Test func systemPlayer_WhenElevenLabsIsSelected_RoutesSpeechToElevenLabs()
         async
     {

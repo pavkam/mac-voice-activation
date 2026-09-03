@@ -329,9 +329,36 @@ final class AgentRunPresentation {
         stopRuntimeTimers()
     }
 
+    func discard(runID: UUID) {
+        guard self.runID == runID else { return }
+        clearRetainedRun()
+    }
+
     func shutdown() {
+        clearRetainedRun()
+    }
+
+    private func clearRetainedRun() {
         cancelTimers()
         runID = nil
+        profileID = nil
+        accent = nil
+        prompt = nil
+        providerName = nil
+        phase = nil
+        voiceInput = ""
+        needsResponseSeparator = false
+        outputBuffer.removeAll(keepingCapacity: false)
+        diagnosticBuffer.removeAll(keepingCapacity: false)
+        plan.removeAll(keepingCapacity: false)
+        tools.removeAll(keepingCapacity: false)
+        timeline.removeAll(keepingCapacity: false)
+        timelineHasOmittedActivity = false
+        permissions.removeAll(keepingCapacity: false)
+        notices.removeAll(keepingCapacity: false)
+        elapsedSeconds = 0
+        evictedToolCount = 0
+        ignoredToolUpdateCount = 0
     }
 
     private func apply(_ event: AgentRunEvent) {
@@ -653,8 +680,8 @@ private struct AgentRunBoundedTextBuffer {
         }
     }
 
-    mutating func removeAll() {
-        storage.removeAll(keepingCapacity: true)
+    mutating func removeAll(keepingCapacity: Bool = true) {
+        storage.removeAll(keepingCapacity: keepingCapacity)
         head = 0
         discardedBytes = 0
     }

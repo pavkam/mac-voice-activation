@@ -97,9 +97,10 @@ Turn completion intentionally keeps both the panel and conversation microphone
 open for follow-ups. Speak another request to continue in the same ACP session.
 Use **Stop turn** to cancel only active work, or **End conversation** to return
 to passive wake listening. After the conversation ends, choose **Close** to hide
-the retained output. Saying only `stop`, `cancel`, or `dismiss` always ends the
-whole conversation; when reply speech is enabled, the app acknowledges this
-with “Stopped.”
+the retained output or **Delete** to hide and discard it. The menu-bar card can
+**Open** or **Delete** that retained conversation directly. Saying only `stop`,
+`cancel`, or `dismiss` always ends the whole conversation; when reply speech is
+enabled, the app acknowledges this with “Stopped.”
 
 If new output does not follow the bottom, scroll to the bottom once. A deliberate
 scroll upward pauses automatic following so earlier output remains readable.
@@ -127,7 +128,7 @@ system voice and obeys the current output volume. For ElevenLabs, confirm the AP
 key and Voice ID are valid and that the Mac can reach `api.elevenlabs.io`; the key
 is read from macOS Keychain. A failed ElevenLabs request falls back to the macOS
 voice rather than dropping the spoken chunk. The working pulse waits 1.6 seconds
-before its first low-volume cue and pauses while narration is active.
+before its first audible cue and pauses while narration is active.
 
 Narration begins when a complete sentence arrives or output pauses for 350
 milliseconds. It does not wait for the whole agent process to finish. If several

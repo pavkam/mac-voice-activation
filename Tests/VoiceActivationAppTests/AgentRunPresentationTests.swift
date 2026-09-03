@@ -5,6 +5,38 @@ import Testing
 
 @Suite(.serialized)
 struct AgentRunPresentationTests {
+    @MainActor @Test func discard_WhenRunMatches_ClearsStateAndIgnoresLateEvents() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(
+            runID: runID,
+            profile: try makeAgentProfile(),
+            prompt: "Inspect")
+        presentation.complete(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn))
+
+        presentation.discard(runID: runID)
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "late", text: "Do not restore"))
+
+        #expect(presentation.snapshot == nil)
+    }
+
+    @MainActor @Test func discard_WhenRunIsStale_PreservesCurrentConversation() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(
+            runID: runID,
+            profile: try makeAgentProfile(),
+            prompt: "Inspect")
+
+        presentation.discard(runID: UUID())
+
+        #expect(presentation.snapshot?.runID == runID)
+    }
+
     @MainActor @Test func receive_WhenEventsStream_ReducesOrderedVisibleState() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let profile = try makeAgentProfile()

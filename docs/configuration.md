@@ -56,7 +56,7 @@ service when on-device recognition is unavailable.
   Keychain, never `UserDefaults` or project files. Synthesized response text is
   sent to ElevenLabs; a failed request falls back to the configured macOS voice
   so the reply does not disappear silently.
-- **Working pulse:** enabled by default. A low-volume cue begins after a short
+- **Working pulse:** enabled by default. An audible cue begins after a short
   silent delay and repeats while the agent is thinking or using tools. It stops
   when permission input is needed, speech is playing, or the turn ends. Choosing
   a permission option starts its delay again while the agent resumes, so the

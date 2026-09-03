@@ -198,7 +198,7 @@ to a 620 by 420 point material surface. It contains:
 - permission choices when required;
 - a live microphone row that shows the current follow-up transcription;
 - **Stop turn** while running and **End conversation** throughout the live
-  conversation, then **Close** and **Copy output** after it ends;
+  conversation, then **Delete**, **Copy output**, and **Close** after it ends;
   and
 - explicit truncation notices when a safety limit is reached.
 
@@ -211,9 +211,11 @@ content growth never misclassify that state.
 
 Completing one turn keeps the microphone and conversation open for a follow-up.
 Ending the conversation leaves the panel visible for inspection. The menu-bar
-panel offers **Show conversation**, **Stop turn**, and **End conversation** while
-applicable. A new conversation reuses the panel and clears the prior in-memory
-presentation.
+panel offers **Open**, **Stop turn**, and **End conversation** while applicable,
+then right-aligned **Delete** and **Open** actions after the conversation ends.
+Closing the panel keeps its bounded presentation available from **Open**;
+**Delete** hides it and releases it from memory. A new conversation reuses the
+panel and clears the prior in-memory presentation.
 
 Token bursts publish on leading and trailing edges at a fixed 50-millisecond
 cadence. This preserves immediate feedback without making SwiftUI render once

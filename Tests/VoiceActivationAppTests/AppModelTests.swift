@@ -63,6 +63,7 @@ private final class AppModelAgentPanelSpy: AgentRunPanelDisplaying {
     private(set) var began: [AgentRunSnapshot] = []
     private(set) var updates: [AgentRunSnapshot] = []
     private(set) var shown: [UUID] = []
+    private(set) var hidden: [UUID] = []
 
     func begin(_ snapshot: AgentRunSnapshot, from handoff: RecordingOverlayHandoff?) {
         began.append(snapshot)
@@ -70,7 +71,7 @@ private final class AppModelAgentPanelSpy: AgentRunPanelDisplaying {
 
     func update(_ snapshot: AgentRunSnapshot) { updates.append(snapshot) }
     func show(runID: UUID) { shown.append(runID) }
-    func hide(runID: UUID) {}
+    func hide(runID: UUID) { hidden.append(runID) }
 }
 
 @MainActor
@@ -981,6 +982,30 @@ struct AppModelTests {
         #expect(fixture.model.agentRunSnapshot?.output == "Done")
         #expect(fixture.model.agentRunSnapshot?.phase == .completed(.endTurn))
         #expect(panel.shown == [runID])
+    }
+
+    @MainActor @Test func deleteAgentRun_WhenConversationIsTerminal_DiscardsItAndHidesPanel()
+        throws
+    {
+        let profile = try makeAgentProfile(displayName: "Codex")
+        let panel = AppModelAgentPanelSpy()
+        let fixture = try Fixture(profiles: [profile], agentRunPanel: panel)
+        let runID = UUID()
+        fixture.model.handleAgentRunLifecycleEvent(.started(
+            runID: runID,
+            profile: profile,
+            prompt: "Explain the change"))
+        fixture.model.handleAgentRunLifecycleEvent(.completed(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn)))
+
+        fixture.model.deleteAgentRun()
+        fixture.model.handleAgentRunLifecycleEvent(.event(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "late", text: "Do not restore")))
+
+        #expect(fixture.model.agentRunSnapshot == nil)
+        #expect(panel.hidden == [runID])
     }
 
     @MainActor @Test func agentLifecycle_WhenEventIsStale_IgnoresIt() throws {

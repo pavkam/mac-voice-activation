@@ -379,6 +379,10 @@ struct AgentRunPanelView: View {
                 }
                 .buttonStyle(.bordered)
             } else {
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                    model.onAction?(.delete(runID: snapshot.runID))
+                }
+                .buttonStyle(.bordered)
                 Button("Copy output", systemImage: "doc.on.doc") {
                     model.onAction?(.copy(runID: snapshot.runID))
                 }
