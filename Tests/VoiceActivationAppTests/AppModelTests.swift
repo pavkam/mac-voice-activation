@@ -185,6 +185,25 @@ private final class AppModelAgentConversationAudioSpy: AgentConversationAudioPla
 }
 
 @MainActor
+private final class AgentSpeechCredentialStoreSpy: AgentSpeechCredentialStoring {
+    private(set) var apiKey: String?
+    private(set) var savedKeys: [String?] = []
+
+    init(apiKey: String? = nil) {
+        self.apiKey = apiKey
+    }
+
+    func loadElevenLabsAPIKey() throws -> String? {
+        apiKey
+    }
+
+    func saveElevenLabsAPIKey(_ apiKey: String?) throws {
+        self.apiKey = apiKey
+        savedKeys.append(apiKey)
+    }
+}
+
+@MainActor
 private final class PermissionRequestGate {
     private var continuations: [CheckedContinuation<Bool, Never>] = []
     private(set) var requestCount = 0
@@ -255,6 +274,7 @@ struct AppModelTests {
             permissionRequest: { true },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
 
         await model.start()
@@ -281,6 +301,7 @@ struct AppModelTests {
             permissionRequest: { true },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
 
         await model.start()
@@ -305,6 +326,7 @@ struct AppModelTests {
             permissionRequest: { true },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
 
         await model.start()
@@ -330,6 +352,7 @@ struct AppModelTests {
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -359,6 +382,7 @@ struct AppModelTests {
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -384,6 +408,7 @@ struct AppModelTests {
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
 
         model.setPassiveEnabled(true)
@@ -410,6 +435,7 @@ struct AppModelTests {
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
         let startup = Task { @MainActor in await model.start() }
         await waitUntil { permission.isWaiting && !shortcut.startedProfiles.isEmpty }
@@ -442,6 +468,7 @@ struct AppModelTests {
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
         let startup = Task { @MainActor in await model.start() }
         await waitUntil { permission.isWaiting }
@@ -469,6 +496,7 @@ struct AppModelTests {
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
         let startup = Task { @MainActor in await model.start() }
         await waitUntil { permission.isWaiting }
@@ -519,6 +547,7 @@ struct AppModelTests {
             permissionRequest: { await permission.request() },
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
         await model.start()
 
@@ -1022,16 +1051,39 @@ struct AppModelTests {
     }
 
     @MainActor @Test func saveSettings_WhenConversationAudioChanges_PersistsOnlyOnSave() async throws {
-        let fixture = try Fixture()
+        let credentials = AgentSpeechCredentialStoreSpy(apiKey: "saved-key")
+        let fixture = try Fixture(agentSpeechCredentialStore: credentials)
         fixture.model.readsAgentRepliesAloud = false
         fixture.model.playsAgentWorkingSound = false
+        fixture.model.agentSpeechProvider = .elevenLabs
+        fixture.model.elevenLabsVoiceID = "voice-123"
+        fixture.model.elevenLabsAPIKey = "new-key"
 
         #expect(fixture.preferences.readsAgentRepliesAloud)
         #expect(fixture.preferences.playsAgentWorkingSound)
+        #expect(fixture.preferences.agentSpeechProvider == .system)
+        #expect(credentials.apiKey == "saved-key")
 
         #expect(await fixture.model.saveSettings())
         #expect(!fixture.preferences.readsAgentRepliesAloud)
         #expect(!fixture.preferences.playsAgentWorkingSound)
+        #expect(fixture.preferences.agentSpeechProvider == .elevenLabs)
+        #expect(fixture.preferences.elevenLabsVoiceID == "voice-123")
+        #expect(credentials.apiKey == "new-key")
+    }
+
+    @MainActor @Test func saveSettings_WhenElevenLabsKeyIsEmpty_PreservesSavedSpeechSettings()
+        async throws
+    {
+        let credentials = AgentSpeechCredentialStoreSpy(apiKey: "saved-key")
+        let fixture = try Fixture(agentSpeechCredentialStore: credentials)
+        fixture.model.agentSpeechProvider = .elevenLabs
+        fixture.model.elevenLabsAPIKey = "   "
+
+        #expect(!(await fixture.model.saveSettings()))
+        #expect(fixture.preferences.agentSpeechProvider == .system)
+        #expect(credentials.apiKey == "saved-key")
+        #expect(fixture.model.settingsError == "ElevenLabs requires an API key.")
     }
 
     @MainActor
@@ -1048,6 +1100,8 @@ struct AppModelTests {
             agentRunPanel: AppModelAgentPanelSpy = AppModelAgentPanelSpy(),
             agentConversationAudioPlayer: any AgentConversationAudioPlaying =
                 SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: any AgentSpeechCredentialStoring =
+                AgentSpeechCredentialStoreSpy(),
             isExecutableFile: @escaping @MainActor (String) -> Bool = { path in
                 FileManager.default.isExecutableFile(atPath: path)
             },
@@ -1075,6 +1129,7 @@ struct AppModelTests {
                 permissionRequest: { true },
                 soundPlayer: SilentCaptureSoundPlayer(),
                 agentConversationAudioPlayer: agentConversationAudioPlayer,
+                agentSpeechCredentialStore: agentSpeechCredentialStore,
                 isExecutableFile: isExecutableFile,
                 isDirectory: isDirectory,
                 startsAutomatically: false)

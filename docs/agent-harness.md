@@ -51,9 +51,10 @@ or login-item-launched application cannot rely on an interactive shell's
 `PATH`. Reopening settings never replaces a saved path or edited adapter
 arguments automatically.
 
-The app inherits the launch environment but never stores API keys or other
-secret values in preferences. Users authenticate the selected agent through
-its normal provider CLI before starting a run.
+The app inherits the launch environment and never stores agent credentials in
+preferences. Users authenticate the selected agent through its normal provider
+CLI before starting a run. The optional ElevenLabs speech credential is separate
+from agent authentication and is stored in macOS Keychain.
 
 ## Runtime architecture
 
@@ -256,14 +257,20 @@ conversation recognition, and resumes passive wake listening after the normal
 cooldown.
 
 Settings independently enable spoken agent replies and a quiet working pulse.
-Reply speech uses the selected locale's macOS system voice and strips Markdown
-formatting; fenced code is announced but not read character by character. The
-voice also acknowledges a spoken conversation cancellation with “Stopped.” The
-working pulse begins only after a 1.6-second pause and repeats every 3.2 seconds
-while the agent is thinking or using tools. It stops for permission choices,
-cancellation, completion, and failure. Every streamed
-response or tool update resets the initial delay, so the cue marks silence
-rather than competing with active output.
+Reply speech strips Markdown formatting; fenced code is announced but not read
+character by character. Complete sentences enter a FIFO speech queue as soon as
+they stream from the agent. A 350-millisecond output pause flushes an unfinished
+sentence, and turn completion flushes only the remainder. The selected provider
+is either the locale-matching macOS voice or an ElevenLabs voice using its
+low-latency streaming endpoint and `eleven_flash_v2_5`; a failed cloud request
+falls back to the macOS voice. ElevenLabs audio and credentials remain in memory
+and Keychain respectively, and response text is sent to ElevenLabs for synthesis.
+
+The voice also acknowledges a spoken conversation cancellation with “Stopped.”
+The working pulse begins only after a 1.6-second pause and repeats every 3.2
+seconds while the agent is thinking or using tools. It stops for permission
+choices, narration, cancellation, completion, and failure, then resumes its
+delay if work continues after narration.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached
@@ -300,6 +307,8 @@ run states with bounded diagnostics. A failed connection is never reused.
   the retained-queue limits above.
 - No audio, prompt history, run history, raw tool payload, or agent output is
   written to disk by Voice Activation.
+- The optional ElevenLabs API key is stored as a generic password in macOS
+  Keychain. It is not stored in source, `UserDefaults`, logs, or copied output.
 
 Natural prompt completion drains both bounded delivery stages before publishing
 success. Forced cancellation and shutdown invalidate the active turn before
@@ -341,3 +350,5 @@ verification, and the exact pushed commit's CI workflow.
 - [Cursor native ACP server](https://prod.cursor.com/docs/cli/acp)
 - [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp)
 - [Claude ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp)
+- [ElevenLabs streaming text-to-speech API](https://elevenlabs.io/docs/api-reference/text-to-speech/stream)
+- [ElevenLabs low-latency streaming guide](https://elevenlabs.io/docs/eleven-api/guides/how-to/text-to-speech/streaming)

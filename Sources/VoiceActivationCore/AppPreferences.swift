@@ -5,6 +5,8 @@ public final class AppPreferences {
         static let passiveEnabled = "passiveEnabled"
         static let readsAgentRepliesAloud = "readsAgentRepliesAloud"
         static let playsAgentWorkingSound = "playsAgentWorkingSound"
+        static let agentSpeechProvider = "agentSpeechProvider"
+        static let elevenLabsVoiceID = "elevenLabsVoiceID"
         static let wakePhrase = "wakePhrase"
         static let wakeProfiles = "wakeProfiles"
         static let localeID = "localeID"
@@ -47,6 +49,29 @@ public final class AppPreferences {
                 : defaults.bool(forKey: Key.playsAgentWorkingSound)
         }
         set { defaults.set(newValue, forKey: Key.playsAgentWorkingSound) }
+    }
+
+    public var agentSpeechProvider: AgentSpeechProvider {
+        get {
+            guard let rawValue = defaults.string(forKey: Key.agentSpeechProvider) else {
+                return .system
+            }
+            return AgentSpeechProvider(rawValue: rawValue) ?? .system
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.agentSpeechProvider) }
+    }
+
+    public var elevenLabsVoiceID: String {
+        get {
+            normalized(
+                defaults.string(forKey: Key.elevenLabsVoiceID),
+                fallback: "JBFqnCBsd6RMkjVDRZzb")
+        }
+        set {
+            defaults.set(
+                normalized(newValue, fallback: "JBFqnCBsd6RMkjVDRZzb"),
+                forKey: Key.elevenLabsVoiceID)
+        }
     }
 
     public var wakePhrase: String {

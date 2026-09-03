@@ -90,12 +90,20 @@ coalescing, exact-once cancellation, menu affordances, overlay handoff geometry,
 bottom-pinned automatic scrolling throughout user interaction, bounded and
 chronological follow-ups, per-turn plans, thought-free separated response export,
 terminal tool settlement, and a panel that accepts pointer actions without
-becoming key or main. Conversation-audio tests use injected silent players to
-verify Markdown speech formatting, permission-resume behavior, and working-pulse
-state without producing sound from the test process. App tests cover pause and
+becoming key or main. Conversation-audio tests use injected silent players and
+an injected ElevenLabs transport to verify streamed sentence/quiet-gap flushing,
+FIFO playback, stale-request cancellation, cloud failure fallback, Markdown
+formatting, permission resume, and working-pulse suppression without producing
+sound or network traffic from the test process. App tests cover pause and
 shutdown races during pending permission requests plus profile-identified hotkey
 releases. Hotkey recording tests synthesize AppKit events without registering
 global shortcuts.
+
+Automated local provisioning may invoke the signed app once with
+`--store-elevenlabs-key-from-stdin`. The process reads exactly one credential
+line from standard input, stores it in Keychain under the app's own identity,
+and exits before creating the menu-bar UI. The credential must never be supplied
+as a command-line argument, environment value, fixture, or repository file.
 
 Run one suite while iterating:
 

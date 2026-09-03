@@ -46,18 +46,24 @@ service when on-device recognition is unavailable.
 
 ## Agent conversation audio
 
-- **Read replies aloud:** enabled by default. After an agent turn completes,
-  Voice Activation removes Markdown formatting and reads the response with the
-  macOS voice matching the configured speech locale. Code blocks are not read
-  character by character.
+- **Read replies aloud:** enabled by default. Voice Activation removes Markdown
+  formatting and queues complete sentences while the agent is still generating
+  them. An incomplete sentence is queued after 350 milliseconds without new
+  output, and any remainder is queued when the turn ends. Code blocks are not
+  read character by character.
+- **Voice provider:** choose the local macOS system voice or ElevenLabs. The
+  ElevenLabs option uses the saved Voice ID and keeps its API key in macOS
+  Keychain, never `UserDefaults` or project files. Synthesized response text is
+  sent to ElevenLabs; a failed request falls back to the configured macOS voice
+  so the reply does not disappear silently.
 - **Working pulse:** enabled by default. A low-volume cue begins after a short
   silent delay and repeats while the agent is thinking or using tools. It stops
-  when permission input is needed or the turn ends. Choosing a permission option
-  starts its delay again while the agent resumes. Each streamed update resets the
-  delay, so the pulse fills genuine pauses rather than continuous output.
+  when permission input is needed, speech is playing, or the turn ends. Choosing
+  a permission option starts its delay again while the agent resumes, so the
+  pulse fills genuine pauses rather than competing with narration.
 
-These are saved settings: editing either toggle does not affect an active
-conversation until **Save Settings** succeeds.
+These are saved settings: editing a toggle, provider, Voice ID, or API key does
+not affect an active conversation until **Save Settings** succeeds.
 
 ## Startup
 
@@ -129,7 +135,8 @@ checks common Homebrew, local, ChatGPT, and NVM locations.
 The Cursor preset uses `cursor-agent acp`. Codex and Claude use pinned ACP
 adapter package versions through `npx`. Authenticate with the corresponding
 provider CLI before triggering the profile. Voice Activation inherits the
-launch environment but never persists API keys.
+launch environment and never persists agent API keys. The independent optional
+ElevenLabs speech key is stored only in macOS Keychain.
 
 See [ACP agent harness](agent-harness.md) for streaming, cancellation,
 permissions, safety bounds, and provider lifecycle behavior.

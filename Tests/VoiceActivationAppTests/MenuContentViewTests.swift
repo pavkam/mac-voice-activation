@@ -71,6 +71,7 @@ struct MenuContentViewTests {
             recordingOverlay: MenuOverlayStub(),
             soundPlayer: SilentCaptureSoundPlayer(),
             agentConversationAudioPlayer: SilentAgentConversationAudioPlayer(),
+            agentSpeechCredentialStore: SilentAgentSpeechCredentialStore(),
             startsAutomatically: false)
     }
 }

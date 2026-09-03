@@ -156,11 +156,14 @@ cannot disable it.
 
 `AgentConversationAudioPresenter` observes typed lifecycle events through an
 injected playback boundary. It collects only user-facing agent message deltas,
-converts their Markdown to speech text at turn completion, and independently
-controls the delayed working pulse. Permission prompts pause that pulse and a
-resolved choice restarts its delay. Spoken conversation cancellation gets a short
-voice acknowledgement. Tests inject a silent player. The system adapter uses
-`AVSpeechSynthesizer` and a low-volume bundled cue.
+converts complete Markdown sentences to speech immediately, flushes an incomplete
+sentence after a 350-millisecond quiet gap, and flushes only the remainder at turn
+completion. The FIFO output boundary selects `AVSpeechSynthesizer` or ElevenLabs,
+falls back to the system voice after a cloud failure, and cancels stale synthesis
+by generation. Permission prompts and active narration pause the delayed working
+pulse; a resolved choice or completed utterance restarts its delay when work is
+still active. Spoken conversation cancellation gets a short acknowledgement.
+Tests inject silent synthesizer, audio-data, and working-pulse adapters.
 
 See [ACP agent harness](agent-harness.md) for the complete wire, permission,
 resource, and recovery contract.

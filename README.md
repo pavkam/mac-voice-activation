@@ -114,17 +114,20 @@ always ends the whole conversation and returns to passive wake listening.
 Up to 16 follow-ups may wait behind active work; the panel reports when that
 bounded queue is full instead of growing memory without limit.
 
-Settings can read completed replies aloud with the matching macOS system voice
-and play a quiet repeating pulse through long thinking/tool pauses. Both options
-are enabled by default. Voice cancellation says “Stopped” when reply speech is
+Settings can read replies aloud as they stream, using either the matching macOS
+system voice or an ElevenLabs voice. Complete sentences are queued immediately;
+an unfinished sentence is queued after a short output pause, so narration starts
+before the agent turn ends without overlapping itself. The working pulse pauses
+while speech plays. Voice cancellation says “Stopped” when reply speech is
 enabled, and tests inject silent audio players, so CI never emits speaker sounds.
 Completed output remains selectable and copyable until the panel is closed.
 Copied output contains the request, response Markdown, and bounded diagnostics.
 Its response section separates conversation turns and excludes provider thought
 updates.
 
-Provider authentication stays with the provider CLI. Voice Activation stores
-no API keys, prompt history, agent output, or raw tool payloads. See the
+Agent authentication stays with the provider CLI. The optional ElevenLabs API
+key is stored in macOS Keychain rather than source code or preferences. Voice
+Activation stores no prompt history, agent output, or raw tool payloads. See the
 [ACP agent harness guide](docs/agent-harness.md) for configuration, safety
 bounds, lifecycle details, and supported protocol behavior.
 

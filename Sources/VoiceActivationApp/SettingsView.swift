@@ -27,12 +27,15 @@ struct SettingsView: View {
                 .padding(.vertical, 16)
                 .background(.bar)
         }
-        .frame(width: 720, height: 680)
+        .frame(width: 720, height: 740)
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: model.wakeProfiles) { saved = false }
         .onChange(of: model.localeID) { saved = false }
         .onChange(of: model.readsAgentRepliesAloud) { saved = false }
         .onChange(of: model.playsAgentWorkingSound) { saved = false }
+        .onChange(of: model.agentSpeechProvider) { saved = false }
+        .onChange(of: model.elevenLabsVoiceID) { saved = false }
+        .onChange(of: model.elevenLabsAPIKey) { saved = false }
     }
 
     private var header: some View {
@@ -99,8 +102,53 @@ struct SettingsView: View {
         {
             settingToggle(
                 title: "Read replies aloud",
-                detail: "Uses the selected macOS system voice after each completed response.",
+                detail: "Speaks complete thoughts as the agent generates them.",
                 isOn: $model.readsAgentRepliesAloud)
+
+            if model.readsAgentRepliesAloud {
+                Divider()
+
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Voice provider")
+                            .fontWeight(.medium)
+                        Text(model.agentSpeechProvider.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Picker("Voice provider", selection: $model.agentSpeechProvider) {
+                        ForEach(AgentSpeechProvider.allCases, id: \.self) { provider in
+                            Label(provider.displayName, systemImage: provider.systemImage)
+                                .tag(provider)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+                }
+
+                if model.agentSpeechProvider == .elevenLabs {
+                    HStack(alignment: .top, spacing: 12) {
+                        secureSettingsField(
+                            "ElevenLabs API key",
+                            hint: "sk_…",
+                            text: $model.elevenLabsAPIKey)
+                        settingsField(
+                            "Voice ID",
+                            hint: "Voice ID",
+                            text: $model.elevenLabsVoiceID,
+                            monospaced: true)
+                    }
+
+                    Label(
+                        "The API key is stored in your macOS Keychain. Speech text is sent to ElevenLabs for synthesis.",
+                        systemImage: "key.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             Divider()
 
@@ -233,6 +281,21 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             TextField(hint, text: text)
                 .font(monospaced ? .system(.body, design: .monospaced) : .body)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func secureSettingsField(
+        _ title: String,
+        hint: String,
+        text: Binding<String>) -> some View
+    {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            SecureField(hint, text: text)
+                .font(.system(.body, design: .monospaced))
                 .textFieldStyle(.roundedBorder)
         }
     }
@@ -424,6 +487,29 @@ extension WakeProfileAccent {
         case .pink: .pink
         case .orange: .orange
         case .green: .green
+        }
+    }
+}
+
+private extension AgentSpeechProvider {
+    var displayName: String {
+        switch self {
+        case .system: "macOS"
+        case .elevenLabs: "ElevenLabs"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .system: "Uses the selected macOS system voice locally."
+        case .elevenLabs: "Uses a natural low-latency cloud voice."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .system: "apple.logo"
+        case .elevenLabs: "waveform.badge.mic"
         }
     }
 }

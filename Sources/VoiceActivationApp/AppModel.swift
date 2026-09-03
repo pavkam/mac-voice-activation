@@ -14,6 +14,9 @@ final class AppModel {
     var localeID: String
     var readsAgentRepliesAloud: Bool
     var playsAgentWorkingSound: Bool
+    var agentSpeechProvider: AgentSpeechProvider
+    var elevenLabsVoiceID: String
+    var elevenLabsAPIKey: String
     var settingsError: String?
     private(set) var isSavingSettings = false
     private(set) var agentRunSnapshot: AgentRunSnapshot?
@@ -32,6 +35,8 @@ final class AppModel {
     @ObservationIgnored private let soundPresenter: CaptureSoundPresenter
     @ObservationIgnored private let agentConversationAudioPlayer: any AgentConversationAudioPlaying
     @ObservationIgnored private let agentConversationAudioPresenter: AgentConversationAudioPresenter
+    @ObservationIgnored private let agentSpeechCredentialStore: any AgentSpeechCredentialStoring
+    @ObservationIgnored private let agentSpeechSettingsState: AgentSpeechSettingsState
     @ObservationIgnored private var started = false
     @ObservationIgnored private var isShutdown = false
     @ObservationIgnored private var permissionGranted = false
@@ -59,12 +64,24 @@ final class AppModel {
         agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
         permissionRequest: @escaping @MainActor () async -> Bool = SpeechPermissions.request,
         soundPlayer: any CaptureSoundPlaying = SystemCaptureSoundPlayer(),
-        agentConversationAudioPlayer: any AgentConversationAudioPlaying =
-            SystemAgentConversationAudioPlayer(),
+        agentConversationAudioPlayer: (any AgentConversationAudioPlaying)? = nil,
+        agentSpeechCredentialStore: any AgentSpeechCredentialStoring =
+            KeychainAgentSpeechCredentialStore(),
         isExecutableFile: @escaping @MainActor (String) -> Bool = AppModel.executableFileExists,
         isDirectory: @escaping @MainActor (String) -> Bool = AppModel.directoryExists,
         startsAutomatically: Bool = true)
     {
+        let storedElevenLabsAPIKey =
+            (try? agentSpeechCredentialStore.loadElevenLabsAPIKey()) ?? ""
+        let agentSpeechSettingsState = AgentSpeechSettingsState(
+            provider: preferences.agentSpeechProvider,
+            elevenLabsAPIKey: storedElevenLabsAPIKey,
+            elevenLabsVoiceID: preferences.elevenLabsVoiceID)
+        let resolvedAgentConversationAudioPlayer = agentConversationAudioPlayer
+            ?? AgentConversationAudioPlayer(speechConfiguration: {
+                agentSpeechSettingsState.configuration
+            })
+
         self.preferences = preferences
         self.shortcut = shortcut
         self.speechSession = speechSession
@@ -73,13 +90,15 @@ final class AppModel {
         self.isExecutableFile = isExecutableFile
         self.isDirectory = isDirectory
         self.permissionRequest = permissionRequest
+        self.agentSpeechCredentialStore = agentSpeechCredentialStore
+        self.agentSpeechSettingsState = agentSpeechSettingsState
         overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
         agentRunPresentation = AgentRunPresentation()
         agentRunPanelPresenter = AgentRunPanelPresenter(display: agentRunPanel)
         soundPresenter = CaptureSoundPresenter(player: soundPlayer)
-        self.agentConversationAudioPlayer = agentConversationAudioPlayer
+        self.agentConversationAudioPlayer = resolvedAgentConversationAudioPlayer
         agentConversationAudioPresenter = AgentConversationAudioPresenter(
-            player: agentConversationAudioPlayer,
+            player: resolvedAgentConversationAudioPlayer,
             readsReplies: { preferences.readsAgentRepliesAloud },
             playsWorkingSound: { preferences.playsAgentWorkingSound },
             localeID: { preferences.localeID })
@@ -89,6 +108,9 @@ final class AppModel {
         localeID = preferences.localeID
         readsAgentRepliesAloud = preferences.readsAgentRepliesAloud
         playsAgentWorkingSound = preferences.playsAgentWorkingSound
+        agentSpeechProvider = preferences.agentSpeechProvider
+        elevenLabsVoiceID = preferences.elevenLabsVoiceID
+        elevenLabsAPIKey = storedElevenLabsAPIKey
         overlayPresenter.onCancel = { [weak self] in
             self?.cancelCapture()
         }
@@ -110,7 +132,7 @@ final class AppModel {
         agentRunPanelPresenter.onClose = { [weak self] runID in
             self?.agentRunPresentation.close(runID: runID)
         }
-        agentConversationAudioPlayer.onSpeakingChange = { [weak self] speaking in
+        resolvedAgentConversationAudioPlayer.onSpeakingChange = { [weak self] speaking in
             self?.coordinator.setAgentSpeechOutputActive(speaking)
         }
 
@@ -171,6 +193,7 @@ final class AppModel {
             profiles = try wakeProfiles.map { try $0.validatedProfile() }
             try WakeProfileCollectionValidator.validate(profiles)
             try validateFileSystem(profiles)
+            try validateAgentSpeechSettings()
         } catch {
             settingsError = error.localizedDescription
             return false
@@ -183,6 +206,16 @@ final class AppModel {
             return false
         }
 
+        let normalizedAPIKey = elevenLabsAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try agentSpeechCredentialStore.saveElevenLabsAPIKey(
+                normalizedAPIKey.isEmpty ? nil : normalizedAPIKey)
+        } catch {
+            try? registerShortcuts(activeWakeProfiles)
+            settingsError = error.localizedDescription
+            return false
+        }
+
         let profileIDsToReset = agentProfileIDsToReset(
             oldProfiles: activeWakeProfiles,
             newProfiles: profiles)
@@ -190,6 +223,18 @@ final class AppModel {
         preferences.localeID = localeID
         preferences.readsAgentRepliesAloud = readsAgentRepliesAloud
         preferences.playsAgentWorkingSound = playsAgentWorkingSound
+        preferences.agentSpeechProvider = agentSpeechProvider
+        preferences.elevenLabsVoiceID = elevenLabsVoiceID
+        elevenLabsAPIKey = normalizedAPIKey
+        elevenLabsVoiceID = preferences.elevenLabsVoiceID
+        let previousSpeechConfiguration = agentSpeechSettingsState.configuration
+        agentSpeechSettingsState.update(
+            provider: agentSpeechProvider,
+            elevenLabsAPIKey: normalizedAPIKey,
+            elevenLabsVoiceID: elevenLabsVoiceID)
+        if previousSpeechConfiguration != agentSpeechSettingsState.configuration {
+            agentConversationAudioPlayer.stopSpeaking()
+        }
         agentConversationAudioPresenter.refreshSettings()
         activeWakeProfiles = profiles
         wakeProfiles = activeWakeProfiles.map(WakeProfileDraft.init)
@@ -311,6 +356,16 @@ final class AppModel {
                         configuration.workingDirectory)
                 }
             }
+        }
+    }
+
+    private func validateAgentSpeechSettings() throws {
+        guard agentSpeechProvider == .elevenLabs else { return }
+        guard !elevenLabsAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SettingsValidationError.elevenLabsAPIKeyRequired
+        }
+        guard !elevenLabsVoiceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SettingsValidationError.elevenLabsVoiceIDRequired
         }
     }
 
@@ -476,6 +531,8 @@ final class AppModel {
         case executableIsNotRunnable(String)
         case agentExecutableIsNotRunnable(String)
         case workingDirectoryIsNotDirectory(String)
+        case elevenLabsAPIKeyRequired
+        case elevenLabsVoiceIDRequired
 
         var errorDescription: String? {
             switch self {
@@ -485,6 +542,10 @@ final class AppModel {
                 "The agent executable is missing or not runnable: \(path)"
             case let .workingDirectoryIsNotDirectory(path):
                 "The agent working directory is missing or is not a directory: \(path)"
+            case .elevenLabsAPIKeyRequired:
+                "ElevenLabs requires an API key."
+            case .elevenLabsVoiceIDRequired:
+                "ElevenLabs requires a voice ID."
             }
         }
     }

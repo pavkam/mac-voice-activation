@@ -122,9 +122,16 @@ outcome. Cancelling the run also cancels every pending permission request.
 ## Conversation speech or sounds do not play
 
 Confirm **Read replies aloud** and **Working pulse** are enabled in Settings and
-that **Save Settings** succeeded. Voice Activation uses the configured locale's
-macOS system voice and obeys the current output volume. The working pulse waits
-1.6 seconds before its first low-volume cue, so quick turns stay quiet.
+that **Save Settings** succeeded. The macOS provider uses the configured locale's
+system voice and obeys the current output volume. For ElevenLabs, confirm the API
+key and Voice ID are valid and that the Mac can reach `api.elevenlabs.io`; the key
+is read from macOS Keychain. A failed ElevenLabs request falls back to the macOS
+voice rather than dropping the spoken chunk. The working pulse waits 1.6 seconds
+before its first low-volume cue and pauses while narration is active.
+
+Narration begins when a complete sentence arrives or output pauses for 350
+milliseconds. It does not wait for the whole agent process to finish. If several
+chunks arrive quickly, they play in order rather than interrupting one another.
 
 The capture start cue plays only when capture begins; the end cue plays for
 submission, cancellation, timeout, and capture errors.

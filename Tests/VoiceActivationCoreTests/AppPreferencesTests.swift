@@ -26,6 +26,8 @@ struct AppPreferencesTests {
         #expect(preferences.passiveEnabled)
         #expect(preferences.readsAgentRepliesAloud)
         #expect(preferences.playsAgentWorkingSound)
+        #expect(preferences.agentSpeechProvider == .system)
+        #expect(preferences.elevenLabsVoiceID == "JBFqnCBsd6RMkjVDRZzb")
         #expect(preferences.wakeProfiles == [expectedProfile])
         #expect(preferences.wakePhrase == "computer")
         #expect(preferences.pushToTalkHotKey == .defaultValue)
@@ -41,6 +43,8 @@ struct AppPreferencesTests {
         writer.passiveEnabled = true
         writer.readsAgentRepliesAloud = false
         writer.playsAgentWorkingSound = false
+        writer.agentSpeechProvider = .elevenLabs
+        writer.elevenLabsVoiceID = "voice-123"
         writer.wakeProfiles = [
             try WakeProfile(
                 wakePhrase: "assistant",
@@ -65,6 +69,8 @@ struct AppPreferencesTests {
         #expect(reader.passiveEnabled)
         #expect(!reader.readsAgentRepliesAloud)
         #expect(!reader.playsAgentWorkingSound)
+        #expect(reader.agentSpeechProvider == .elevenLabs)
+        #expect(reader.elevenLabsVoiceID == "voice-123")
         #expect(reader.wakeProfiles == writer.wakeProfiles)
         #expect(reader.wakePhrase == "hey mac")
         #expect(reader.localeID == "en-GB")

@@ -107,8 +107,9 @@ to continue in the same agent session. Say `stop`, `cancel`, or `dismiss` to
 end the whole conversation, including active work. The panel and menu also
 provide separate **Stop turn** and **End conversation** controls.
 
-Agent conversation settings can read completed replies aloud and play a quiet,
-delayed pulse during longer thinking or tool pauses.
+Agent conversation settings can read replies aloud while they stream through a
+macOS or ElevenLabs voice and play a quiet, narration-aware pulse during longer
+thinking or tool pauses. The optional ElevenLabs key is stored in macOS Keychain.
 
 Provider credentials remain in the provider's own CLI configuration; Voice
 Activation does not ask for or persist them. Continue with the
