@@ -176,6 +176,12 @@ bottom. Completion leaves the panel visible for inspection. The menu-bar panel
 offers **Show agent run** and **Cancel agent run** while applicable. A new run
 reuses the panel and clears the prior in-memory presentation.
 
+Token bursts publish on leading and trailing edges at a fixed 50-millisecond
+cadence. This preserves immediate feedback without making SwiftUI render once
+per token. Plans replace atomically, tool updates retain identity, simultaneous
+permissions remain independently actionable, and app-authored truncation or
+protocol notices cannot be mistaken for provider output.
+
 Direct command profiles keep the current short execution state and do not open
 the agent panel.
 
@@ -201,6 +207,11 @@ run states with bounded diagnostics. A failed connection is never reused.
 
 - A prompt is rejected above 8 KiB of UTF-8 rather than silently truncated.
 - One ACP line is limited to 1 MiB before the connection is failed.
+- Accepted events waiting between transport ingestion and consumer callbacks
+  retain at most 512 KiB of output, 16 KiB of diagnostics, 512 KiB of control
+  data, 256 control entries, and 32 pending permissions. Output and diagnostics
+  discard their oldest UTF-8-safe content with typed notices; control or
+  permission overflow fails the run explicitly.
 - The visible event transcript retains at most 512 KiB of UTF-8 for the current
   run and marks discarded oldest output.
 - Standard-error diagnostics retain the newest 16 KiB.
@@ -208,8 +219,17 @@ run states with bounded diagnostics. A failed connection is never reused.
   summarized by count.
 - UI publication is coalesced to at most 20 updates per second during token
   bursts.
+- The 1 MiB frame limit bounds parser input; decoding one accepted frame may
+  transiently allocate its JSON representation before typed delivery applies
+  the retained-queue limits above.
 - No audio, prompt history, run history, raw tool payload, or agent output is
   written to disk by Voice Activation.
+
+Natural prompt completion drains both bounded delivery stages before publishing
+success. Forced cancellation and shutdown invalidate the active turn before
+discarding queued delivery, so callback re-entry or a suspended completion
+cannot publish stale success. At most the callback already in flight may finish
+after forced discard, and every UI boundary rejects it by run identifier.
 
 ## Verification contract
 

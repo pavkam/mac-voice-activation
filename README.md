@@ -1,11 +1,12 @@
 # Voice Activation
 
 A small macOS menu-bar app that listens for configurable wake phrases or a
-push-to-talk shortcut, transcribes speech, and opens the URL assigned to the
-matched phrase.
+push-to-talk shortcut, transcribes speech, and either runs a direct command or
+sends the request to a local coding agent through Agent Client Protocol (ACP).
 
 It is intentionally focused: native speech recognition, colored wake profiles,
-push-to-talk, and a menu-bar lifecycle with no server or account dependency.
+push-to-talk, direct argument execution, and streamed local-agent runs without
+a Voice Activation server or account.
 
 ## Requirements
 
@@ -43,19 +44,20 @@ SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
   individual choices; **Resume all** restores them.
 - Say `computer`, then the command text. The command is submitted after speech
   recognition finalizes or the transcript remains unchanged for 1.5 seconds.
-- Add as many wake profiles as needed. Each phrase has its own URL template and
-  accent color; the matched color carries through the recording animation.
-  Newly added phrases are enabled by default.
+- Add as many wake profiles as needed. Each phrase has its own command or agent
+  target and accent color; the matched color carries through capture and agent
+  execution. Newly added phrases are enabled by default.
 - While recording, a compact animated microphone floats above the current app,
   expands to show a rolling tail of the live transcription, offers a cancel
   button, and plays distinct sounds when capture starts and ends.
 - Say only `cancel`, `stop`, or `dismiss` to discard the capture. Repeating the
   same word twice cancels immediately, even before recognition finalizes.
 - Give any wake profile its own push-to-talk shortcut. Hold that shortcut, speak
-  without the wake phrase, then release; the profile’s URL and color are used.
+  without the wake phrase, then release; the profile’s target and color are used.
   Each assigned binding appears beside its phrase in the menu.
-- Open **Settings…** from the menu to add or remove wake profiles, change their
-  URLs, colors, and shortcuts, set the locale, or enable launch at login.
+- Open **Settings…** from the menu to add or remove wake profiles, choose their
+  command or agent targets, change colors and shortcuts, set the locale, or
+  enable launch at login.
 
 Passive listening requires on-device recognition for the selected locale and
 fails closed if the Mac does not support it. Push-to-talk may use Apple's speech
@@ -84,6 +86,22 @@ Color:       Purple
 
 The app opens profile URLs directly with `/usr/bin/open`. It never invokes a
 shell, so punctuation in speech cannot become shell syntax.
+
+## Local coding agents
+
+Set a profile's **Target** to **Agent**, then choose Cursor, Codex, Claude, or a
+custom ACP v1 executable. Confirm the absolute executable path, select an
+absolute working folder, choose a permission policy, and save.
+
+The app keeps the foreground application focused while a floating panel streams
+agent text, plans, tools, diagnostics, elapsed time, and permission choices.
+Use **Cancel** in the panel or **Cancel agent run** in the menu to stop a turn;
+completed output remains selectable and copyable until the panel is closed.
+
+Provider authentication stays with the provider CLI. Voice Activation stores
+no API keys, prompt history, agent output, or raw tool payloads. See the
+[ACP agent harness guide](docs/agent-harness.md) for configuration, safety
+bounds, lifecycle details, and supported protocol behavior.
 
 ## Development
 

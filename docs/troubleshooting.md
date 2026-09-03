@@ -63,7 +63,7 @@ to a service.
   the current app. Its close button remains clickable and discards the current
   transcript without running a command.
 
-## The command does not run
+## The direct command does not run
 
 Check Settings for these validation requirements:
 
@@ -74,6 +74,37 @@ Check Settings for these validation requirements:
 A non-zero process exit becomes a visible error. Standard output and standard
 error are intentionally discarded, so test a new URL with `open` in Terminal
 before putting it into Settings.
+
+## An agent profile does not start
+
+- Confirm the provider executable and working folder are absolute paths and
+  still exist. Finder-launched applications cannot rely on your shell's `PATH`.
+- Run the provider's normal login command in Terminal first. An ACP
+  `auth_required` response is shown in the panel with the provider-advertised
+  authentication methods; Voice Activation does not collect credentials.
+- Confirm the provider supports stable ACP version 1. Incompatible protocol
+  versions and malformed or oversized messages fail the run visibly.
+- Cursor's native server is normally launched as `cursor-agent acp`. The Codex
+  and Claude presets use their pinned `npx` adapter arguments.
+
+## Agent output stops or the panel remains open
+
+Completion intentionally leaves the panel open so its selectable output can be
+copied. Choose **Close** when finished. While a turn is active, use **Cancel**
+in the panel or **Cancel agent run** in the menu; the app resolves pending
+permissions, asks the ACP session to cancel, and terminates an unresponsive
+provider after the bounded grace period.
+
+If a provider exits, emits invalid JSON, exceeds a protocol bound, or closes a
+pipe unexpectedly, the panel enters a failed state with bounded diagnostics.
+The failed process is discarded and a later trigger starts a fresh connection.
+
+## An agent is waiting for permission
+
+With **Ask**, choose one of the exact options supplied by the provider in the
+panel. The app does not invent a broader approval. **Allow once** selects a
+one-shot approval when offered; **Reject** returns a rejection or cancelled
+outcome. Cancelling the run also cancels every pending permission request.
 
 ## Capture sounds do not play
 

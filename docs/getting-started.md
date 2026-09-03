@@ -85,4 +85,25 @@ For regular use, move the completed app bundle to `/Applications` in Finder and
 launch that stable copy instead of rebuilding it in place. You can then enable
 **Launch at Login** in Settings without registering a disposable build path.
 
+## Run a local coding agent
+
+Install and authenticate a supported ACP provider first. Then open
+**Settings…**, edit a wake profile, and:
+
+1. Change **Target** from **Command** to **Agent**.
+2. Choose Cursor, Codex, Claude, or Custom.
+3. Confirm the detected absolute executable path and choose an absolute working
+   folder.
+4. Select **Ask**, **Allow once**, or **Reject** for tool permissions.
+5. Select **Save Settings**.
+
+Trigger that phrase and speak the task. The recording overlay morphs into a
+non-activating agent panel that streams the request, response, plans, tools,
+diagnostics, and permission choices while your current app keeps keyboard
+focus. Completed output remains available to select or copy.
+
+Provider credentials remain in the provider's own CLI configuration; Voice
+Activation does not ask for or persist them. Continue with the
+[ACP agent harness guide](agent-harness.md).
+
 Next: [configure wake profiles and capture behavior](configuration.md).

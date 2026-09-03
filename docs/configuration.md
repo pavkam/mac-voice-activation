@@ -7,7 +7,7 @@ validation errors keep it open so the invalid field can be corrected.
 
 ## Voice settings
 
-- **Wake profiles:** each profile has a wake phrase, URL template, and animation
+- **Wake profiles:** each profile has a wake phrase, run target, and presentation
   color. Add or remove profiles as needed. Phrases must be unique after the same
   case, width, accent, punctuation, and symbol normalization used by matching,
   and occur at the beginning of the recognized utterance. If phrases overlap,
@@ -22,8 +22,9 @@ validation errors keep it open so the invalid field can be corrected.
   session active for every enabled wake phrase.
 - **Push to talk:** each wake profile may have its own shortcut. Holding a
   profile’s binding captures speech without requiring its wake phrase, then runs
-  that profile’s URL and uses its overlay color. Click **Set shortcut**, then press
-  a combination containing Control, Option, Shift, or Command plus another key.
+  that profile’s target and uses its presentation color. Click **Set shortcut**,
+  then press a combination containing Control, Option, Shift, or Command plus
+  another key.
   Press Escape to cancel recording, or select **Save Settings** to apply every
   recorded binding. Assigned bindings must be unique. If another application owns
   a combination, Voice Activation restores the previous saved bindings and reports
@@ -49,10 +50,18 @@ signed copy of Voice Activation in `/Applications` before enabling it; a login
 item that points into `.build` will stop working when that bundle is replaced
 or removed.
 
-## Profile URLs
+## Run targets
 
-Every profile URL must contain a transcript placeholder. Voice Activation opens
-the resulting URL with `/usr/bin/open`.
+Each profile independently selects one target:
+
+- **Command** launches an absolute executable with explicit argument templates.
+- **Agent** starts an ACP v1 provider process, sends the transcript as a prompt,
+  and streams its observable output into the floating agent panel.
+
+### Command targets
+
+Every command target must contain a transcript placeholder in at least one
+argument. The default target opens the resulting URL with `/usr/bin/open`.
 
 | Placeholder | Expansion |
 | --- | --- |
@@ -77,6 +86,30 @@ Wake phrase: ask assistant
 URL:
 my-app://command?prompt={urlText}
 ```
+
+### Agent targets
+
+Choose one of the provider presets or **Custom**. A preset fills editable
+defaults; the saved absolute executable and argument list remain authoritative.
+Finder-launched apps do not inherit an interactive shell's `PATH`, so resolve
+wrappers such as `npx` to their absolute location before saving.
+
+| Field | Meaning |
+| --- | --- |
+| Provider | Cursor, Codex, Claude, or Custom ACP v1 process. |
+| Display name | Label shown in the menu and floating run panel. |
+| Executable | Absolute path to the ACP process or launcher. |
+| Working folder | Absolute project directory supplied to `session/new`. |
+| Permission policy | Ask in the panel, automatically allow once, or reject. |
+| Adapter arguments | Direct process arguments; no shell parsing occurs. |
+
+The Cursor preset uses `cursor-agent acp`. Codex and Claude use pinned ACP
+adapter package versions through `npx`. Authenticate with the corresponding
+provider CLI before triggering the profile. Voice Activation inherits the
+launch environment but never persists API keys.
+
+See [ACP agent harness](agent-harness.md) for streaming, cancellation,
+permissions, safety bounds, and provider lifecycle behavior.
 
 ## Capture timing
 

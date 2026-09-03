@@ -65,6 +65,11 @@ timings to cover:
 - stale callback rejection; and
 - command execution and passive-listening resumption.
 
+Core ACP suites use in-memory transports and real child-process fixtures to
+cover framing at every split point, all stable update kinds, exact JSON-RPC
+identifiers, permissions, authentication, cancellation, concurrent pipe exit,
+bounded event delivery, lifecycle races, caching, and global run preemption.
+
 App adapter tests use an injected login-item service to verify successful and
 failed Service Management registration without changing the developer Mac's
 real login items.
@@ -75,6 +80,11 @@ state hides the panel. Sound-presenter tests prove exactly one cue per capture
 edge.
 Coordinator tests separately prove live text publication for wake and
 push-to-talk capture.
+
+Agent-panel tests verify run-identifier isolation, UTF-8-safe output and
+diagnostic bounds, tool eviction, simultaneous permissions, 20 Hz token
+coalescing, exact-once cancellation, menu affordances, overlay handoff geometry,
+and a panel that accepts pointer actions without becoming key or main.
 
 Run one suite while iterating:
 
@@ -88,8 +98,10 @@ The `🎙️ Swift CI` workflow runs for pushes and pull requests targeting `mai
 
 1. `🧪 Build & test` resolves dependencies, builds the app and tests, then runs
    the complete suite.
-2. `📦 Package app` runs only after tests pass, builds the signed bundle, checks
-   `Info.plist`, verifies the executable, and verifies the code signature.
+2. `🧵 Thread sanitizer` runs the complete suite with race instrumentation.
+3. `📦 Package app` runs only after both test jobs pass, builds the signed
+   bundle, checks `Info.plist`, verifies the executable, and verifies the code
+   signature.
 
 Workflow permissions are read-only, duplicate runs on the same branch are
 cancelled, and each job has a 15-minute timeout.

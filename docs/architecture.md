@@ -1,15 +1,17 @@
 # Architecture
 
-Voice Activation separates testable speech and command behavior from macOS UI
-and framework adapters.
+Voice Activation separates testable speech, direct-command, and ACP-agent
+behavior from macOS UI and framework adapters.
 
 ## Modules
 
 - `VoiceActivationCore` owns wake matching, state transitions, command
-  templates, process execution, and preferences.
+  templates, ACP framing and lifecycle, bounded event delivery, process
+  execution, and preferences.
 - `VoiceActivationApp` owns the SwiftUI menu and Settings window, Apple speech
   capture, privacy requests, Carbon global shortcuts, and Service Management
-  login-item registration. It also owns the non-activating recording overlay.
+  login-item registration. It also owns the non-activating recording overlay
+  and streamed agent panel.
 - `MenuContentView` renders the menu-bar extra as a material-backed control
   panel with state-specific status presentation, compact profile controls,
   inline shortcut hints, capture cancellation, and application actions.
@@ -21,8 +23,8 @@ and framework adapters.
 `AppModel` is the main-actor bridge between SwiftUI and
 `VoiceActivationCoordinator`. The coordinator owns exactly one active speech
 session and invalidates callbacks from retired sessions with a generation
-identifier. Command executions have an independent generation so an older
-process completion cannot overwrite a newer capture or execution. It carries
+identifier. Executions have an independent generation so an older command or
+agent callback cannot overwrite a newer capture or execution. It carries
 the matched `WakeProfile` through capture before publishing capture state, so
 command routing and overlay color cannot drift apart, and publishes current
 command text separately from command history.
@@ -41,18 +43,23 @@ stateDiagram-v2
     Listening --> Capturing: Wake phrase
     Disabled --> Capturing: Push-to-talk pressed
     Listening --> Capturing: Push-to-talk pressed
-    Capturing --> Executing: Non-empty transcript
+    Capturing --> Executing: Non-empty command transcript
+    Capturing --> AgentRunning: Non-empty agent transcript
     Capturing --> Listening: Empty transcript, timeout, or cancellation
     Executing --> Listening: Command finishes
+    AgentRunning --> Listening: Agent finishes or is cancelled
     Listening --> Failed: Recognition or configuration error
     Capturing --> Failed: Recognition or configuration error
     Executing --> Failed: Command error
+    AgentRunning --> Failed: Agent or protocol error
     Failed --> Listening: Recoverable restart
     Listening --> Disabled: Disable passive mode
 ```
 
 The visible menu-bar state is `Disabled`, `Listening`, `Capturing`, `Running
-command`, or an error message.
+command`, `Running agent`, or an error message. Agent presentation is separate
+from speech state so completed output can remain visible while passive wake
+listening resumes.
 
 ## Speech modes
 
@@ -85,9 +92,9 @@ can still grow into `stop the music`. Two adjacent copies of the same word
 cancel immediately in passive command capture or push-to-talk.
 
 `WakePhraseMatcher` checks every enabled profile and chooses the longest matching
-phrase. The profile owns its URL template, accent color, and optional push-to-talk
-binding. A shortcut event identifies its profile before capture begins, so both
-wake and push-to-talk paths execute the same profile command.
+phrase. The profile owns its command or agent action, accent color, and optional
+push-to-talk binding. A shortcut event identifies its profile before capture
+begins, so wake and push-to-talk execute the same pinned profile action.
 Passive recognition supplies every enabled phrase to Apple Speech as contextual
 vocabulary so uncommon names and intentional spellings are not treated as
 ordinary dictation.
@@ -103,6 +110,31 @@ settings are saved:
 `CommandRunner` verifies that the file is executable, expands each argument,
 starts `Foundation.Process`, discards process standard streams, and treats a
 non-zero exit status as an error. No shell parses the transcript.
+
+## Agent execution
+
+`ACPAgentRunner` is an actor that caches one initialized process and ACP session
+per unchanged profile configuration. `ACPClientConnection` owns JSON-RPC request
+identity, prompt settlement, permissions, cancellation, and exact terminal
+state. `ACPProcessTransport` owns direct-argument launch and independent
+nonblocking stdin, stdout, and stderr lifecycles.
+
+The client accepts ACP v1 newline-delimited UTF-8 JSON-RPC, preserves integer,
+string, and null request identifiers, and converts stable updates into typed
+`AgentRunEvent` values. A two-stage bounded delivery path separates transport
+ingestion from consumer callbacks so a slow panel cannot grow memory without
+limit. Natural completion drains accepted events; forced cancellation invalidates
+the turn first and discards queued delivery.
+
+`AgentRunPresentation` applies only events carrying the active run identifier,
+retains bounded output, diagnostics, tools, plans, and simultaneous permission
+requests, and publishes token bursts to SwiftUI at no more than 20 updates per
+second. `AgentRunPanelController` hosts the model in a non-activating floating
+`NSPanel`; the recording overlay passes its exact final frame into the initial
+panel morph.
+
+See [ACP agent harness](agent-harness.md) for the complete wire, permission,
+resource, and recovery contract.
 
 ## Concurrency and lifecycle
 
@@ -121,6 +153,9 @@ non-zero exit status as an error. No shell parses the transcript.
   deadlines.
 - Command execution runs asynchronously and returns to passive listening after
   a short cooldown.
+- Agent execution remains independently cancellable, resumes passive listening
+  after completion, and rejects stale events by run identifier at the
+  coordinator, app model, and presentation boundaries.
 - `LaunchAtLoginSetting` reads and changes `SMAppService.mainApp` registration;
   macOS remains the source of truth instead of a duplicated preference.
 - `RecordingOverlayPresenter` maps capture state to a
@@ -139,13 +174,17 @@ non-zero exit status as an error. No shell parses the transcript.
   capture.
 - The menu profile list is a bounded scrolling region, so user-defined profile
   counts cannot grow the menu-bar panel beyond the available screen.
+- The agent panel uses the same non-activating window contract, supports pointer
+  permissions and cancellation without stealing keyboard focus, and remains
+  visible after completion for selection and copying.
 
 ## Privacy boundary
 
 Passive wake recognition sets `requiresOnDeviceRecognition` and refuses to run
 when the locale lacks on-device support. Interactive command capture can use
 Apple's speech service. Audio is not stored. Partial text exists in memory only
-during the current capture; the most recent submitted command remains for menu
-feedback.
+during the current capture; the most recent submitted request remains for menu
+feedback. Agent prompts, output, diagnostics, plans, tools, and permissions are
+bounded in memory and never persisted by the app.
 
 Next: [development and verification](development.md).
