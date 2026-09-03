@@ -46,15 +46,17 @@ struct SpeechRequestPolicyTests {
         #expect(request.shouldReportPartialResults)
     }
 
-    @Test func configure_WhenConversationIsActive_AllowsRecognizerDefault() throws {
+    @Test func configure_WhenConversationIsActive_PreservesControlPhraseHints() throws {
         let request = SFSpeechAudioBufferRecognitionRequest()
 
         try SpeechRequestPolicy.configure(
             request,
             mode: .conversation,
-            supportsOnDeviceRecognition: false)
+            supportsOnDeviceRecognition: false,
+            contextualStrings: ["stop", "cancel", "dismiss"])
 
         #expect(!request.requiresOnDeviceRecognition)
         #expect(request.shouldReportPartialResults)
+        #expect(request.contextualStrings == ["stop", "cancel", "dismiss"])
     }
 }

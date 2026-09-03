@@ -107,14 +107,13 @@ The microphone stays live after the first response. Speak another request—or
 use the profile's push-to-talk binding—to continue in the same ACP session and
 timeline. **Stop turn** cancels only the current work; **End conversation**
 returns to passive wake listening. Saying only `cancel`, `stop`, or `dismiss`
-does the same thing by voice: it stops an active turn, or ends the conversation
-when the agent is waiting.
+always ends the whole conversation and returns to passive wake listening.
 
 Settings can read completed replies aloud with the matching macOS system voice
 and play a quiet repeating pulse through long thinking/tool pauses. Both options
-are enabled by default and tests inject silent audio players, so CI never emits
-speaker sounds. Completed output remains selectable and copyable until the
-panel is closed.
+are enabled by default. Voice cancellation says “Stopped” when reply speech is
+enabled, and tests inject silent audio players, so CI never emits speaker sounds.
+Completed output remains selectable and copyable until the panel is closed.
 
 Provider authentication stays with the provider CLI. Voice Activation stores
 no API keys, prompt history, agent output, or raw tool payloads. See the

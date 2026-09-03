@@ -104,9 +104,8 @@ finished tools and answered permission prompts collapse out of the way, with
 tool details still expandable. Completed output remains available to select or
 copy. The microphone remains active after each response: speak another request
 to continue in the same agent session. Say `stop`, `cancel`, or `dismiss` to
-cancel active work, or say it while the agent is waiting to end the
-conversation. The panel and menu also provide separate **Stop turn** and
-**End conversation** controls.
+end the whole conversation, including active work. The panel and menu also
+provide separate **Stop turn** and **End conversation** controls.
 
 Agent conversation settings can read completed replies aloud and play a quiet,
 delayed pulse during longer thinking or tool pauses.

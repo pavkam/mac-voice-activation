@@ -132,8 +132,9 @@ An agent target stays in conversation mode after its first response. Speak a
 follow-up normally or use that profile's push-to-talk binding; every turn uses
 the same ACP session. A follow-up spoken while the agent is still working
 cancels the current turn before it starts. Say only `cancel`, `stop`, or
-`dismiss` to stop an active turn. Say it again while the agent is waiting to end
-the conversation, or choose **End conversation** in the panel or menu.
+`dismiss` to end the whole conversation immediately, or choose **End
+conversation** in the panel or menu. **Stop turn** remains available when only
+the current agent turn should be cancelled.
 
 ## Capture timing
 

@@ -224,11 +224,11 @@ utterance is appended to the ordered timeline and sent as a follow-up. The
 profile's push-to-talk shortcut also contributes a follow-up while that
 conversation is open rather than creating a second agent session.
 
-Saying only `cancel`, `stop`, or `dismiss` cancels the active turn while keeping
-the conversation available. Saying one of those words while no turn is running
-ends the conversation. The same command during spoken reply playback stops the
-playback and ends the idle conversation. Agent speech is excluded from normal
-follow-up recognition so the synthesizer cannot talk to itself.
+Saying only `cancel`, `stop`, or `dismiss` always ends the whole conversation,
+including any active turn. The same command during spoken reply playback stops
+the playback before ending. Agent speech is excluded from normal follow-up
+recognition so the synthesizer cannot talk to itself. Conversation recognition
+passes those control words to the recognizer as contextual hints.
 
 **Stop turn** transitions the turn to `cancelling` immediately,
 invalidate its execution generation, respond to pending permissions with a
@@ -244,6 +244,7 @@ cooldown.
 Settings independently enable spoken agent replies and a quiet working pulse.
 Reply speech uses the selected locale's macOS system voice and strips Markdown
 formatting; fenced code is announced but not read character by character. The
+voice also acknowledges a spoken conversation cancellation with “Stopped.” The
 working pulse begins only after a 1.6-second pause and repeats every 3.2 seconds
 while the agent is thinking or using tools. It stops for permission choices,
 cancellation, completion, and failure. Every streamed

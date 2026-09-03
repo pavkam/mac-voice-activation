@@ -18,6 +18,7 @@ enum SpeechRequestPolicy {
     {
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
+        request.contextualStrings = contextualStrings
 
         switch mode {
         case .passiveWake:
@@ -25,7 +26,6 @@ enum SpeechRequestPolicy {
                 throw PolicyError.onDeviceRecognitionUnavailable
             }
             request.requiresOnDeviceRecognition = true
-            request.contextualStrings = contextualStrings
         case .commandCapture, .conversation, .pushToTalk:
             request.requiresOnDeviceRecognition = false
         }

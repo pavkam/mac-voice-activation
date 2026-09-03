@@ -95,8 +95,9 @@ Turn completion intentionally keeps both the panel and conversation microphone
 open for follow-ups. Speak another request to continue in the same ACP session.
 Use **Stop turn** to cancel only active work, or **End conversation** to return
 to passive wake listening. After the conversation ends, choose **Close** to hide
-the retained output. Saying only `stop`, `cancel`, or `dismiss` stops active
-work; saying it while the agent is waiting ends the conversation.
+the retained output. Saying only `stop`, `cancel`, or `dismiss` always ends the
+whole conversation; when reply speech is enabled, the app acknowledges this
+with “Stopped.”
 
 If new output does not follow the bottom, scroll to the bottom once. A deliberate
 scroll upward pauses automatic following so earlier output remains readable.

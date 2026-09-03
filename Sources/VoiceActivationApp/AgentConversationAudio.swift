@@ -172,12 +172,15 @@ final class AgentConversationAudioPresenter {
             guard result.stopReason != .cancelled, readsReplies() else { return }
             let spokenReply = AgentMarkdownFormatter.spokenText(from: reply)
             player.speak(spokenReply, localeID: localeID())
-        case let .completed(runID, _):
+        case let .completed(runID, result):
             guard self.runID == runID else { return }
             activityIsWorking = false
             player.stopAll()
             self.runID = nil
             reply = ""
+            if result.stopReason == .cancelled, readsReplies() {
+                player.speak("Stopped.", localeID: localeID())
+            }
         case let .failed(runID, _):
             guard self.runID == runID else { return }
             activityIsWorking = false

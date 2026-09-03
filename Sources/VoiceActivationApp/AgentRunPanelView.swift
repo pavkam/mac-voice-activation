@@ -334,7 +334,7 @@ struct AgentRunPanelView: View {
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(snapshot.voiceInput.isEmpty ? .secondary : .primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Speak a follow-up, or say “stop” to cancel this turn.")
+                    Text("Speak a follow-up, or say “stop” to end the conversation.")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .foregroundStyle(.tertiary)
                 }

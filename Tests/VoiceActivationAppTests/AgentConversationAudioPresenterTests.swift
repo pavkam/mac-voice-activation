@@ -76,6 +76,27 @@ struct AgentConversationAudioPresenterTests {
         #expect(player.workingStates.last == true)
     }
 
+    @MainActor @Test func lifecycle_WhenVoiceCancelsConversation_ReadsStoppedAcknowledgement() throws {
+        let player = AgentConversationAudioSpy()
+        let presenter = AgentConversationAudioPresenter(
+            player: player,
+            readsReplies: { true },
+            playsWorkingSound: { true },
+            localeID: { "en-US" })
+        let runID = UUID()
+        presenter.handle(.started(
+            runID: runID,
+            profile: try agentProfile(),
+            prompt: "Question"))
+
+        presenter.handle(.completed(
+            runID: runID,
+            result: AgentRunResult(stopReason: .cancelled)))
+
+        #expect(player.spoken.map(\.text) == ["Stopped."])
+        #expect(player.spoken.map(\.localeID) == ["en-US"])
+    }
+
     @MainActor @Test func lifecycle_WhenAudioOptionsAreDisabled_ProducesNoPlayback() throws {
         let player = AgentConversationAudioSpy()
         let presenter = AgentConversationAudioPresenter(

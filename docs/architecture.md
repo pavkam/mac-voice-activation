@@ -48,8 +48,8 @@ stateDiagram-v2
     Capturing --> Listening: Empty transcript, timeout, or cancellation
     Executing --> Listening: Command finishes
     AgentConversation --> AgentConversation: Agent turn finishes
-    AgentConversation --> AgentConversation: Follow-up or turn cancellation
-    AgentConversation --> Listening: End conversation
+    AgentConversation --> AgentConversation: Follow-up or Stop turn button
+    AgentConversation --> Listening: End or spoken cancellation
     Listening --> Failed: Recognition or configuration error
     Capturing --> Failed: Recognition or configuration error
     Executing --> Failed: Command error
@@ -151,8 +151,9 @@ disable it.
 `AgentConversationAudioPresenter` observes typed lifecycle events through an
 injected playback boundary. It collects only user-facing agent message deltas,
 converts their Markdown to speech text at turn completion, and independently
-controls the delayed working pulse. Tests inject a silent player. The system
-adapter uses `AVSpeechSynthesizer` and a low-volume bundled cue.
+controls the delayed working pulse. Spoken conversation cancellation gets a
+short voice acknowledgement. Tests inject a silent player. The system adapter
+uses `AVSpeechSynthesizer` and a low-volume bundled cue.
 
 See [ACP agent harness](agent-harness.md) for the complete wire, permission,
 resource, and recovery contract.
@@ -174,10 +175,11 @@ resource, and recovery contract.
   deadlines.
 - Command execution runs asynchronously and returns to passive listening after
   a short cooldown.
-- Agent turns remain independently cancellable while their conversation speech
-  session continues. Explicitly ending the conversation resumes passive
-  listening. Stale events are rejected by execution generation and conversation
-  run identifier at the coordinator, app model, and presentation boundaries.
+- Agent turns remain independently cancellable with **Stop turn** while their
+  conversation speech session continues. Spoken cancellation or explicitly
+  ending the conversation resumes passive listening. Stale events are rejected
+  by execution generation and conversation run identifier at the coordinator,
+  app model, and presentation boundaries.
 - During synthesized reply playback, conversation recognition ignores ordinary
   speech to prevent output echo from becoming a prompt. Cancellation words stop
   playback and close an idle conversation; recognition restarts cleanly after

@@ -68,7 +68,7 @@ public final class VoiceActivationCoordinator {
     private var conversationHardStopTask: Task<Void, Never>?
     private var conversationRestartTask: Task<Void, Never>?
     private var pushToTalkContinuesConversation = false
-    private var endingAgentConversation = false
+    private var agentConversationEndResult: AgentRunResult?
     private var agentSpeechOutputActive = false
 
     public convenience init(
@@ -179,7 +179,7 @@ public final class VoiceActivationCoordinator {
             startConversationListening()
             guard !transcript.isEmpty else { return }
             if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
-                cancelAgentRun()
+                cancelAgentConversationFromSpeech()
             } else {
                 submitAgentFollowUp(transcript)
             }
@@ -231,15 +231,24 @@ public final class VoiceActivationCoordinator {
     }
 
     public func endAgentConversation() {
+        requestAgentConversationEnd(
+            result: AgentRunResult(stopReason: .endTurn))
+    }
+
+    private func cancelAgentConversationFromSpeech() {
+        requestAgentConversationEnd(
+            result: AgentRunResult(stopReason: .cancelled))
+    }
+
+    private func requestAgentConversationEnd(result: AgentRunResult) {
         guard case .agent = executingAction, let runID = activeAgentRunID else { return }
+        guard agentConversationEndResult == nil else { return }
         pendingAgentPrompts.removeAll()
-        endingAgentConversation = true
+        agentConversationEndResult = result
         stopActiveSession()
         guard agentCancellationTask == nil else { return }
         guard executionTask != nil else {
-            finishAgentConversation(
-                runID: runID,
-                result: AgentRunResult(stopReason: .endTurn))
+            finishAgentConversation(runID: runID, result: result)
             return
         }
 
@@ -295,7 +304,7 @@ public final class VoiceActivationCoordinator {
         agentCancellationToken = nil
         pendingAgentPrompts.removeAll()
         pushToTalkContinuesConversation = false
-        endingAgentConversation = false
+        agentConversationEndResult = nil
         agentSpeechOutputActive = false
         resetConversationCapture()
         conversationRestartTask?.cancel()
@@ -422,7 +431,7 @@ public final class VoiceActivationCoordinator {
                     stopActiveSession()
                     state = .executing
                     startConversationListening()
-                    cancelAgentRun()
+                    cancelAgentConversationFromSpeech()
                 } else {
                     cancelCapture()
                 }
@@ -595,11 +604,7 @@ public final class VoiceActivationCoordinator {
             if CaptureCancellationMatcher.matches(transcript, isComplete: update.isFinal) {
                 agentSpeechOutputActive = false
                 onAgentSpeechCancellation?()
-                if executionTask == nil {
-                    endAgentConversation()
-                } else {
-                    cancelAgentRun()
-                }
+                cancelAgentConversationFromSpeech()
             } else if update.isFinal {
                 startConversationListening()
             }
@@ -658,11 +663,7 @@ public final class VoiceActivationCoordinator {
         guard !transcript.isEmpty else { return }
 
         if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
-            if executionTask == nil {
-                endAgentConversation()
-            } else {
-                cancelAgentRun()
-            }
+            cancelAgentConversationFromSpeech()
         } else {
             submitAgentFollowUp(transcript)
         }
@@ -820,7 +821,7 @@ public final class VoiceActivationCoordinator {
             let runID = UUID()
             activeAgentRunID = runID
             pendingAgentPrompts.removeAll()
-            endingAgentConversation = false
+            agentConversationEndResult = nil
             onAgentRunEvent?(.started(
                 runID: runID,
                 profile: profile,
@@ -977,7 +978,7 @@ public final class VoiceActivationCoordinator {
         executingAction = nil
         activeAgentRunID = nil
         pendingAgentPrompts.removeAll()
-        endingAgentConversation = false
+        agentConversationEndResult = nil
         resetConversationCapture()
         conversationRestartTask?.cancel()
         conversationRestartTask = nil
@@ -997,10 +998,10 @@ public final class VoiceActivationCoordinator {
             self.agentCancellationTask = nil
             self.agentCancellationToken = nil
             guard self.activeAgentRunID == runID else { return }
-            if self.endingAgentConversation {
+            if let result = self.agentConversationEndResult {
                 self.finishAgentConversation(
                     runID: runID,
-                    result: AgentRunResult(stopReason: .cancelled))
+                    result: result)
             } else if !self.pendingAgentPrompts.isEmpty {
                 self.startNextAgentPrompt()
             } else {
@@ -1015,17 +1016,17 @@ public final class VoiceActivationCoordinator {
     private func finishAgentConversation(runID: UUID, result: AgentRunResult) {
         guard activeAgentRunID == runID else { return }
         agentSpeechOutputActive = false
-        onAgentRunEvent?(.completed(runID: runID, result: result))
         executionTask?.cancel()
         executionTask = nil
         executingAction = nil
         activeAgentRunID = nil
         pendingAgentPrompts.removeAll()
-        endingAgentConversation = false
+        agentConversationEndResult = nil
         resetConversationCapture()
         conversationRestartTask?.cancel()
         conversationRestartTask = nil
         stopSpeechSession()
+        onAgentRunEvent?(.completed(runID: runID, result: result))
         resumePassiveAfterCooldown()
     }
 
