@@ -97,7 +97,9 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         process.executableURL = executableURL
         process.arguments = arguments
         process.currentDirectoryURL = currentDirectoryURL
-        process.environment = environment
+        process.environment = Self.environment(
+            environment,
+            includingExecutableDirectoryFor: executableURL)
         process.standardInput = standardInput
         process.standardOutput = standardOutput
         process.standardError = standardError
@@ -153,6 +155,22 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
                 "The Codex system prompt could not be encoded as UTF-8.")
         }
         environment["CODEX_CONFIG"] = encodedValue
+        return environment
+    }
+
+    private static func environment(
+        _ inheritedEnvironment: [String: String],
+        includingExecutableDirectoryFor executableURL: URL) -> [String: String]
+    {
+        var environment = inheritedEnvironment
+        let executableDirectory = executableURL.deletingLastPathComponent().path
+        let inheritedPath = environment["PATH"] ?? ""
+        let pathDirectories = inheritedPath.split(
+            separator: ":",
+            omittingEmptySubsequences: true).map(String.init)
+        environment["PATH"] = ([executableDirectory]
+            + pathDirectories.filter { $0 != executableDirectory })
+            .joined(separator: ":")
         return environment
     }
 

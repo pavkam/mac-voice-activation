@@ -211,6 +211,33 @@ struct ACPProcessTransportTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func launch_WhenExecutableUsesSiblingRuntime_FindsRuntimeWithoutInheritedPath() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runtime = directory.appendingPathComponent("fixture-runtime")
+        try Data("#!/bin/sh\nprintf 'runtime-found\\n'\n".utf8).write(to: runtime)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: runtime.path)
+        let executable = directory.appendingPathComponent("env-fixture")
+        try Data("#!/usr/bin/env fixture-runtime\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: executable.path)
+        let transport = try ACPProcessTransport(
+            executableURL: executable,
+            arguments: [],
+            currentDirectoryURL: directory,
+            environment: ["PATH": "/usr/bin:/bin"],
+            testingHooks: ACPProcessTransportTestingHooks())
+
+        let outputData = try await collect(await transport.output())
+
+        #expect(await transport.waitForExit() == 0)
+        #expect(outputData == Data("runtime-found\n".utf8))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func launch_WhenCodexHasASystemPrompt_InjectsRealDeveloperInstructions() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
