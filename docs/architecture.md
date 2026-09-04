@@ -227,7 +227,11 @@ resource, and recovery contract.
 - The agent panel uses the same non-activating window contract, supports pointer
   permissions, turn cancellation, and conversation exit without stealing
   keyboard focus. It follows live output only when already at the bottom and
-  remains visible after completion for selection and copying.
+  remains visible after completion for selection and copying. The borderless
+  panel is movable by its background and header. Minimizing switches the same
+  window and model to a compact persistent status presentation; restoring
+  expands from the compact panel's current top-right anchor so a user-moved pill
+  does not jump back to its old location.
 - Conversation recognition offers exact spoken permission commands to the app
   model before submitting an utterance as a follow-up. The model resolves the
   oldest presented request by typed ACP option kind, so transport code never

@@ -109,6 +109,10 @@ the retained output or **Delete** to hide and discard it. The menu-bar card can
 `cancel`, or `dismiss` always ends the whole conversation; when reply speech is
 enabled, the app acknowledges this with “Stopped.”
 
+If the floating panel covers another app, drag its header or empty background.
+Use the minus button to keep only the small movable status pill visible, then
+use the arrow on that pill—or **Open** from the menu—to restore the conversation.
+
 If new output does not follow the bottom, scroll to the bottom once. A deliberate
 scroll upward pauses automatic following so earlier output remains readable.
 

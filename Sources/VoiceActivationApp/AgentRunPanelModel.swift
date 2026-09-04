@@ -11,6 +11,7 @@ import VoiceActivationCore
 final class AgentRunPanelModel {
     var snapshot: AgentRunSnapshot?
     var isAutoFollowing = true
+    private(set) var isMinimized = false
     var resolvingPermissions: Set<AgentPermissionKey> = []
     private(set) var expandedToolIDs: Set<String> = []
     private(set) var elapsedStartedAt: Date
@@ -27,6 +28,7 @@ final class AgentRunPanelModel {
         elapsedStartedAt = now().addingTimeInterval(-TimeInterval(snapshot.elapsedSeconds))
         self.snapshot = snapshot
         isAutoFollowing = true
+        isMinimized = false
         resolvingPermissions = []
         expandedToolIDs = []
         isUserScrolling = false
@@ -56,6 +58,11 @@ final class AgentRunPanelModel {
 
     func isToolExpanded(toolID: String) -> Bool {
         expandedToolIDs.contains(toolID)
+    }
+
+    func setMinimized(_ isMinimized: Bool) {
+        guard snapshot != nil else { return }
+        self.isMinimized = isMinimized
     }
 
     func selectPermission(_ permission: AgentPermissionPresentation, optionID: String) {

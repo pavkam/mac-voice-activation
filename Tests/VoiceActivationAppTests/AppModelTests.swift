@@ -75,6 +75,8 @@ private final class AppModelAgentPanelSpy: AgentRunPanelDisplaying {
     func update(_ snapshot: AgentRunSnapshot) { updates.append(snapshot) }
     func show(runID: UUID) { shown.append(runID) }
     func hide(runID: UUID) { hidden.append(runID) }
+    func minimize(runID: UUID) {}
+    func restore(runID: UUID) {}
 }
 
 @MainActor

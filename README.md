@@ -111,7 +111,9 @@ collapses to an expandable result row when it finishes—even when a provider
 omits a final tool status; permission prompts disappear as soon as a choice is
 made. Say `allow`, `allow all`, `deny`, or `deny all` to answer the oldest
 visible permission request without touching the panel. New output follows the
-bottom of the panel until you deliberately scroll upward.
+bottom of the panel until you deliberately scroll upward. Drag the panel by its
+header to move it out of the way, or minimize it into a movable live-status pill
+that stays above other windows and restores the full conversation with one click.
 
 The microphone stays live after the first response. Speak another request—or
 use the profile's push-to-talk binding—to continue in the same ACP session and

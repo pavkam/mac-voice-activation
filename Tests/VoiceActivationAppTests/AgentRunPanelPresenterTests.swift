@@ -14,6 +14,8 @@ private final class AgentRunPanelDisplaySpy: AgentRunPanelDisplaying {
     private(set) var updates: [AgentRunSnapshot] = []
     private(set) var shown: [UUID] = []
     private(set) var hidden: [UUID] = []
+    private(set) var minimized: [UUID] = []
+    private(set) var restored: [UUID] = []
 
     func begin(_ snapshot: AgentRunSnapshot, from handoff: RecordingOverlayHandoff?) {
         began.append((snapshot, handoff))
@@ -22,6 +24,8 @@ private final class AgentRunPanelDisplaySpy: AgentRunPanelDisplaying {
     func update(_ snapshot: AgentRunSnapshot) { updates.append(snapshot) }
     func show(runID: UUID) { shown.append(runID) }
     func hide(runID: UUID) { hidden.append(runID) }
+    func minimize(runID: UUID) { minimized.append(runID) }
+    func restore(runID: UUID) { restored.append(runID) }
 }
 
 @MainActor
@@ -200,7 +204,40 @@ struct AgentRunPanelPresenterTests {
         #expect(deletedRuns.isEmpty)
     }
 
-    @MainActor @Test func panel_WhenConstructed_IsFloatingAndCannotBecomeKeyOrMain() {
+    @MainActor @Test func minimizeAndRestore_WhenRepeatedOrStale_AreRunScopedAndIdempotent() {
+        let display = AgentRunPanelDisplaySpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy())
+        let runID = UUID()
+        presenter.begin(runningSnapshot(runID: runID), from: nil)
+
+        display.onAction?(.minimize(runID: runID))
+        display.onAction?(.minimize(runID: runID))
+        display.onAction?(.restore(runID: UUID()))
+        display.onAction?(.restore(runID: runID))
+        display.onAction?(.restore(runID: runID))
+
+        #expect(display.minimized == [runID])
+        #expect(display.restored == [runID])
+    }
+
+    @MainActor @Test func show_WhenPanelIsMinimized_RestoresInsteadOfShowingCompactPanel() {
+        let display = AgentRunPanelDisplaySpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy())
+        let runID = UUID()
+        presenter.begin(runningSnapshot(runID: runID), from: nil)
+        display.onAction?(.minimize(runID: runID))
+
+        presenter.show(runID: runID)
+
+        #expect(display.restored == [runID])
+        #expect(display.shown.isEmpty)
+    }
+
+    @MainActor @Test func panel_WhenConstructed_IsFloatingMovableAndCannotBecomeKeyOrMain() {
         let controller = AgentRunPanelController()
         let panel = controller.panelForTesting
 
@@ -210,6 +247,8 @@ struct AgentRunPanelPresenterTests {
         #expect(panel.collectionBehavior.contains(.canJoinAllSpaces))
         #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary))
         #expect(panel.collectionBehavior.contains(.stationary))
+        #expect(panel.isMovable)
+        #expect(panel.isMovableByWindowBackground)
         #expect(!panel.hasShadow)
         #expect(!panel.canBecomeKey)
         #expect(!panel.canBecomeMain)
@@ -225,6 +264,29 @@ struct AgentRunPanelPresenterTests {
 
         #expect(image.width == 620)
         #expect(image.height == 420)
+    }
+
+    @MainActor @Test func view_WhenMinimized_RendersAsCompactNotification() throws {
+        let model = AgentRunPanelModel()
+        model.begin(runningSnapshot(runID: UUID()))
+        model.setMinimized(true)
+        let renderer = ImageRenderer(content: AgentRunPanelView(model: model))
+        renderer.proposedSize = ProposedViewSize(width: 372, height: 84)
+
+        let image = try #require(renderer.cgImage)
+
+        #expect(image.width == 372)
+        #expect(image.height == 84)
+    }
+
+    @MainActor @Test func model_WhenNewRunBegins_ExpandsAPreviouslyMinimizedPanel() {
+        let model = AgentRunPanelModel()
+        model.begin(runningSnapshot(runID: UUID()))
+        model.setMinimized(true)
+
+        model.begin(runningSnapshot(runID: UUID()))
+
+        #expect(!model.isMinimized)
     }
 
     @MainActor @Test func model_WhenUserScrollsAwayFromBottom_DisablesAndReenablesFollow() {

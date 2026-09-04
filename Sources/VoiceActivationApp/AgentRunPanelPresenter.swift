@@ -11,6 +11,8 @@ enum AgentRunPanelAction: Equatable {
     case copy(runID: UUID)
     case close(runID: UUID)
     case delete(runID: UUID)
+    case minimize(runID: UUID)
+    case restore(runID: UUID)
 }
 
 @MainActor
@@ -21,6 +23,8 @@ protocol AgentRunPanelDisplaying: AnyObject {
     func update(_ snapshot: AgentRunSnapshot)
     func show(runID: UUID)
     func hide(runID: UUID)
+    func minimize(runID: UUID)
+    func restore(runID: UUID)
 }
 
 @MainActor
@@ -49,6 +53,7 @@ final class AgentRunPanelPresenter {
     private var snapshot: AgentRunSnapshot?
     private var cancelledRunID: UUID?
     private var endedRunID: UUID?
+    private var isMinimized = false
     private var resolvedPermissions: Set<AgentPermissionKey> = []
 
     init(
@@ -66,6 +71,7 @@ final class AgentRunPanelPresenter {
         self.snapshot = snapshot
         cancelledRunID = nil
         endedRunID = nil
+        isMinimized = false
         resolvedPermissions = []
         display.begin(snapshot, from: handoff)
     }
@@ -82,7 +88,12 @@ final class AgentRunPanelPresenter {
 
     func show(runID: UUID) {
         guard snapshot?.runID == runID else { return }
-        display.show(runID: runID)
+        if isMinimized {
+            isMinimized = false
+            display.restore(runID: runID)
+        } else {
+            display.show(runID: runID)
+        }
     }
 
     func hide(runID: UUID) {
@@ -131,8 +142,17 @@ final class AgentRunPanelPresenter {
         case let .delete(runID):
             guard snapshot.runID == runID, snapshot.phase.isTerminal else { return }
             self.snapshot = nil
+            isMinimized = false
             display.hide(runID: runID)
             onDelete?(runID)
+        case let .minimize(runID):
+            guard snapshot.runID == runID, !isMinimized else { return }
+            isMinimized = true
+            display.minimize(runID: runID)
+        case let .restore(runID):
+            guard snapshot.runID == runID, isMinimized else { return }
+            isMinimized = false
+            display.restore(runID: runID)
         }
     }
 }

@@ -8,15 +8,16 @@ struct AgentRunPanelView: View {
     @Bindable var model: AgentRunPanelModel
 
     var body: some View {
+        let cornerRadius: CGFloat = model.isMinimized ? 22 : 28
         ZStack {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(.ultraThinMaterial)
             backgroundGlow
             content
         }
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(
                     LinearGradient(
                         colors: [.white.opacity(0.48), accent.opacity(0.34)],
@@ -25,74 +26,85 @@ struct AgentRunPanelView: View {
                     lineWidth: 1)
         }
         .padding(1)
-        .frame(width: 620, height: 420)
+        .frame(width: panelSize.width, height: panelSize.height)
+        .animation(.snappy(duration: AgentRunPanelLayout.transitionDuration), value: model.isMinimized)
     }
 
     @ViewBuilder
     private var content: some View {
         if let snapshot = model.snapshot {
-            VStack(spacing: 0) {
-                header(snapshot)
-                Divider().opacity(0.45)
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            requestCard(snapshot)
-                            noticeCards(snapshot)
-                            plan(snapshot)
-                            timeline(snapshot)
-                            permissions(snapshot)
-                            voiceInput(snapshot)
-                            Color.clear.frame(height: 1).id("agent-run-bottom")
-                        }
-                        .padding(18)
+            if model.isMinimized {
+                compactContent(snapshot)
+                    .transition(.scale(scale: 0.92).combined(with: .opacity))
+            } else {
+                expandedContent(snapshot)
+                    .transition(.scale(scale: 0.98).combined(with: .opacity))
+            }
+        }
+    }
+
+    private func expandedContent(_ snapshot: AgentRunSnapshot) -> some View {
+        VStack(spacing: 0) {
+            header(snapshot)
+            Divider().opacity(0.45)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        requestCard(snapshot)
+                        noticeCards(snapshot)
+                        plan(snapshot)
+                        timeline(snapshot)
+                        permissions(snapshot)
+                        voiceInput(snapshot)
+                        Color.clear.frame(height: 1).id("agent-run-bottom")
                     }
-                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                        max(
-                            0,
-                            geometry.contentSize.height
-                                - geometry.contentOffset.y
-                                - geometry.containerSize.height)
-                    } action: { _, distanceFromBottom in
-                        model.updateScrollGeometry(distanceFromBottom: distanceFromBottom)
-                    }
-                    .onScrollPhaseChange { oldPhase, newPhase, context in
-                        let wasUserScrolling = oldPhase == .interacting
-                            || oldPhase == .decelerating
-                        let isUserScrolling = newPhase == .interacting
-                            || newPhase == .decelerating
-                        guard wasUserScrolling || isUserScrolling else { return }
-                        let geometry = context.geometry
-                        let distance = max(
-                            0,
-                            geometry.contentSize.height
-                                - geometry.contentOffset.y
-                                - geometry.containerSize.height)
-                        if isUserScrolling {
-                            model.beginUserScrolling(distanceFromBottom: distance)
-                        } else {
-                            model.endUserScrolling(distanceFromBottom: distance)
-                        }
-                    }
-                    .onChange(of: snapshot.timeline) {
-                        followBottom(proxy)
-                    }
-                    .onChange(of: snapshot.notices) {
-                        followBottom(proxy)
-                    }
-                    .onChange(of: snapshot.plan) {
-                        followBottom(proxy)
-                    }
-                    .onChange(of: snapshot.permissions) {
-                        followBottom(proxy)
-                    }
-                    .onChange(of: snapshot.voiceInput) {
-                        followBottom(proxy)
+                    .padding(18)
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    max(
+                        0,
+                        geometry.contentSize.height
+                            - geometry.contentOffset.y
+                            - geometry.containerSize.height)
+                } action: { _, distanceFromBottom in
+                    model.updateScrollGeometry(distanceFromBottom: distanceFromBottom)
+                }
+                .onScrollPhaseChange { oldPhase, newPhase, context in
+                    let wasUserScrolling = oldPhase == .interacting
+                        || oldPhase == .decelerating
+                    let isUserScrolling = newPhase == .interacting
+                        || newPhase == .decelerating
+                    guard wasUserScrolling || isUserScrolling else { return }
+                    let geometry = context.geometry
+                    let distance = max(
+                        0,
+                        geometry.contentSize.height
+                            - geometry.contentOffset.y
+                            - geometry.containerSize.height)
+                    if isUserScrolling {
+                        model.beginUserScrolling(distanceFromBottom: distance)
+                    } else {
+                        model.endUserScrolling(distanceFromBottom: distance)
                     }
                 }
-                Divider().opacity(0.45)
-                actions(snapshot)
+                .onChange(of: snapshot.timeline) {
+                    followBottom(proxy)
+                }
+                .onChange(of: snapshot.notices) {
+                    followBottom(proxy)
+                }
+                .onChange(of: snapshot.plan) {
+                    followBottom(proxy)
+                }
+                .onChange(of: snapshot.permissions) {
+                    followBottom(proxy)
+                }
+                .onChange(of: snapshot.voiceInput) {
+                    followBottom(proxy)
+                }
             }
+            Divider().opacity(0.45)
+            actions(snapshot)
         }
     }
 
@@ -105,31 +117,100 @@ struct AgentRunPanelView: View {
 
     private func header(_ snapshot: AgentRunSnapshot) -> some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(accent.opacity(0.18))
-                Circle().stroke(accent.opacity(0.36), lineWidth: 1)
-                Image(systemName: phaseSymbol(snapshot.phase))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .symbolEffect(.variableColor.iterative, isActive: snapshot.phase == .running)
-            }
-            .frame(width: 38, height: 38)
+            HStack(spacing: 12) {
+                phaseIcon(snapshot, size: 38, symbolSize: 16)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(snapshot.providerName)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                Text(phaseLabel(snapshot.phase))
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(snapshot.providerName)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                    Text(phaseLabel(snapshot.phase))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(WindowDragGesture())
+
             AgentRunElapsedTimeView(
                 phase: snapshot.phase,
                 elapsedSeconds: snapshot.elapsedSeconds,
                 startedAt: model.elapsedStartedAt)
+
+            Button {
+                model.onAction?(.minimize(runID: snapshot.runID))
+            } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 28, height: 28)
+                    .background(.primary.opacity(0.07), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Minimize conversation")
+            .accessibilityLabel("Minimize conversation")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 13)
+    }
+
+    private func compactContent(_ snapshot: AgentRunSnapshot) -> some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 12) {
+                phaseIcon(snapshot, size: 46, symbolSize: 18)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(snapshot.providerName)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                    Text(compactStatus(snapshot))
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(WindowDragGesture())
+
+            AgentRunElapsedTimeView(
+                phase: snapshot.phase,
+                elapsedSeconds: snapshot.elapsedSeconds,
+                startedAt: model.elapsedStartedAt)
+
+            Button {
+                model.onAction?(.restore(runID: snapshot.runID))
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(accent)
+                    .frame(width: 32, height: 32)
+                    .background(accent.opacity(0.14), in: Circle())
+                    .overlay {
+                        Circle().stroke(accent.opacity(0.28), lineWidth: 1)
+                    }
+            }
+            .buttonStyle(.plain)
+            .help("Restore conversation")
+            .accessibilityLabel("Restore conversation")
+        }
+        .padding(.horizontal, 14)
+    }
+
+    private func phaseIcon(
+        _ snapshot: AgentRunSnapshot,
+        size: CGFloat,
+        symbolSize: CGFloat) -> some View
+    {
+        ZStack {
+            Circle().fill(accent.opacity(0.18))
+            Circle().stroke(accent.opacity(0.36), lineWidth: 1)
+            Image(systemName: phaseSymbol(snapshot.phase))
+                .font(.system(size: symbolSize, weight: .semibold))
+                .foregroundStyle(accent)
+                .symbolEffect(.variableColor.iterative, isActive: snapshot.phase == .running)
+        }
+        .frame(width: size, height: size)
     }
 
     private func requestCard(_ snapshot: AgentRunSnapshot) -> some View {
@@ -417,11 +498,39 @@ struct AgentRunPanelView: View {
         model.snapshot?.accent.swiftUIColor ?? .blue
     }
 
+    private var panelSize: CGSize {
+        model.isMinimized
+            ? AgentRunPanelLayout.compactSize
+            : AgentRunPanelLayout.expandedSize
+    }
+
     private var backgroundGlow: some View {
         LinearGradient(
             colors: [accent.opacity(0.18), .clear, accent.opacity(0.07)],
             startPoint: .topLeading,
             endPoint: .bottomTrailing)
+    }
+
+    private func compactStatus(_ snapshot: AgentRunSnapshot) -> String {
+        if !snapshot.permissions.isEmpty {
+            return "Permission needed"
+        }
+        if !snapshot.voiceInput.isEmpty {
+            return snapshot.voiceInput
+        }
+        for item in snapshot.timeline.reversed() {
+            switch item {
+            case let .message(message):
+                return message.text
+            case let .userMessage(message):
+                return "You: \(message.text)"
+            case let .tool(tool):
+                return toolSummary(tool)
+            case .omitted:
+                continue
+            }
+        }
+        return phaseLabel(snapshot.phase)
     }
 
     private func phaseLabel(_ phase: AgentRunPhase) -> String {

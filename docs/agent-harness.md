@@ -203,7 +203,14 @@ the key window. Pointer controls work without moving keyboard focus away from
 the user's current application.
 
 The panel opens at the recording overlay's bottom-centred screen and animates
-to a 620 by 420 point material surface. It contains:
+to a 620 by 420 point material surface. Its header and background are draggable,
+so it can move without taking keyboard focus. The minimize control morphs it
+into a 372 by 84 point persistent status pill with the provider, latest activity,
+phase animation, and live elapsed time. The pill remains movable and restores
+the full conversation at its current top-right anchor, including after it has
+been dragged to another position.
+
+The expanded surface contains:
 
 - provider, running phase, elapsed time, and profile accent;
 - the immutable spoken request;
@@ -235,7 +242,9 @@ panel offers **Open**, **Stop turn**, and **End conversation** while applicable,
 then right-aligned **Delete** and **Open** actions after the conversation ends.
 Closing the panel keeps its bounded presentation available from **Open**;
 **Delete** hides it and releases it from memory. A new conversation reuses the
-panel and clears the prior in-memory presentation.
+panel, restores its expanded presentation, and clears the prior in-memory
+presentation. Choosing **Open** while the persistent pill is visible also
+restores the expanded conversation.
 
 Token bursts publish on leading and trailing edges at a fixed 50-millisecond
 cadence. This preserves immediate feedback without making SwiftUI render once

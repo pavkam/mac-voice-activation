@@ -111,12 +111,15 @@ non-activating agent panel that streams an ordered Markdown response while your
 current app keeps keyboard focus. Running tools use animated compact rows;
 finished tools and answered permission prompts collapse out of the way, with
 tool details still expandable. Completed output remains available to select or
-copy. The microphone remains active after each response: speak another request
-to continue in the same agent session. Say `stop`, `cancel`, or `dismiss` to
-end the whole conversation, including active work. The panel and menu also
-provide separate **Stop turn** and **End conversation** controls. When a tool
-requests permission, say `allow`, `allow all`, `deny`, or `deny all` to answer
-it by voice; the request collapses after the decision is sent.
+copy. Drag the panel by its header to move it, or use the minus button to shrink
+it into a movable always-on-top status pill; the arrow button restores the full
+conversation wherever the pill now sits. The microphone remains active after
+each response: speak another request to continue in the same agent session. Say
+`stop`, `cancel`, or `dismiss` to end the whole conversation, including active
+work. The panel and menu also provide separate **Stop turn** and **End
+conversation** controls. When a tool requests permission, say `allow`, `allow
+all`, `deny`, or `deny all` to answer it by voice; the request collapses after
+the decision is sent.
 
 Agent conversation settings can read replies aloud while they stream through a
 macOS or ElevenLabs voice and play a quiet, narration-aware pulse during longer

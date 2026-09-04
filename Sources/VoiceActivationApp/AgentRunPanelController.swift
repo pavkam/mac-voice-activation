@@ -15,7 +15,6 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
     private let model = AgentRunPanelModel()
     private let panel: AgentRunPanel
     private var currentRunID: UUID?
-    private var expandedFrame: NSRect?
 
     var onAction: ((AgentRunPanelAction) -> Void)? {
         get { model.onAction }
@@ -36,6 +35,8 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
         panel.becomesKeyOnlyIfNeeded = true
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
         panel.isReleasedWhenClosed = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
@@ -48,15 +49,9 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
         let visibleFrame = handoff?.visibleScreenFrame ?? NSScreen.main?.visibleFrame
             ?? NSRect(origin: .zero, size: AgentRunPanelLayout.expandedSize)
         let targetFrame = AgentRunPanelLayout.expandedFrame(in: visibleFrame)
-        expandedFrame = targetFrame
         panel.setFrame(handoff?.sourceFrame ?? targetFrame, display: true)
         panel.orderFrontRegardless()
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = AgentRunPanelLayout.transitionDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            panel.animator().setFrame(targetFrame, display: true)
-        }
+        animate(to: targetFrame)
     }
 
     func update(_ snapshot: AgentRunSnapshot) {
@@ -66,14 +61,47 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
 
     func show(runID: UUID) {
         guard currentRunID == runID else { return }
-        if let expandedFrame {
-            panel.setFrame(expandedFrame, display: true)
-        }
         panel.orderFrontRegardless()
     }
 
     func hide(runID: UUID) {
         guard currentRunID == runID else { return }
         panel.orderOut(nil)
+    }
+
+    func minimize(runID: UUID) {
+        guard currentRunID == runID, !model.isMinimized else { return }
+        let targetFrame = AgentRunPanelLayout.compactFrame(
+            minimizing: panel.frame,
+            in: visibleFrame)
+        withAnimation(.snappy(duration: AgentRunPanelLayout.transitionDuration)) {
+            model.setMinimized(true)
+        }
+        animate(to: targetFrame)
+    }
+
+    func restore(runID: UUID) {
+        guard currentRunID == runID, model.isMinimized else { return }
+        let targetFrame = AgentRunPanelLayout.expandedFrame(
+            restoring: panel.frame,
+            in: visibleFrame)
+        panel.orderFrontRegardless()
+        withAnimation(.snappy(duration: AgentRunPanelLayout.transitionDuration)) {
+            model.setMinimized(false)
+        }
+        animate(to: targetFrame)
+    }
+
+    private var visibleFrame: NSRect {
+        panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+            ?? NSRect(origin: .zero, size: AgentRunPanelLayout.expandedSize)
+    }
+
+    private func animate(to frame: NSRect) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = AgentRunPanelLayout.transitionDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }
     }
 }
