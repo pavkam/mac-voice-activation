@@ -212,10 +212,11 @@ resource, and recovery contract.
   restarting passive listening or a held push-to-talk capture.
 - Pausing passive listening while the startup permission request is open remains
   authoritative when that request eventually completes.
-- During synthesized reply playback, conversation recognition ignores ordinary
-  speech to prevent output echo from becoming a prompt. Cancellation words stop
-  playback and close an idle conversation; recognition restarts cleanly after
-  speech ends.
+- During synthesized reply playback, the first non-empty recognized utterance
+  stops narration and continues through the normal follow-up finalization path.
+  Exact cancellation words still stop playback and close the conversation.
+  Conversation capture requests best-effort input voice processing to reduce
+  synthesized output echo without making unsupported hardware a capture error.
 - `LaunchAtLoginSetting` reads and changes `SMAppService.mainApp` registration;
   macOS remains the source of truth instead of a duplicated preference.
 - `RecordingOverlayPresenter` maps capture state to a
@@ -239,9 +240,11 @@ resource, and recovery contract.
   permissions, turn cancellation, and conversation exit without stealing
   keyboard focus. It follows live output only when already at the bottom and
   remains visible after completion for selection and copying. The borderless
-  panel uses explicit header drag gestures; server-side background dragging stays
-  disabled because SwiftUI controls share one hosting view. Minimizing switches
-  the same window and model to a compact persistent status presentation;
+  panel overlays a native AppKit drag surface on its noninteractive header region
+  and hands mouse-down events to the Window Server. Whole-background dragging
+  stays disabled so SwiftUI controls remain clickable. Minimizing animates the
+  same window and model to a compact persistent status presentation at the
+  visible screen's top-right below the menu bar;
   restoring expands from the compact panel's current top-right anchor so a
   user-moved pill does not jump back to its old location.
 - Conversation recognition offers exact spoken permission commands to the app
@@ -253,7 +256,9 @@ resource, and recovery contract.
 
 Passive wake recognition sets `requiresOnDeviceRecognition` and refuses to run
 when the locale lacks on-device support. Interactive command capture can use
-Apple's speech service. Audio is not stored. Partial text exists in memory only
+Apple's speech service. Conversation sessions request Apple's input voice
+processing to reduce playback echo and continue without it when unavailable.
+Audio is not stored. Partial text exists in memory only
 during the current capture; the most recent submitted request remains for menu
 feedback. Conversation prompts, output, diagnostics, plans, tools, and
 permissions are bounded in memory and never persisted by the app. A

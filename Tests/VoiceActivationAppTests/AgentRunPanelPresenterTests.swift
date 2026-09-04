@@ -34,6 +34,15 @@ private final class AgentRunPasteboardSpy: AgentRunPasteboardWriting {
     func write(_ value: String) { values.append(value) }
 }
 
+@MainActor
+private final class AgentRunPanelDragWindowSpy: NSWindow {
+    private(set) var dragCount = 0
+
+    override func performDrag(with event: NSEvent) {
+        dragCount += 1
+    }
+}
+
 struct AgentRunPanelPresenterTests {
     @MainActor @Test func actions_WhenRepeatedOrStale_AreRunScopedAndExactlyOnce() throws {
         let display = AgentRunPanelDisplaySpy()
@@ -259,6 +268,32 @@ struct AgentRunPanelPresenterTests {
 
         #expect(panel.contentView?.mouseDownCanMoveWindow == true)
         #expect(!panel.isMovableByWindowBackground)
+    }
+
+    @MainActor @Test func dragSurface_WhenPressed_StartsNativeWindowDragImmediately() throws {
+        let window = AgentRunPanelDragWindowSpy(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 80),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false)
+        let dragSurface = AgentRunPanelDragView(
+            frame: NSRect(x: 0, y: 0, width: 240, height: 80))
+        window.contentView = dragSurface
+        let event = try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: NSPoint(x: 20, y: 20),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1))
+
+        #expect(dragSurface.acceptsFirstMouse(for: event))
+        dragSurface.mouseDown(with: event)
+
+        #expect(window.dragCount == 1)
     }
 
     @MainActor @Test func view_WhenRendered_FillsTheExpandedPanel() throws {

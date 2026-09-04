@@ -221,12 +221,14 @@ the key window. Pointer controls work without moving keyboard focus away from
 the user's current application.
 
 The panel opens at the recording overlay's bottom-centred screen and animates
-to a 620 by 420 point material surface. Its header is draggable, so it can move
-without taking keyboard focus or turning the SwiftUI controls into a window-drag
-surface. The minimize control morphs it into a 372 by 84 point persistent status
-pill with the provider, latest activity, phase animation, and live elapsed time.
-The pill remains movable and restores the full conversation at its current
-top-right anchor, including after it has been dragged to another position.
+to a 620 by 420 point material surface. A native drag surface covers only the
+noninteractive provider region and hands mouse-down events to the Window Server,
+so the panel moves without taking keyboard focus or intercepting SwiftUI controls.
+The minimize control animates it to the screen's top-right below the menu bar and
+morphs it into a 372 by 84 point persistent status pill with the provider, latest
+activity, phase animation, and live elapsed time. The pill remains movable and
+restores the full conversation at its current top-right anchor, including after
+it has been dragged to another position.
 
 The expanded surface contains:
 
@@ -290,9 +292,11 @@ conversation is open rather than creating a second agent session.
 
 Saying only `cancel`, `stop`, or `dismiss` always ends the whole conversation,
 including any active turn. The same command during spoken reply playback stops
-the playback before ending. Agent speech is excluded from normal follow-up
-recognition so the synthesizer cannot talk to itself. Conversation recognition
-passes those control words to the recognizer as contextual hints.
+the playback before ending. Any other non-empty utterance during narration
+stops playback and proceeds through the ordinary final-result or 1.5-second
+inactivity boundary as a follow-up. Conversation capture enables best-effort
+input voice processing to reduce synthesized reply echo and passes the control
+words to the recognizer as contextual hints.
 
 **Stop turn** transitions the turn to `cancelling` immediately,
 invalidate its execution generation, respond to pending permissions with a
@@ -321,12 +325,13 @@ A short **Test voice** preview uses the same synthesis path; manual Voice ID ent
 remains available when catalog discovery fails.
 
 The voice also acknowledges a spoken conversation cancellation with “Stopped.”
-The thinking pulse begins only after a 1.6-second pause and repeats every 3.2
-seconds while the agent remains busy. Tool start, completion, and failure use
+The first thinking cue plays immediately when a request is accepted, including
+during ACP process startup, and repeats every 3.2 seconds while the agent remains
+busy. Tool start, completion, and failure use
 distinct one-shot cues; duplicate ACP status updates do not replay them. Cloud
 synthesis does not silence the thinking pulse before audio exists. It stops for
 permission choices, actual narration, cancellation, completion, and failure,
-then resumes its delay if work continues after narration.
+then resumes after a 1.6-second delay if work continues after narration.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached

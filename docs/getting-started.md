@@ -111,10 +111,12 @@ non-activating agent panel that streams an ordered Markdown response while your
 current app keeps keyboard focus. Running tools use animated compact rows;
 finished tools and answered permission prompts collapse out of the way, with
 tool details still expandable. Completed output remains available to select or
-copy. Drag the panel by its header to move it, or use the minus button to shrink
-it into a movable always-on-top status pill; the arrow button restores the full
-conversation wherever the pill now sits. The microphone remains active after
-each response: speak another request to continue in the same agent session. Say
+copy. Drag the panel by its provider header to move it, or use the minus button
+to animate it into a movable always-on-top status pill at the top-right below
+the menu bar; the arrow button restores the full conversation wherever the pill
+now sits. The microphone remains active after each response and during spoken
+narration. Speaking interrupts narration and becomes the next request after the
+normal final-result or inactivity boundary. Say
 `stop`, `cancel`, or `dismiss` to end the whole conversation, including active
 work. The panel and menu also provide separate **Stop turn** and **End
 conversation** controls. When a tool requests permission, say `allow`, `allow
@@ -122,8 +124,9 @@ all`, `deny`, or `deny all` to answer it by voice; the request collapses after
 the decision is sent.
 
 Agent conversation settings can read replies aloud while they stream through a
-macOS or ElevenLabs voice and play a quiet, narration-aware pulse during longer
-thinking or tool pauses. ElevenLabs voices load from the API and can be previewed
+macOS or ElevenLabs voice and play a quiet, narration-aware pulse immediately
+when work begins and during longer thinking or tool pauses. ElevenLabs voices
+load from the API and can be previewed
 with **Test voice**; the optional key is stored in macOS Keychain.
 
 Provider credentials remain in the provider's own CLI configuration; Voice

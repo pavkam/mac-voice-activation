@@ -130,7 +130,7 @@ struct AgentRunPanelView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .gesture(WindowDragGesture())
+            .overlay { AgentRunPanelDragSurface() }
 
             AgentRunElapsedTimeView(
                 phase: snapshot.phase,
@@ -171,7 +171,7 @@ struct AgentRunPanelView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .gesture(WindowDragGesture())
+            .overlay { AgentRunPanelDragSurface() }
 
             AgentRunElapsedTimeView(
                 phase: snapshot.phase,

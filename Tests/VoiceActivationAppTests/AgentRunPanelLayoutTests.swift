@@ -26,21 +26,18 @@ struct AgentRunPanelLayoutTests {
         #expect(frame.origin == visibleFrame.origin)
     }
 
-    @Test func compactAndRestoredFrames_WhenPanelHasRoom_PreserveItsTopRightCorner() {
+    @Test func compactFrame_WhenPanelMinimizes_MovesBelowTheMenuBarAtTopRight() {
         let visibleFrame = NSRect(x: 0, y: 0, width: 1_440, height: 900)
         let expandedFrame = NSRect(x: 210, y: 80, width: 620, height: 420)
 
         let compactFrame = AgentRunPanelLayout.compactFrame(
             minimizing: expandedFrame,
             in: visibleFrame)
-        let restoredFrame = AgentRunPanelLayout.expandedFrame(
-            restoring: compactFrame,
-            in: visibleFrame)
 
         #expect(compactFrame.size == NSSize(width: 372, height: 84))
-        #expect(compactFrame.maxX == expandedFrame.maxX)
-        #expect(compactFrame.maxY == expandedFrame.maxY)
-        #expect(restoredFrame == expandedFrame)
+        #expect(compactFrame.maxX == visibleFrame.maxX - 16)
+        #expect(compactFrame.maxY == visibleFrame.maxY - 16)
+        #expect(visibleFrame.contains(compactFrame))
     }
 
     @Test func restoredFrame_WhenCompactPanelWasMoved_FollowsItAndStaysVisible() {

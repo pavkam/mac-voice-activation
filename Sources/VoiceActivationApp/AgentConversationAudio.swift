@@ -84,7 +84,11 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
     func setWorking(_ working: Bool) {
         guard workingRequested != working else { return }
         workingRequested = working
-        refreshWorkingPulse()
+        if working, !isReportingSpeech {
+            startWorkingPulseImmediately()
+        } else {
+            refreshWorkingPulse()
+        }
     }
 
     func playActivitySound(_ sound: AgentActivitySound) {
@@ -139,13 +143,22 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
         scheduleWorkingPulseIfNeeded()
     }
 
-    private func scheduleWorkingPulseIfNeeded() {
+    private func startWorkingPulseImmediately() {
+        workingTask?.cancel()
+        workingTask = nil
+        activitySoundPlayer.stop()
+        guard workingRequested, !isReportingSpeech else { return }
+        activitySoundPlayer.play(.thinking)
+        scheduleWorkingPulseIfNeeded(after: workingPulseInterval)
+    }
+
+    private func scheduleWorkingPulseIfNeeded(after delay: Duration? = nil) {
         guard workingRequested, !isReportingSpeech else { return }
 
         workingTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await Task.sleep(for: self.workingPulseInitialDelay)
+                try await Task.sleep(for: delay ?? self.workingPulseInitialDelay)
             } catch {
                 return
             }

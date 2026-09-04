@@ -609,15 +609,24 @@ public final class VoiceActivationCoordinator {
         if agentSpeechOutputActive {
             let transcript = update.transcript
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            currentTranscript = ""
             if CaptureCancellationMatcher.matches(transcript, isComplete: update.isFinal) {
                 agentSpeechOutputActive = false
                 onAgentSpeechCancellation?()
                 cancelAgentConversationFromSpeech()
-            } else if update.isFinal {
-                startConversationListening()
+                return
             }
-            return
+            guard !transcript.isEmpty else {
+                currentTranscript = ""
+                if update.isFinal {
+                    startConversationListening()
+                }
+                return
+            }
+
+            // Clear this before stopping playback. The synchronous speech callback
+            // must not replace the recognition session that owns this utterance.
+            agentSpeechOutputActive = false
+            onAgentSpeechCancellation?()
         }
 
         conversationUtterance = update.transcript

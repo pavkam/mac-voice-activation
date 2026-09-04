@@ -53,6 +53,7 @@ final class AppleSpeechSession: SpeechSessionProtocol {
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
+        SpeechVoiceProcessingPolicy.configure(input, mode: mode)
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
             throw SessionError.noAudioInput

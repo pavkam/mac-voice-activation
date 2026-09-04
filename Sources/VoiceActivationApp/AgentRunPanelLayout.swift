@@ -7,6 +7,7 @@ enum AgentRunPanelLayout {
     static let expandedSize = NSSize(width: 620, height: 420)
     static let compactSize = NSSize(width: 372, height: 84)
     static let bottomInset: CGFloat = 42
+    static let compactTopTrailingInset: CGFloat = 16
     static let transitionDuration: TimeInterval = 0.42
 
     static func expandedFrame(in visibleFrame: NSRect) -> NSRect {
@@ -18,10 +19,12 @@ enum AgentRunPanelLayout {
             in: visibleFrame)
     }
 
-    static func compactFrame(minimizing frame: NSRect, in visibleFrame: NSRect) -> NSRect {
+    static func compactFrame(minimizing _: NSRect, in visibleFrame: NSRect) -> NSRect {
         topRightAnchoredFrame(
             size: compactSize,
-            topRight: NSPoint(x: frame.maxX, y: frame.maxY),
+            topRight: NSPoint(
+                x: visibleFrame.maxX - compactTopTrailingInset,
+                y: visibleFrame.maxY - compactTopTrailingInset),
             in: visibleFrame)
     }
 

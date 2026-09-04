@@ -109,9 +109,10 @@ the retained output or **Delete** to hide and discard it. The menu-bar card can
 `cancel`, or `dismiss` always ends the whole conversation; when reply speech is
 enabled, the app acknowledges this with “Stopped.”
 
-If the floating panel covers another app, drag its header. Use the minus button
-to keep only the small movable status pill visible, then use the arrow on that
-pill—or **Open** from the menu—to restore the conversation.
+If the floating panel covers another app, drag its provider header. Use the
+minus button to animate it into a small movable status pill at the top-right
+below the menu bar, then use the arrow on that pill—or **Open** from the
+menu—to restore the conversation.
 
 If new output does not follow the bottom, scroll to the bottom once. A deliberate
 scroll upward pauses automatic following so earlier output remains readable.
@@ -148,14 +149,18 @@ key and selected Voice ID are valid and that the Mac can reach
 `api.elevenlabs.io`; use **Refresh** to reload the account catalog and **Test
 voice** to verify synthesis. If catalog loading fails, paste a known Voice ID in
 the fallback field. The key is read from macOS Keychain. A failed ElevenLabs
-request falls back to the macOS voice rather than dropping the spoken chunk. The
-thinking pulse waits 1.6 seconds before its first audible cue, remains active
-while cloud speech is being generated, and pauses when narration actually plays.
+request falls back to the macOS voice rather than dropping the spoken chunk. A
+thinking cue plays immediately when the request is accepted, before ACP startup;
+later cues repeat every 3.2 seconds. The pulse remains active while cloud speech
+is being generated and pauses when narration actually plays.
 
 Narration begins when a complete sentence arrives or 350 milliseconds after the
 first unfinished fragment, even if tokens keep arriving. It does not wait for
 the whole agent process to finish. ElevenLabs prepares up to two chunks in
 parallel, then plays every chunk in order rather than interrupting one another.
+Speaking during narration stops the current playback and captures that utterance
+as a follow-up. Conversation capture requests Apple's voice-processing mode to
+reduce speaker echo; unsupported audio devices fall back to ordinary capture.
 
 The capture start cue plays only when capture begins; the end cue plays for
 submission, cancellation, timeout, and capture errors.

@@ -968,8 +968,8 @@ struct VoiceActivationCoordinatorTests {
     }
 
     @MainActor
-    @Test func agentConversation_WhenReplyIsBeingRead_IgnoresEchoButLetsStopEndConversation() async throws {
-        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+    @Test func agentConversation_WhenUserSpeaksDuringReply_BargesInWithoutWaitingForFinal() async throws {
+        let fixture = try Fixture(timing: .fast, profiles: [try makeAgentProfile()])
         var speechCancellationCount = 0
         var turnCompleted = false
         fixture.coordinator.onAgentSpeechCancellation = { speechCancellationCount += 1 }
@@ -985,9 +985,36 @@ struct VoiceActivationCoordinatorTests {
         await waitUntil { turnCompleted }
         fixture.coordinator.setAgentSpeechOutputActive(true)
 
-        fixture.speech.emit("the spoken agent reply", isFinal: true)
-        try await Task.sleep(for: .milliseconds(30))
-        #expect(await fixture.agentRunner.recordedInvocations().count == 1)
+        fixture.speech.emit("thank you")
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 2 }
+
+        let invocations = await fixture.agentRunner.recordedInvocations()
+        #expect(speechCancellationCount == 1)
+        #expect(invocations.map(\.prompt) == [
+            "explain this",
+            "thank you",
+        ])
+        guard invocations.count == 2 else { return }
+        await fixture.agentRunner.complete(runIndex: 1)
+    }
+
+    @MainActor
+    @Test func agentConversation_WhenReplyIsBeingRead_LetsStopEndConversation() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var speechCancellationCount = 0
+        var turnCompleted = false
+        fixture.coordinator.onAgentSpeechCancellation = { speechCancellationCount += 1 }
+        fixture.coordinator.onAgentRunEvent = { event in
+            if case .turnCompleted = event {
+                turnCompleted = true
+            }
+        }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent explain this", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        await fixture.agentRunner.complete(runIndex: 0)
+        await waitUntil { turnCompleted }
+        fixture.coordinator.setAgentSpeechOutputActive(true)
 
         fixture.speech.emit("stop", isFinal: true)
         await waitUntil { fixture.speech.mode == .passiveWake }

@@ -130,6 +130,19 @@ private final class AgentActivitySoundPlayerSpy: AgentActivitySoundPlaying {
 
 @Suite(.timeLimit(.minutes(1)))
 struct AgentConversationAudioPresenterTests {
+    @MainActor @Test func systemPlayer_WhenWorkStarts_PlaysThinkingCueImmediately() {
+        let activitySounds = AgentActivitySoundPlayerSpy()
+        let player = AgentConversationAudioPlayer(
+            activitySoundPlayer: activitySounds,
+            workingPulseInitialDelay: .seconds(10),
+            workingPulseInterval: .seconds(10))
+
+        player.setWorking(true)
+
+        #expect(activitySounds.sounds == [.thinking])
+        player.stopAll()
+    }
+
     @MainActor @Test func systemPlayer_WhenWorkingStateRepeats_DoesNotRestartPulseDelay() {
         let activitySounds = AgentActivitySoundPlayerSpy()
         let player = AgentConversationAudioPlayer(activitySoundPlayer: activitySounds)
@@ -184,10 +197,11 @@ struct AgentConversationAudioPresenterTests {
             workingPulseInterval: .seconds(10))
 
         player.setWorking(true)
+        let playCountBeforeSpeaking = workingPulse.playCount
         player.speak("Speaking now.", localeID: "en-US")
         try? await Task.sleep(for: .milliseconds(70))
 
-        #expect(workingPulse.playCount == 0)
+        #expect(workingPulse.playCount == playCountBeforeSpeaking)
 
         await withCheckedContinuation { continuation in
             workingPulse.onPlay = {
@@ -197,7 +211,7 @@ struct AgentConversationAudioPresenterTests {
             systemSynthesizer.isSpeaking = false
         }
 
-        #expect(workingPulse.playCount == 1)
+        #expect(workingPulse.playCount == playCountBeforeSpeaking + 1)
         player.stopAll()
     }
 
@@ -213,7 +227,7 @@ struct AgentConversationAudioPresenterTests {
         player.playActivitySound(.toolStarted)
         try? await Task.sleep(for: .milliseconds(70))
 
-        #expect(activitySounds.sounds == [.toolStarted])
+        #expect(activitySounds.sounds == [.thinking, .toolStarted])
 
         await withCheckedContinuation { continuation in
             activitySounds.onPlay = {
@@ -221,7 +235,7 @@ struct AgentConversationAudioPresenterTests {
                 continuation.resume()
             }
         }
-        #expect(activitySounds.sounds == [.toolStarted, .thinking])
+        #expect(activitySounds.sounds == [.thinking, .toolStarted, .thinking])
         player.stopAll()
     }
 

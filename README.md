@@ -112,12 +112,17 @@ omits a final tool status; permission prompts disappear as soon as a choice is
 made. Say `allow`, `allow all`, `deny`, or `deny all` to answer the oldest
 visible permission request without touching the panel. New output follows the
 bottom of the panel until you deliberately scroll upward. Drag the panel by its
-header to move it out of the way, or minimize it into a movable live-status pill
-that stays above other windows and restores the full conversation with one click.
+header to move it out of the way, or minimize it with an animated transition to
+a movable live-status pill at the top-right below the menu bar. The pill stays
+above other windows and restores the full conversation with one click.
 
-The microphone stays live after the first response. Speak another request—or
-use the profile's push-to-talk binding—to continue in the same ACP session and
-timeline. **Stop turn** cancels only the current work; **End conversation**
+The microphone stays live after the first response, including while a reply is
+being read aloud. Speaking interrupts narration and submits the utterance as a
+follow-up after the normal final-result or inactivity boundary. Conversation
+capture enables Apple's best-effort voice processing to reduce synthesized
+reply echo. Speak another request—or use the profile's push-to-talk binding—to
+continue in the same ACP session and timeline. **Stop turn** cancels only the
+current work; **End conversation**
 returns to passive wake listening. Saying only `cancel`, `stop`, or `dismiss`
 always ends the whole conversation and returns to passive wake listening.
 Up to 16 follow-ups may wait behind active work; the panel reports when that
@@ -135,8 +140,9 @@ selected voice can be previewed before saving, with manual Voice ID entry as a
 fallback when the catalog is unavailable. Complete sentences are queued
 immediately; unfinished text is queued within 350 milliseconds even while more
 tokens keep streaming. ElevenLabs prefetches upcoming speech while preserving
-playback order. The thinking pulse continues during cloud synthesis and pauses
-only while speech plays. A bundled sound palette distinguishes listening,
+playback order. The first thinking cue plays as soon as a request is accepted,
+before ACP startup; later pulses continue during cloud synthesis and pause only
+while speech plays. A bundled sound palette distinguishes listening,
 thinking, and tool transitions without making runtime effect-generation calls.
 Voice cancellation says “Stopped” when
 reply speech is enabled, and tests inject silent audio players, so CI never emits
