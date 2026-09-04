@@ -17,7 +17,7 @@ struct SettingsView: View {
                     header
                     voiceSection
                     conversationSection
-                    startupSection
+                    applicationSection
                     privacyNote
                 }
                 .padding(28)
@@ -81,11 +81,11 @@ struct SettingsView: View {
         }
     }
 
-    private var startupSection: some View {
+    private var applicationSection: some View {
         SettingsCard(
-            title: "Startup",
-            subtitle: "Keep Voice Activation ready after you sign in.",
-            systemImage: SettingsSectionSymbol.startup.rawValue)
+            title: "Application settings",
+            subtitle: "Control how Voice Activation integrates with macOS.",
+            systemImage: SettingsSectionSymbol.application.rawValue)
         {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {

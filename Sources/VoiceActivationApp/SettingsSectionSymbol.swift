@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 enum SettingsSectionSymbol: String, CaseIterable {
-    case startup = "power"
+    case application = "gearshape.fill"
     case agentConversation = "speaker.wave.2.fill"
     case voiceTrigger = "ear.badge.waveform"
 }

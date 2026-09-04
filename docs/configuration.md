@@ -6,9 +6,9 @@ SPDX-License-Identifier: MIT
 # Configuration
 
 Open the menu-bar item and choose **Settings…**. Wake-profile, locale, and
-push-to-talk changes take effect after you select **Save Settings**. Startup
-changes apply immediately. A successful save closes the Settings window;
-validation errors keep it open so the invalid field can be corrected.
+push-to-talk changes take effect after you select **Save Settings**. Changes to
+**Launch at Login** apply immediately. A successful save closes the Settings
+window; validation errors keep it open so the invalid field can be corrected.
 
 ## Voice settings
 
@@ -73,7 +73,7 @@ service when on-device recognition is unavailable.
 These are saved settings: editing a toggle, provider, Voice ID, or API key does
 not affect an active conversation until **Save Settings** succeeds.
 
-## Startup
+## Application settings
 
 Enable **Launch at Login** to register the current app bundle as a macOS login
 item. The change applies immediately and does not depend on **Save Settings**.
