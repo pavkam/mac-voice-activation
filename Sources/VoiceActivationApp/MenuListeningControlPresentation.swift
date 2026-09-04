@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+// SPDX-License-Identifier: MIT
+
 struct MenuListeningControlPresentation: Equatable {
     let title: String
     let symbolName: String

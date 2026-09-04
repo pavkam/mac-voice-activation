@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+SPDX-License-Identifier: MIT
+-->
+
 # Voice Activation documentation
 
 Voice Activation is a native macOS menu-bar app that listens for configurable

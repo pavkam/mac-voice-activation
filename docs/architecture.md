@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+SPDX-License-Identifier: MIT
+-->
+
 # Architecture
 
 Voice Activation separates testable speech, direct-command, and ACP-agent

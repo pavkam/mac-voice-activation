@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+SPDX-License-Identifier: MIT
+-->
+
 # Development
 
 ## Repository layout
@@ -8,8 +13,11 @@ Sources/VoiceActivationApp/        macOS adapters and SwiftUI application
 Tests/VoiceActivationCoreTests/    Coordinator and command unit tests
 Tests/VoiceActivationAppTests/     macOS adapter unit tests
 scripts/build-app.sh               Application bundle assembly and signing
+scripts/check-license-headers.sh   MIT and SPDX metadata validation
 scripts/generate-app-icon.swift    Reproducible macOS icon artwork generator
 .github/workflows/swift.yml        Build, test, and packaging CI
+LICENSE                            User-facing MIT license text
+REUSE.toml                         Metadata for non-commentable tracked files
 ```
 
 The package targets macOS 15 and uses Swift tools version 6.2. Swift Testing is
@@ -18,10 +26,11 @@ pinned through `Package.resolved`.
 ## Common commands
 
 ```bash
-make build   # Debug build
-make test    # Complete test suite
-make app     # Release app bundle with verification
-make run     # Build and launch the app bundle
+make build         # Debug build
+make test          # Complete test suite
+make app           # Release app bundle with verification
+make run           # Build and launch the app bundle
+make check-license # MIT, SPDX, and app metadata validation
 ```
 
 For the same debug sequence used by continuous integration:
@@ -115,15 +124,17 @@ swift test --filter VoiceActivationCoordinatorTests
 
 The `🎙️ Swift CI` workflow runs for pushes and pull requests targeting `main`.
 
-1. `🧪 Build & test` resolves dependencies, builds the app and tests, then runs
+1. `⚖️ License compliance` verifies the MIT license, SPDX headers, binary
+   annotations, and app copyright metadata.
+2. `🧪 Build & test` resolves dependencies, builds the app and tests, then runs
    the complete suite.
-2. `🧵 Thread sanitizer` runs the complete suite with race instrumentation.
-3. `📦 Package app` runs only after both test jobs pass, builds the signed
+3. `🧵 Thread sanitizer` runs the complete suite with race instrumentation.
+4. `📦 Package app` runs only after all prerequisite jobs pass, builds the signed
    bundle, checks `Info.plist`, verifies the executable, and verifies the code
    signature.
 
 Workflow permissions are read-only, duplicate runs on the same branch are
-cancelled, and each job has a 15-minute timeout.
+cancelled, and every job has an explicit timeout.
 
 ## Change checklist
 
@@ -132,6 +143,7 @@ Before pushing:
 ```bash
 swift test
 make app
+make check-license
 git diff --check
 ```
 

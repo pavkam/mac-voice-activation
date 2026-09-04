@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+# SPDX-License-Identifier: MIT
+
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd -P)"

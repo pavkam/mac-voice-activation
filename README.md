@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+SPDX-License-Identifier: MIT
+-->
+
 # Voice Activation
 
 A native macOS menu-bar voice launcher for configurable wake phrases,
@@ -144,9 +149,16 @@ bounds, lifecycle details, and supported protocol behavior.
 make build
 make test
 make app
+make check-license
 ```
 
 ## Documentation
 
 See the [documentation index](docs/index.md) for installation, configuration,
 architecture, troubleshooting, and development guides.
+
+## License
+
+Voice Activation is available under the [MIT License](LICENSE).
+Copyright © 2026 Alexandru Ciobanu
+([alex+git@ciobanu.org](mailto:alex+git@ciobanu.org)).

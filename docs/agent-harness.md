@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+SPDX-License-Identifier: MIT
+-->
+
 # ACP agent harness
 
 Voice Activation can route a completed spoken command either to the existing
