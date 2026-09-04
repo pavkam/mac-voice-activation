@@ -74,6 +74,24 @@ struct AgentRunPresentationTests {
         #expect(snapshot.tools.map(\.id) == ["tool-1"])
     }
 
+    @MainActor @Test func receive_WhenSessionRecovers_ShowsVisibleConversationNotice() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(
+            runID: runID,
+            profile: try makeAgentProfile(),
+            prompt: "Continue")
+
+        presentation.receive(
+            runID: runID,
+            event: .metadata(
+                kind: AgentRunMetadataKind.sessionRecovered,
+                summary: "A fresh agent session was started."))
+
+        #expect(presentation.snapshot?.notices == ["A fresh agent session was started."])
+        #expect(presentation.snapshot?.diagnostics.isEmpty == true)
+    }
+
     @MainActor @Test func receive_WhenTextContinuesAfterTool_PreservesVisibleWireOrder() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let runID = UUID()

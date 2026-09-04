@@ -81,6 +81,9 @@ Core ACP suites use in-memory transports and real child-process fixtures to
 cover framing at every split point, all stable update kinds, exact JSON-RPC
 identifiers, permissions, authentication, cancellation, concurrent pipe exit,
 bounded event delivery, lifecycle races, caching, and global run preemption.
+The same suites prove exact session routing, bounded least-recently-used profile
+caching, one-shot recovery when a provider forgets a session, and refusal to
+replay a prompt after observable agent activity.
 
 App adapter tests use an injected login-item service to verify successful and
 failed Service Management registration without changing the developer Mac's

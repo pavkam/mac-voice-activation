@@ -291,6 +291,32 @@ struct ACPClientConnectionTests {
         await connection.close()
     }
 
+    @Test func prompt_WhenUpdateBelongsToAnotherSession_IgnoresItsContent() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport)
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Keep sessions isolated", recorder: recorder)
+        _ = await recorder.nextEvent()
+        _ = await transport.nextSentMessage()
+
+        try await transport.feed(sessionUpdate(
+            .object([
+                "sessionUpdate": .string("agent_message_chunk"),
+                "content": .object([
+                    "type": .string("text"),
+                    "text": .string("Content from another session"),
+                ]),
+            ]),
+            sessionID: "different-session"))
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+
+        #expect(await recorder.nextEvent() == .diagnostic(
+            "Ignored ACP update for a different session."))
+        #expect(try await promptTask.value == AgentRunResult(stopReason: .endTurn))
+        #expect(await recorder.recordedEvents().isEmpty)
+        await connection.close()
+    }
+
     @Test func prompt_WhenCustomProfileHasSystemPrompt_SendsItBeforeTheSpokenRequest() async throws {
         let transport = FakeACPTransport()
         let connection = try await establishConnection(
@@ -1430,11 +1456,14 @@ struct ACPClientConnectionTests {
         ])
     }
 
-    private func sessionUpdate(_ update: ACPJSONValue) -> ACPMessage {
+    private func sessionUpdate(
+        _ update: ACPJSONValue,
+        sessionID: String = "session-1") -> ACPMessage
+    {
         .notification(
             method: "session/update",
             params: .object([
-                "sessionId": .string("session-1"),
+                "sessionId": .string(sessionID),
                 "update": update,
             ]))
     }

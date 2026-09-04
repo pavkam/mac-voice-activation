@@ -128,10 +128,18 @@ non-zero exit status as an error. No shell parses the transcript.
 ## Agent execution
 
 `ACPAgentRunner` is an actor that caches one initialized process and ACP session
-per unchanged profile configuration. `ACPClientConnection` owns JSON-RPC request
-identity, prompt settlement, permissions, cancellation, and exact terminal
-state. `ACPProcessTransport` owns direct-argument launch and independent
-nonblocking stdin, stdout, and stderr lifecycles.
+per unchanged profile configuration, with a four-session least-recently-used
+bound. `ACPClientConnection` owns JSON-RPC request identity, prompt settlement,
+permissions, cancellation, exact session routing, and terminal state.
+`ACPProcessTransport` owns direct-argument launch and independent nonblocking
+stdin, stdout, and stderr lifecycles.
+
+The runner treats a cached session as revocable provider state. A typed
+missing-session error may reconnect and replay the prompt once, but only before
+the connection has received session output or a permission request. This keeps
+stale-session recovery automatic without risking duplicate tool actions.
+Updates carrying another session identifier are ignored rather than entering
+the active conversation.
 
 The client accepts ACP v1 newline-delimited UTF-8 JSON-RPC, preserves integer,
 string, and null request identifiers, and converts stable updates into typed

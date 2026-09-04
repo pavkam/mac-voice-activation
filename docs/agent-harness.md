@@ -97,9 +97,21 @@ request identifiers, pending JSON-RPC continuations, permission decisions, and
 process termination. It keeps one initialized ACP process and session per
 profile while configuration remains unchanged. A conversation sends multiple
 sequential prompt turns through that same ACP session, preserving the agent's
-context. Only one prompt turn may be active globally. A spoken follow-up during
+context. Sessions are isolated by profile and every update must carry the exact
+session identifier owned by its connection. Up to four profile sessions remain
+cached; opening a fifth evicts the least recently used idle process. Returning
+to that profile creates a fresh session and shows that its previous context was
+released. Only one prompt turn may be active globally. A spoken follow-up during
 an active turn first cancels that turn, then starts the follow-up after ACP has
 settled cancellation; additional utterances remain ordered.
+
+A cached session is a lease, not a promise that the provider still has it. If a
+prompt is rejected with a missing-session error before the provider emits any
+session activity or asks for permission, the runner discards the process,
+creates a fresh session, and retries that prompt once. The conversation shows a
+notice because the provider's earlier context is gone. Ambiguous errors, a
+second missing-session failure, and failures after activity begins are never
+replayed; duplicating agent actions would be worse than reporting the failure.
 
 The process transport disables `SIGPIPE` for child stdin, uses nonblocking
 writes, closes the parent write side during termination, drains stdout and
@@ -144,6 +156,8 @@ ACP subprocess communication follows the stable protocol-owner specification:
   turn without duplicating it as user text. ACP v1 has no portable system-role
   field, so other presets retain the profile instruction in the harness block.
 - `session/update` streams until the prompt response supplies a stop reason.
+- A `session/update` for any identifier other than the connection's current
+  session is ignored and reported as a bounded diagnostic.
 
 Follow-ups remain ordered behind an active turn. At most 16 may wait; further
 recognized requests produce an app-authored notice and are not admitted until
@@ -316,8 +330,10 @@ then resumes its delay if work continues after narration.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached
-connection. Disabling passive wake listening does not kill an already-running
-agent; the explicit agent cancellation actions own that decision.
+connection. The fifth distinct profile session evicts the least recently used
+idle connection, keeping subprocess retention bounded. Disabling passive wake
+listening does not kill an already-running agent; the explicit agent
+cancellation actions own that decision.
 
 Malformed JSON, oversized frames, incompatible protocol versions, unexpected
 EOF, non-zero process termination, and JSON-RPC errors become user-safe failed
@@ -326,6 +342,8 @@ run states with bounded diagnostics. A failed connection is never reused.
 ## Resource and privacy bounds
 
 - A prompt is rejected above 8 KiB of UTF-8 rather than silently truncated.
+- At most four ACP profile sessions and their subprocesses remain cached. Cache
+  pressure evicts the least recently used idle session.
 - At most 16 follow-up prompts wait behind an active turn; overflow produces a
   visible bounded notice and does not cancel the active work.
 - One ACP line is limited to 1 MiB before the connection is failed.
@@ -369,7 +387,10 @@ model or depends on installed agent CLIs.
   UTF-8, malformed data, and size limits.
 - ACP client tests cover initialize, authentication, session creation, all
   update types, permission responses, unknown messages, JSON-RPC errors,
-  cancellation, EOF, and stale responses.
+  cancellation, EOF, stale responses, and cross-session update rejection.
+- Runner tests cover isolated profile sessions, deterministic least-recently-used
+  eviction, missing-session classification, one-shot recovery, and the
+  no-replay boundary after agent activity.
 - Process tests prove direct argv launch, separate stdout/stderr draining, and
   bounded cancellation escalation.
 - Coordinator tests prove routing, same-session follow-ups, voice interruption,
@@ -388,6 +409,7 @@ verification, and the exact pushed commit's CI workflow.
 - [ACP v1 overview](https://agentclientprotocol.com/protocol/overview)
 - [ACP stdio transport](https://agentclientprotocol.com/protocol/transports)
 - [ACP prompt lifecycle](https://agentclientprotocol.com/protocol/prompt-turn)
+- [ACP session setup](https://agentclientprotocol.com/protocol/v1/session-setup)
 - [ACP tool permissions](https://agentclientprotocol.com/protocol/tool-calls)
 - [Cursor native ACP server](https://prod.cursor.com/docs/cli/acp)
 - [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp)

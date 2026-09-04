@@ -11,6 +11,7 @@ public enum ACPClientError: Error, Equatable, LocalizedError, Sendable {
     case promptAlreadyActive
     case eventDeliveryOverflow
     case malformedResponse(String)
+    case sessionUnavailable(code: Int64, message: String)
     case remoteError(code: Int64, message: String)
 
     public var errorDescription: String? {
@@ -34,6 +35,8 @@ public enum ACPClientError: Error, Equatable, LocalizedError, Sendable {
             "The agent produced more control events than can be delivered safely."
         case let .malformedResponse(description):
             "The agent sent an invalid ACP response: \(description)"
+        case let .sessionUnavailable(code, message):
+            "The agent session is no longer available (\(code)): \(message)"
         case let .remoteError(code, message):
             "The agent request failed (\(code)): \(message)"
         }
@@ -74,6 +77,7 @@ public actor ACPClientConnection {
     private var activePromptRequestID: ACPRequestID?
     private var promptFrameWasPublished = false
     private var promptResponseWasReceived = false
+    private var promptHadActivity = false
     private var isPromptCancelling = false
     private var cancelFrameWasSent = false
     private var terminalError: ACPClientError?
@@ -125,6 +129,7 @@ public actor ACPClientConnection {
         activePromptRequestID = nil
         promptFrameWasPublished = false
         promptResponseWasReceived = false
+        promptHadActivity = false
         isPromptCancelling = false
         cancelFrameWasSent = false
         do {
@@ -223,6 +228,7 @@ public actor ACPClientConnection {
         activePromptRequestID = nil
         promptFrameWasPublished = false
         promptResponseWasReceived = false
+        promptHadActivity = false
         isPromptCancelling = false
         cancelFrameWasSent = false
 
@@ -444,20 +450,51 @@ public actor ACPClientConnection {
                 maximumBytes: Self.maximumDiagnosticBytes)
             try await completePendingRequest(
                 id: id,
-                result: .failure(.remoteError(code: error.code, message: message)))
+                result: .failure(ACPRemoteErrorClassifier.clientError(
+                    for: error,
+                    safeMessage: message,
+                    isPromptResponse: id == activePromptRequestID,
+                    promptHadActivity: promptHadActivity)))
         case let .request(id, method, params):
+            if activeTurnToken != nil, !promptResponseWasReceived {
+                promptHadActivity = true
+            }
             try await handleRequest(id: id, method: method, params: params)
-        case let .notification(method, _):
+        case let .notification(method, params):
             if method == "session/update" {
+                guard try sessionUpdateBelongsToActiveSession(params) else {
+                    try await deliver(.diagnostic(boundedText(
+                        "Ignored ACP update for a different session.",
+                        maximumBytes: Self.maximumDiagnosticBytes)))
+                    return
+                }
+                if activeTurnToken != nil, !promptResponseWasReceived {
+                    promptHadActivity = true
+                }
                 if let event = try eventDecoder.event(from: message) {
                     try await deliver(event)
                 }
             } else {
+                if activeTurnToken != nil, !promptResponseWasReceived {
+                    promptHadActivity = true
+                }
                 try await deliver(.diagnostic(boundedText(
                     "Unsupported ACP notification: \(method)",
                     maximumBytes: Self.maximumDiagnosticBytes)))
             }
         }
+    }
+
+    private func sessionUpdateBelongsToActiveSession(_ params: ACPJSONValue?) throws -> Bool {
+        let parameters = try requiredObject(params, named: "session/update params")
+        let updateSessionID = try requiredString(
+            parameters["sessionId"],
+            named: "session/update sessionId")
+        guard updateSessionID.utf8.count <= ACPEventDecoder.maximumOpaqueIdentifierBytes else {
+            throw ACPClientError.malformedResponse(
+                "session/update sessionId exceeds the opaque identifier limit.")
+        }
+        return updateSessionID == sessionID
     }
 
     private func completePendingRequest(
@@ -788,6 +825,7 @@ public actor ACPClientConnection {
         activePromptRequestID = nil
         promptFrameWasPublished = false
         promptResponseWasReceived = false
+        promptHadActivity = false
         isPromptCancelling = false
         cancelFrameWasSent = false
     }

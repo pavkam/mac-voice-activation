@@ -145,6 +145,10 @@ public struct AgentRunEventDeliveryNotice: Equatable, Sendable {
     }
 }
 
+public enum AgentRunMetadataKind {
+    public static let sessionRecovered = "session_recovered"
+}
+
 public enum AgentRunEvent: Equatable, Sendable {
     case connected(agentName: String, sessionID: String)
     case agentMessageDelta(messageID: String?, text: String)

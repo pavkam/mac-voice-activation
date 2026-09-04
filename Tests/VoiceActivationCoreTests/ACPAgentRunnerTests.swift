@@ -306,6 +306,173 @@ struct ACPAgentRunnerTests {
         await runner.shutdown()
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func run_WhenCachedSessionNoLongerExists_ReconnectsAndRetriesOnce() async throws {
+        let staleTransport = FakeACPTransport()
+        let replacementTransport = FakeACPTransport()
+        let factory = RunnerTransportFactory(
+            transports: [staleTransport, replacementTransport])
+        let runner = ACPAgentRunner(transportFactory: factory)
+        let recorder = RunnerEventRecorder()
+        let profileID = UUID()
+        let configuration = try makeConfiguration()
+
+        let warmup = run(runner, profileID: profileID, configuration: configuration)
+        try await establishConnection(
+            staleTransport,
+            workingDirectory: "/tmp/project",
+            sessionID: "stale-session")
+        #expect(await staleTransport.nextSentMessage() == promptRequest(
+            id: 3,
+            text: "First",
+            sessionID: "stale-session"))
+        try await staleTransport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await warmup.value
+
+        let recoveredRun = Task {
+            try await runner.run(
+                profileID: profileID,
+                configuration: configuration,
+                prompt: "Continue safely",
+                onEvent: { event in await recorder.record(event) })
+        }
+        #expect(await staleTransport.nextSentMessage() == promptRequest(
+            id: 4,
+            text: "Continue safely",
+            sessionID: "stale-session"))
+        try await staleTransport.feed(.errorResponse(
+            id: .integer(4),
+            error: ACPJSONRPCError(
+                code: -32_002,
+                message: "Resource not found",
+                data: .object([
+                    "resourceType": .string("session"),
+                    "resourceId": .string("stale-session"),
+                ]))))
+
+        try await establishConnection(
+            replacementTransport,
+            workingDirectory: "/tmp/project",
+            sessionID: "replacement-session")
+        #expect(await replacementTransport.nextSentMessage() == promptRequest(
+            id: 3,
+            text: "Continue safely",
+            sessionID: "replacement-session"))
+        try await replacementTransport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+
+        #expect(try await recoveredRun.value == AgentRunResult(stopReason: .endTurn))
+        #expect(await recorder.recordedEvents() == [
+            .connected(agentName: "Test Agent", sessionID: "stale-session"),
+            .metadata(
+                kind: AgentRunMetadataKind.sessionRecovered,
+                summary: ACPAgentRunner.sessionRecoveryNotice),
+            .connected(agentName: "Test Agent", sessionID: "replacement-session"),
+        ])
+        #expect(await staleTransport.observedTerminationCount() == 1)
+        #expect(await factory.createdConfigurations() == [configuration, configuration])
+
+        await runner.shutdown()
+    }
+
+    @Test func run_WhenMissingResourceIsNotTheSession_DoesNotReplayPrompt() async throws {
+        let failedTransport = FakeACPTransport()
+        let unusedTransport = FakeACPTransport()
+        let factory = RunnerTransportFactory(transports: [failedTransport, unusedTransport])
+        let runner = ACPAgentRunner(transportFactory: factory)
+        let configuration = try makeConfiguration()
+        let activeRun = run(runner, profileID: UUID(), configuration: configuration)
+        try await establishConnection(failedTransport, workingDirectory: "/tmp/project")
+        _ = await failedTransport.nextSentMessage()
+
+        try await failedTransport.feed(.errorResponse(
+            id: .integer(3),
+            error: ACPJSONRPCError(
+                code: -32_002,
+                message: "Resource not found",
+                data: .object([
+                    "resource": .string("file"),
+                    "path": .string("/tmp/project/missing.txt"),
+                ]))))
+
+        await #expect(throws: ACPClientError.remoteError(
+            code: -32_002,
+            message: "Resource not found"))
+        {
+            try await activeRun.value
+        }
+        #expect(await factory.createdConfigurations() == [configuration])
+        #expect(await failedTransport.observedTerminationCount() == 1)
+        #expect(await unusedTransport.observedTerminationCount() == 0)
+        await runner.shutdown()
+    }
+
+    @Test func run_WhenSessionDisappearsAfterActivity_DoesNotReplayPrompt() async throws {
+        let failedTransport = FakeACPTransport()
+        let unusedTransport = FakeACPTransport()
+        let factory = RunnerTransportFactory(transports: [failedTransport, unusedTransport])
+        let runner = ACPAgentRunner(transportFactory: factory)
+        let configuration = try makeConfiguration()
+        let activeRun = run(runner, profileID: UUID(), configuration: configuration)
+        try await establishConnection(failedTransport, workingDirectory: "/tmp/project")
+        _ = await failedTransport.nextSentMessage()
+        try await failedTransport.feed(agentMessageUpdate(text: "Work already began"))
+        try await failedTransport.feed(.errorResponse(
+            id: .integer(3),
+            error: ACPJSONRPCError(code: -32_603, message: "Session not found")))
+
+        await #expect(throws: ACPClientError.remoteError(
+            code: -32_603,
+            message: "Session not found"))
+        {
+            try await activeRun.value
+        }
+        #expect(await factory.createdConfigurations() == [configuration])
+        #expect(await failedTransport.observedTerminationCount() == 1)
+        #expect(await unusedTransport.observedTerminationCount() == 0)
+        await runner.shutdown()
+    }
+
+    @Test func run_WhenReplacementSessionIsAlsoMissing_RetriesOnlyOnce() async throws {
+        let firstTransport = FakeACPTransport()
+        let secondTransport = FakeACPTransport()
+        let unusedTransport = FakeACPTransport()
+        let factory = RunnerTransportFactory(
+            transports: [firstTransport, secondTransport, unusedTransport])
+        let runner = ACPAgentRunner(transportFactory: factory)
+        let configuration = try makeConfiguration()
+        let activeRun = run(runner, profileID: UUID(), configuration: configuration)
+
+        try await establishConnection(
+            firstTransport,
+            workingDirectory: "/tmp/project",
+            sessionID: "first-session")
+        _ = await firstTransport.nextSentMessage()
+        try await firstTransport.feed(.errorResponse(
+            id: .integer(3),
+            error: ACPJSONRPCError(code: -32_603, message: "Unknown session")))
+
+        try await establishConnection(
+            secondTransport,
+            workingDirectory: "/tmp/project",
+            sessionID: "second-session")
+        _ = await secondTransport.nextSentMessage()
+        try await secondTransport.feed(.errorResponse(
+            id: .integer(3),
+            error: ACPJSONRPCError(code: -32_603, message: "Unknown session")))
+
+        await #expect(throws: ACPClientError.sessionUnavailable(
+            code: -32_603,
+            message: "Unknown session"))
+        {
+            try await activeRun.value
+        }
+        #expect(await factory.createdConfigurations() == [configuration, configuration])
+        #expect(await firstTransport.observedTerminationCount() == 1)
+        #expect(await secondTransport.observedTerminationCount() == 1)
+        #expect(await unusedTransport.observedTerminationCount() == 0)
+        await runner.shutdown()
+    }
+
     @Test func run_WhenProfileConfigurationChanges_ReplacesConnection() async throws {
         let firstTransport = FakeACPTransport()
         let secondTransport = FakeACPTransport()
@@ -812,6 +979,145 @@ struct ACPAgentRunnerTests {
         await runner.shutdown()
     }
 
+    @Test func run_WhenSessionCacheExceedsBound_EvictsLeastRecentlyUsedConnection() async throws {
+        let sessionLimit = ACPAgentRunner.maximumCachedSessions
+        #expect(sessionLimit >= 2)
+        let transports = (0..<(sessionLimit + 2)).map { _ in FakeACPTransport() }
+        let factory = RunnerTransportFactory(transports: transports)
+        let runner = ACPAgentRunner(transportFactory: factory)
+        let profileIDs = (0...sessionLimit).map { _ in UUID() }
+        let configurations = try (0...sessionLimit).map { index in
+            try makeConfiguration(workingDirectory: "/tmp/project-\(index)")
+        }
+
+        for index in 0..<sessionLimit {
+            let activeRun = run(
+                runner,
+                profileID: profileIDs[index],
+                configuration: configurations[index])
+            try await establishConnection(
+                transports[index],
+                workingDirectory: "/tmp/project-\(index)",
+                sessionID: "session-\(index)")
+            _ = await transports[index].nextSentMessage()
+            try await transports[index].feed(promptResponse(id: 3, stopReason: "end_turn"))
+            _ = try await activeRun.value
+        }
+
+        let reusedRun = run(
+            runner,
+            profileID: profileIDs[0],
+            configuration: configurations[0],
+            prompt: "Keep this one")
+        #expect(await transports[0].nextSentMessage() == promptRequest(
+            id: 4,
+            text: "Keep this one",
+            sessionID: "session-0"))
+        try await transports[0].feed(promptResponse(id: 4, stopReason: "end_turn"))
+        _ = try await reusedRun.value
+
+        let overflowRun = run(
+            runner,
+            profileID: profileIDs[sessionLimit],
+            configuration: configurations[sessionLimit])
+        try await establishConnection(
+            transports[sessionLimit],
+            workingDirectory: "/tmp/project-\(sessionLimit)",
+            sessionID: "session-\(sessionLimit)")
+        _ = await transports[sessionLimit].nextSentMessage()
+        try await transports[sessionLimit].feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await overflowRun.value
+
+        #expect(await transports[0].observedTerminationCount() == 0)
+        #expect(await transports[1].observedTerminationCount() == 1)
+        #expect(await transports[2].observedTerminationCount() == 0)
+        #expect(await transports[3].observedTerminationCount() == 0)
+        #expect(await transports[sessionLimit].observedTerminationCount() == 0)
+
+        let recorder = RunnerEventRecorder()
+        let restoredRun = Task {
+            try await runner.run(
+                profileID: profileIDs[1],
+                configuration: configurations[1],
+                prompt: "Continue evicted profile",
+                onEvent: { event in await recorder.record(event) })
+        }
+        try await establishConnection(
+            transports[sessionLimit + 1],
+            workingDirectory: "/tmp/project-1",
+            sessionID: "restored-session")
+        _ = await transports[sessionLimit + 1].nextSentMessage()
+        try await transports[sessionLimit + 1].feed(promptResponse(
+            id: 3,
+            stopReason: "end_turn"))
+        _ = try await restoredRun.value
+
+        #expect(await recorder.recordedEvents() == [
+            .metadata(
+                kind: AgentRunMetadataKind.sessionRecovered,
+                summary: ACPAgentRunner.sessionEvictionNotice),
+            .connected(agentName: "Test Agent", sessionID: "restored-session"),
+        ])
+        #expect(await transports[2].observedTerminationCount() == 1)
+
+        await runner.shutdown()
+    }
+
+    @Test func run_WhenOverflowProfileCannotConnect_PreservesHealthyCachedSessions() async throws {
+        let sessionLimit = ACPAgentRunner.maximumCachedSessions
+        let transports = (0...sessionLimit).map { _ in FakeACPTransport() }
+        let factory = RunnerTransportFactory(transports: transports)
+        let runner = ACPAgentRunner(transportFactory: factory)
+
+        for index in 0..<sessionLimit {
+            let activeRun = run(
+                runner,
+                profileID: UUID(),
+                configuration: try makeConfiguration(
+                    workingDirectory: "/tmp/healthy-\(index)"))
+            try await establishConnection(
+                transports[index],
+                workingDirectory: "/tmp/healthy-\(index)",
+                sessionID: "healthy-session-\(index)")
+            _ = await transports[index].nextSentMessage()
+            try await transports[index].feed(promptResponse(id: 3, stopReason: "end_turn"))
+            _ = try await activeRun.value
+        }
+
+        let failedRun = run(
+            runner,
+            profileID: UUID(),
+            configuration: try makeConfiguration(workingDirectory: "/tmp/broken"))
+        #expect(await transports[sessionLimit].nextSentMessage() == .request(
+            id: .integer(1),
+            method: "initialize",
+            params: .object([
+                "protocolVersion": .integer(1),
+                "clientCapabilities": .object([:]),
+                "clientInfo": .object([
+                    "name": .string("voice-activation"),
+                    "title": .string("Voice Activation"),
+                    "version": .string("0.1.0"),
+                ]),
+            ])))
+        try await transports[sessionLimit].feed(.response(
+            id: .integer(1),
+            result: .object([
+                "protocolVersion": .integer(2),
+                "agentCapabilities": .object([:]),
+            ])))
+
+        await #expect(throws: ACPClientError.incompatibleProtocol(selected: 2)) {
+            try await failedRun.value
+        }
+        for index in 0..<sessionLimit {
+            #expect(await transports[index].observedTerminationCount() == 0)
+        }
+        #expect(await transports[sessionLimit].observedTerminationCount() == 1)
+
+        await runner.shutdown()
+    }
+
     @Test func reset_WhenTransportCreationIsSuspended_InvalidatesAndDiscardsTheActiveTurn()
         async throws
     {
@@ -1150,7 +1456,8 @@ struct ACPAgentRunnerTests {
 
     private func establishConnection(
         _ transport: FakeACPTransport,
-        workingDirectory: String) async throws
+        workingDirectory: String,
+        sessionID: String = "session-1") async throws
     {
         #expect(await transport.nextSentMessage() == .request(
             id: .integer(1),
@@ -1185,7 +1492,7 @@ struct ACPAgentRunnerTests {
             ])))
         try await transport.feed(.response(
             id: .integer(2),
-            result: .object(["sessionId": .string("session-1")])))
+            result: .object(["sessionId": .string(sessionID)])))
     }
 
     private func makeConfiguration(
@@ -1200,12 +1507,16 @@ struct ACPAgentRunnerTests {
             permissionPolicy: .ask)
     }
 
-    private func promptRequest(id: Int64, text: String) -> ACPMessage {
+    private func promptRequest(
+        id: Int64,
+        text: String,
+        sessionID: String = "session-1") -> ACPMessage
+    {
         .request(
             id: .integer(id),
             method: "session/prompt",
             params: .object([
-                "sessionId": .string("session-1"),
+                "sessionId": .string(sessionID),
                 "prompt": .array([
                     .object([
                         "type": .string("text"),

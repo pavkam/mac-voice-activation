@@ -123,6 +123,12 @@ always ends the whole conversation and returns to passive wake listening.
 Up to 16 follow-ups may wait behind active work; the panel reports when that
 bounded queue is full instead of growing memory without limit.
 
+Each profile keeps its own ACP session. The app retains at most four live
+profile sessions, evicts the least recently used idle one, and recovers once
+when a provider forgets a cached session before any agent work begins. Recovery
+and cache-eviction context resets are visible in the conversation; prompts are
+never replayed after output or a permission request.
+
 Settings can read replies aloud as they stream, using either the matching macOS
 system voice or an ElevenLabs voice loaded from the account catalog. The
 selected voice can be previewed before saving, with manual Voice ID entry as a

@@ -388,7 +388,11 @@ final class AgentRunPresentation {
         case let .plan(entries):
             plan = entries
         case let .metadata(kind, summary):
-            diagnosticBuffer.append("[\(kind)] \(summary)\n")
+            if kind == AgentRunMetadataKind.sessionRecovered {
+                appendNotice(summary)
+            } else {
+                diagnosticBuffer.append("[\(kind)] \(summary)\n")
+            }
         case let .diagnostic(message):
             diagnosticBuffer.append(message)
             if !message.hasSuffix("\n") {

@@ -50,6 +50,14 @@ struct ACPAgentRunnerTestingHooks: Sendable {
 
 public actor ACPAgentRunner: AgentHarnessRunning {
     public static let maximumStandardErrorBytes = 16 * 1_024
+    public static let maximumCachedSessions = 4
+
+    private static let maximumTrackedSessionEvictions = 64
+    static let sessionRecoveryNotice =
+        "The previous agent session was unavailable, so a fresh session was started."
+    static let sessionEvictionNotice =
+        "This profile's previous agent session was released to keep resource use bounded, "
+        + "so a fresh session was started."
 
     private static let cancellationGracePeriod = Duration.seconds(2)
     private static let exitDrainGracePeriod = Duration.milliseconds(500)
@@ -63,6 +71,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     private var records: [UUID: ACPAgentConnectionRecord] = [:]
     private var activeTurn: ACPAgentActiveTurn?
     private var isShutDown = false
+    private var latestAccessOrdinal: UInt64 = 0
+    private var evictedProfileIDs: [UUID] = []
 
     public init(
         transportFactory: any ACPTransportCreating = ACPProcessTransportFactory(),
@@ -119,63 +129,100 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             deliveryOverflowed: false)
 
         var runRecord: ACPAgentConnectionRecord?
+        var didAttemptSessionRecovery = false
+        var shouldPublishSessionRecoveryNotice = false
         do {
-            let record = try await connectionRecord(
-                profileID: profileID,
-                configuration: configuration,
-                turnToken: token)
-            runRecord = record
-            guard ownsActiveTurn(token),
-                  !isActiveTurnCancelling(token),
-                  activeTurn?.deliveryOverflowed == false
-            else {
-                if activeTurn?.token == token, activeTurn?.deliveryOverflowed == true {
+            while true {
+                let record = try await connectionRecord(
+                    profileID: profileID,
+                    configuration: configuration,
+                    turnToken: token)
+                runRecord = record
+                guard ownsActiveTurn(token),
+                      !isActiveTurnCancelling(token),
+                      activeTurn?.deliveryOverflowed == false
+                else {
+                    if activeTurn?.token == token, activeTurn?.deliveryOverflowed == true {
+                        throw ACPAgentRunnerError.eventDeliveryOverflow
+                    }
+                    throw ACPAgentRunnerError.cancelled
+                }
+                guard let connection = record.connection else {
+                    throw ACPClientError.connectionClosed
+                }
+                updateActiveTurn(token: token, record: record, connection: connection)
+                let recordID = record.id
+                if shouldPublishSessionRecoveryNotice {
+                    try publishSessionNotice(
+                        Self.sessionRecoveryNotice,
+                        turnToken: token)
+                    shouldPublishSessionRecoveryNotice = false
+                } else if evictedProfileIDs.contains(profileID) {
+                    try publishSessionNotice(
+                        Self.sessionEvictionNotice,
+                        turnToken: token)
+                    evictedProfileIDs.removeAll { $0 == profileID }
+                }
+
+                let result: AgentRunResult
+                do {
+                    result = try await connection.prompt(prompt) { [weak self] event in
+                        await self?.forward(
+                            event: event,
+                            turnToken: token,
+                            profileID: profileID,
+                            recordID: recordID)
+                    }
+                } catch let error as ACPClientError {
+                    guard !didAttemptSessionRecovery,
+                          error.isSessionUnavailable,
+                          ownsActiveTurn(token),
+                          !isActiveTurnCancelling(token)
+                    else {
+                        throw error
+                    }
+
+                    didAttemptSessionRecovery = true
+                    await discardRecord(
+                        profileID: profileID,
+                        recordID: recordID,
+                        fallbackRecord: record)
+                    runRecord = nil
+                    clearActiveTurnConnection(token: token)
+                    try ensureActiveTurn(token: token)
+                    shouldPublishSessionRecoveryNotice = true
+                    continue
+                }
+                if isActiveTurnCancelling(token), result.stopReason != .cancelled {
+                    throw ACPClientError.malformedResponse(
+                        "A cancelled prompt returned a non-cancelled stopReason.")
+                }
+
+                if await processExitWasObservedDuringPromptSettlement(record: record) {
+                    _ = await record.exitTask?.result
+                }
+
+                await delivery.finish(.drain)
+                guard activeTurn?.token == token else {
+                    throw ACPAgentRunnerError.cancelled
+                }
+                guard activeTurn?.deliveryOverflowed == false else {
                     throw ACPAgentRunnerError.eventDeliveryOverflow
                 }
-                throw ACPAgentRunnerError.cancelled
+                await testingHooks.beforeSuccessIsPublished()
+                guard activeTurn?.token == token else {
+                    throw ACPAgentRunnerError.cancelled
+                }
+                guard activeTurn?.deliveryOverflowed == false else {
+                    throw ACPAgentRunnerError.eventDeliveryOverflow
+                }
+                if isActiveTurnCancelling(token), result.stopReason != .cancelled {
+                    throw ACPAgentRunnerError.cancelled
+                }
+                clearActiveTurn(token: token)
+                await completion.resolve(.success(result))
+                return result
             }
-            guard let connection = record.connection else {
-                throw ACPClientError.connectionClosed
-            }
-            updateActiveTurn(token: token, record: record, connection: connection)
-            let recordID = record.id
-
-            let result = try await connection.prompt(prompt) { [weak self] event in
-                await self?.forward(
-                    event: event,
-                    turnToken: token,
-                    profileID: profileID,
-                    recordID: recordID)
-            }
-            if isActiveTurnCancelling(token), result.stopReason != .cancelled {
-                throw ACPClientError.malformedResponse(
-                    "A cancelled prompt returned a non-cancelled stopReason.")
-            }
-
-            if await processExitWasObservedDuringPromptSettlement(record: record) {
-                _ = await record.exitTask?.result
-            }
-
-            await delivery.finish(.drain)
-            guard activeTurn?.token == token else {
-                throw ACPAgentRunnerError.cancelled
-            }
-            guard activeTurn?.deliveryOverflowed == false else {
-                throw ACPAgentRunnerError.eventDeliveryOverflow
-            }
-            await testingHooks.beforeSuccessIsPublished()
-            guard activeTurn?.token == token else {
-                throw ACPAgentRunnerError.cancelled
-            }
-            guard activeTurn?.deliveryOverflowed == false else {
-                throw ACPAgentRunnerError.eventDeliveryOverflow
-            }
-            if isActiveTurnCancelling(token), result.stopReason != .cancelled {
-                throw ACPAgentRunnerError.cancelled
-            }
-            clearActiveTurn(token: token)
-            await completion.resolve(.success(result))
-            return result
         } catch {
             let reportedError: any Error = activeTurn?.token == token
                 && activeTurn?.deliveryOverflowed == true
@@ -258,6 +305,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             }
             removed.append(record)
         }
+        evictedProfileIDs.removeAll { profileIDs.contains($0) }
 
         await discardedDelivery?.finish(.discard)
 
@@ -284,6 +332,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
 
         let cachedRecords = Array(records.values)
         records.removeAll()
+        evictedProfileIDs.removeAll()
         for record in cachedRecords {
             await dispose(record)
         }
@@ -299,6 +348,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
            cached.connection != nil,
            cached.exitStatus == nil
         {
+            markAccessed(cached)
             updateActiveTurnRecord(token: turnToken, record: cached)
             return cached
         }
@@ -319,6 +369,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             profileID: profileID,
             configuration: configuration,
             transport: transport,
+            accessOrdinal: nextAccessOrdinal(),
             beforeCancelledExitWaitReturns: testingHooks.beforeCancelledExitWaitReturns)
         records[profileID] = record
         updateActiveTurnRecord(token: turnToken, record: record)
@@ -338,6 +389,9 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             }
             record.connection = connection
             updateActiveTurn(token: turnToken, record: record, connection: connection)
+            try await evictLeastRecentlyUsedSessionIfNeeded(
+                preservingRecordID: record.id,
+                turnToken: turnToken)
             return record
         } catch {
             if records[profileID]?.id == record.id {
@@ -346,6 +400,60 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             await dispose(record)
             throw error
         }
+    }
+
+    private func evictLeastRecentlyUsedSessionIfNeeded(
+        preservingRecordID: UUID,
+        turnToken: UUID) async throws
+    {
+        guard records.count > Self.maximumCachedSessions,
+              let candidate = records.values
+              .filter({ $0.id != preservingRecordID })
+              .min(by: { left, right in
+                  if left.accessOrdinal == right.accessOrdinal {
+                      return left.id.uuidString < right.id.uuidString
+                  }
+                  return left.accessOrdinal < right.accessOrdinal
+              })
+        else {
+            return
+        }
+
+        records.removeValue(forKey: candidate.profileID)
+        recordSessionEviction(profileID: candidate.profileID)
+        await dispose(candidate)
+        try ensureActiveTurn(token: turnToken)
+    }
+
+    private func recordSessionEviction(profileID: UUID) {
+        evictedProfileIDs.removeAll { $0 == profileID }
+        evictedProfileIDs.append(profileID)
+        if evictedProfileIDs.count > Self.maximumTrackedSessionEvictions {
+            evictedProfileIDs.removeFirst(
+                evictedProfileIDs.count - Self.maximumTrackedSessionEvictions)
+        }
+    }
+
+    private func markAccessed(_ record: ACPAgentConnectionRecord) {
+        record.accessOrdinal = nextAccessOrdinal()
+    }
+
+    private func nextAccessOrdinal() -> UInt64 {
+        if latestAccessOrdinal == .max {
+            let ordered = records.values.sorted { left, right in
+                if left.accessOrdinal == right.accessOrdinal {
+                    return left.id.uuidString < right.id.uuidString
+                }
+                return left.accessOrdinal < right.accessOrdinal
+            }
+            for (index, record) in ordered.enumerated() {
+                record.accessOrdinal = UInt64(index + 1)
+            }
+            latestAccessOrdinal = UInt64(ordered.count)
+        }
+
+        latestAccessOrdinal += 1
+        return latestAccessOrdinal
     }
 
     private func startObservers(for record: ACPAgentConnectionRecord) async {
@@ -555,6 +663,23 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             recordID: recordID)
     }
 
+    private func publishSessionNotice(_ summary: String, turnToken: UUID) throws {
+        guard var turn = activeTurn, turn.token == turnToken else {
+            throw ACPAgentRunnerError.cancelled
+        }
+        switch turn.delivery.send(.metadata(
+            kind: AgentRunMetadataKind.sessionRecovered,
+            summary: summary))
+        {
+        case .accepted, .ignored, .stopped:
+            return
+        case .capacityExceeded, .invalid:
+            turn.deliveryOverflowed = true
+            activeTurn = turn
+            throw ACPAgentRunnerError.eventDeliveryOverflow
+        }
+    }
+
     private func admit(
         _ event: AgentRunEvent,
         turnToken: UUID,
@@ -696,6 +821,15 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         activeTurn = turn
     }
 
+    private func clearActiveTurnConnection(token: UUID) {
+        guard var turn = activeTurn, turn.token == token else {
+            return
+        }
+        turn.recordID = nil
+        turn.connection = nil
+        activeTurn = turn
+    }
+
     private func ownsActiveTurn(_ token: UUID) -> Bool {
         activeTurn?.token == token
     }
@@ -720,6 +854,15 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 }
 
+private extension ACPClientError {
+    var isSessionUnavailable: Bool {
+        if case .sessionUnavailable = self {
+            return true
+        }
+        return false
+    }
+}
+
 private final class ACPAgentConnectionRecord {
     let id: UUID
     let profileID: UUID
@@ -731,6 +874,7 @@ private final class ACPAgentConnectionRecord {
     var standardError = Data()
     var diagnosticRemainder = Data()
     var exitStatus: Int32?
+    var accessOrdinal: UInt64
     let exitObservation: ACPAgentProcessExitLatch
 
     init(
@@ -738,12 +882,14 @@ private final class ACPAgentConnectionRecord {
         profileID: UUID,
         configuration: AgentHarnessConfiguration,
         transport: any ACPTransport,
+        accessOrdinal: UInt64,
         beforeCancelledExitWaitReturns: @escaping @Sendable () async -> Void)
     {
         self.id = id
         self.profileID = profileID
         self.configuration = configuration
         self.transport = transport
+        self.accessOrdinal = accessOrdinal
         exitObservation = ACPAgentProcessExitLatch(
             beforeCancelledWaitReturns: beforeCancelledExitWaitReturns)
     }

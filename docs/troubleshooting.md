@@ -124,6 +124,12 @@ If a provider exits, emits invalid JSON, exceeds a protocol bound, or closes a
 pipe unexpectedly, the panel enters a failed state with bounded diagnostics.
 The failed process is discarded and a later trigger starts a fresh connection.
 
+If the provider forgets a cached session, Voice Activation creates a new one and
+retries the prompt once when no work has started. A visible notice explains that
+the earlier provider context was lost. The app does not replay after streamed
+output, a permission request, or another sign of agent activity; repeat the
+request manually in that case so an action cannot run twice.
+
 ## An agent is waiting for permission
 
 With **Ask every time**, choose one of the exact options supplied by the provider
