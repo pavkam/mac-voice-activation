@@ -225,6 +225,10 @@ again. Scroll geometry is sampled throughout interaction and deceleration, so
 streamed growth cannot overwrite that decision. Programmatic scrolling and
 content growth never misclassify that state.
 
+Agent output does not drive the elapsed clock; the visible timer refreshes on
+its own schedule and freezes when the run reaches a terminal state. This keeps
+silent tool calls and long thinking pauses accurately timed.
+
 Completing one turn keeps the microphone and conversation open for a follow-up.
 Ending the conversation leaves the panel visible for inspection. The menu-bar
 panel offers **Open**, **Stop turn**, and **End conversation** while applicable,
