@@ -108,14 +108,11 @@ struct AgentRunPanelView: View {
                 .onChange(of: snapshot.permissions) {
                     followBottom(proxy)
                 }
-                .onChange(of: snapshot.voiceInput) {
-                    followBottom(proxy)
-                }
                 .onChange(of: snapshot.phase) {
                     followBottom(proxy)
                 }
             }
-            conversationDock(snapshot)
+            actionDock(snapshot)
         }
     }
 
@@ -610,50 +607,6 @@ struct AgentRunPanelView: View {
         .animation(.snappy(duration: 0.2), value: snapshot.permissions.map(\.id))
     }
 
-    @ViewBuilder
-    private func voiceInput(_ snapshot: AgentRunSnapshot) -> some View {
-        if !snapshot.phase.isTerminal {
-            HStack(alignment: .center, spacing: 11) {
-                ZStack {
-                    Circle()
-                        .fill(AngularGradient(
-                            colors: [accent, accentHighlight, accent],
-                            center: .center))
-                    Image(systemName: "waveform")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                        .symbolEffect(.variableColor.iterative, isActive: true)
-                }
-                .frame(width: 30, height: 30)
-                .shadow(color: accent.opacity(0.28), radius: 7)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(snapshot.voiceInput.isEmpty ? "Listening for you…" : snapshot.voiceInput)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(snapshot.voiceInput.isEmpty ? .secondary : .primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .lineLimit(2)
-                        .contentTransition(.interpolate)
-                    Text("Speak a follow-up  •  say “stop” to finish")
-                        .font(.system(size: 9, weight: .medium, design: .rounded))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 9)
-            .background(
-                LinearGradient(
-                    colors: [accent.opacity(0.13), .white.opacity(0.035)],
-                    startPoint: .leading,
-                    endPoint: .trailing),
-                in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .stroke(accent.opacity(0.20), lineWidth: 0.7)
-            }
-        }
-    }
-
     private func actions(_ snapshot: AgentRunSnapshot) -> some View {
         HStack(spacing: 8) {
             if snapshot.phase == .running {
@@ -689,15 +642,10 @@ struct AgentRunPanelView: View {
         }
     }
 
-    private func conversationDock(_ snapshot: AgentRunSnapshot) -> some View {
-        VStack(spacing: 9) {
-            if !snapshot.phase.isTerminal {
-                voiceInput(snapshot)
-            }
-            actions(snapshot)
-        }
+    private func actionDock(_ snapshot: AgentRunSnapshot) -> some View {
+        actions(snapshot)
         .padding(.horizontal, 18)
-        .padding(.top, snapshot.phase.isTerminal ? 11 : 9)
+        .padding(.top, 11)
         .padding(.bottom, 12)
         .background {
             LinearGradient(
