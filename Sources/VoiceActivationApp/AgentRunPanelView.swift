@@ -8,26 +8,33 @@ struct AgentRunPanelView: View {
     @Bindable var model: AgentRunPanelModel
 
     var body: some View {
-        let cornerRadius: CGFloat = model.isMinimized ? 22 : 28
+        let cornerRadius: CGFloat = model.isMinimized ? 24 : 30
         ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.ultraThinMaterial)
-            backgroundGlow
+            AgentRunPanelBackdrop(
+                accent: accent,
+                highlight: accentHighlight,
+                isActive: model.snapshot?.phase == .running,
+                isCompact: model.isMinimized)
             content
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(
+                .strokeBorder(
                     LinearGradient(
-                        colors: [.white.opacity(0.48), accent.opacity(0.34)],
+                        colors: [
+                            .white.opacity(0.42),
+                            .white.opacity(0.10),
+                            accent.opacity(0.36),
+                        ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing),
-                    lineWidth: 1)
+                    lineWidth: 0.8)
         }
-        .padding(1)
         .frame(width: panelSize.width, height: panelSize.height)
-        .animation(.snappy(duration: AgentRunPanelLayout.transitionDuration), value: model.isMinimized)
+        .animation(
+            .snappy(duration: AgentRunPanelLayout.transitionDuration),
+            value: model.isMinimized)
     }
 
     @ViewBuilder
@@ -46,20 +53,21 @@ struct AgentRunPanelView: View {
     private func expandedContent(_ snapshot: AgentRunSnapshot) -> some View {
         VStack(spacing: 0) {
             header(snapshot)
-            Divider().opacity(0.45)
+            panelSeparator
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 16) {
                         requestCard(snapshot)
                         plan(snapshot)
                         timeline(snapshot)
                         noticeCards(snapshot)
                         failureCard(snapshot)
                         permissions(snapshot)
-                        voiceInput(snapshot)
                         Color.clear.frame(height: 1).id("agent-run-bottom")
                     }
-                    .padding(18)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 16)
+                    .padding(.bottom, 14)
                 }
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
                     max(
@@ -107,8 +115,7 @@ struct AgentRunPanelView: View {
                     followBottom(proxy)
                 }
             }
-            Divider().opacity(0.45)
-            actions(snapshot)
+            conversationDock(snapshot)
         }
     }
 
@@ -120,16 +127,15 @@ struct AgentRunPanelView: View {
     }
 
     private func header(_ snapshot: AgentRunSnapshot) -> some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 12) {
-                phaseIcon(snapshot, size: 38, symbolSize: 16)
+        HStack(spacing: 14) {
+            HStack(spacing: 13) {
+                phaseIcon(snapshot, size: 44, symbolSize: 17)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text(snapshot.providerName)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                    Text(phaseLabel(snapshot.phase))
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .tracking(-0.25)
+                    statusPill(snapshot.phase)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -140,31 +146,41 @@ struct AgentRunPanelView: View {
                 phase: snapshot.phase,
                 elapsedSeconds: snapshot.elapsedSeconds,
                 startedAt: model.elapsedStartedAt)
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+                .background(.white.opacity(0.055), in: Capsule())
+                .overlay {
+                    Capsule().stroke(.white.opacity(0.10), lineWidth: 0.7)
+                }
 
             Button {
                 model.onAction?(.minimize(runID: snapshot.runID))
             } label: {
                 Image(systemName: "minus")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 28, height: 28)
-                    .background(.primary.opacity(0.07), in: Circle())
+                    .font(.system(size: 11, weight: .bold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentRunIconButtonStyle(tint: accent))
             .help("Minimize conversation")
             .accessibilityLabel("Minimize conversation")
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 13)
+        .padding(.vertical, 14)
+        .background {
+            LinearGradient(
+                colors: [.white.opacity(0.045), .clear],
+                startPoint: .top,
+                endPoint: .bottom)
+        }
     }
 
     private func compactContent(_ snapshot: AgentRunSnapshot) -> some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 12) {
-                phaseIcon(snapshot, size: 46, symbolSize: 18)
+        HStack(spacing: 13) {
+            HStack(spacing: 13) {
+                phaseIcon(snapshot, size: 48, symbolSize: 18)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(snapshot.providerName)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
                         .lineLimit(1)
                     Text(compactStatus(snapshot))
                         .font(.system(size: 11, weight: .medium, design: .rounded))
@@ -186,19 +202,13 @@ struct AgentRunPanelView: View {
                 model.onAction?(.restore(runID: snapshot.runID))
             } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(accent)
-                    .frame(width: 32, height: 32)
-                    .background(accent.opacity(0.14), in: Circle())
-                    .overlay {
-                        Circle().stroke(accent.opacity(0.28), lineWidth: 1)
-                    }
+                    .font(.system(size: 11, weight: .bold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AgentRunIconButtonStyle(tint: accent))
             .help("Restore conversation")
             .accessibilityLabel("Restore conversation")
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 15)
     }
 
     private func phaseIcon(
@@ -206,31 +216,21 @@ struct AgentRunPanelView: View {
         size: CGFloat,
         symbolSize: CGFloat) -> some View
     {
-        ZStack {
-            Circle().fill(accent.opacity(0.18))
-            Circle().stroke(accent.opacity(0.36), lineWidth: 1)
-            Image(systemName: phaseSymbol(snapshot.phase))
-                .font(.system(size: symbolSize, weight: .semibold))
-                .foregroundStyle(accent)
-                .symbolEffect(.variableColor.iterative, isActive: snapshot.phase == .running)
-        }
-        .frame(width: size, height: size)
+        AgentRunPhaseOrb(
+            symbol: phaseSymbol(snapshot.phase),
+            accent: accent,
+            highlight: accentHighlight,
+            size: size,
+            symbolSize: symbolSize,
+            isActive: snapshot.phase == .running,
+            isFailed: {
+                if case .failed = snapshot.phase { return true }
+                return false
+            }())
     }
 
     private func requestCard(_ snapshot: AgentRunSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Request", systemImage: "quote.opening")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.8)
-            Text(snapshot.prompt)
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .textSelection(.enabled)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 13))
+        userBubble(snapshot.prompt, label: "You")
     }
 
     @ViewBuilder
@@ -238,12 +238,22 @@ struct AgentRunPanelView: View {
         if snapshot.timeline.isEmpty,
            snapshot.phase == .running || snapshot.phase == .cancelling
         {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(snapshot.phase == .cancelling ? "Cancelling…" : "Waiting for output…")
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                AgentRunWorkingGlyph(tint: accent, size: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(snapshot.phase == .cancelling ? "Wrapping up" : "Warming up")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+                    Text(snapshot.phase == .cancelling
+                        ? "Waiting for the agent to stop safely"
+                        : "Connecting to \(snapshot.providerName)")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.tertiary)
+                }
             }
             .font(.system(size: 12, weight: .medium, design: .rounded))
+            .padding(12)
+            .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
         } else {
             ForEach(snapshot.timeline) { item in
                 switch item {
@@ -264,74 +274,130 @@ struct AgentRunPanelView: View {
     }
 
     private func messageBlock(_ message: AgentMessagePresentation) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if message.kind == .thought {
-                sectionLabel("Thinking", symbol: "brain.head.profile")
+        HStack(alignment: .top, spacing: 10) {
+            if message.kind == .response {
+                miniAgentMark
             }
-            AgentMarkdownView(markdown: message.text)
-                .foregroundStyle(message.kind == .thought ? .secondary : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-                .tint(accent)
-        }
-        .padding(message.kind == .thought ? 10 : 0)
-        .background {
-            if message.kind == .thought {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(.primary.opacity(0.035))
+
+            VStack(alignment: .leading, spacing: 8) {
+                sectionLabel(
+                    message.kind == .thought
+                        ? "Thinking"
+                        : model.snapshot?.providerName ?? "Agent",
+                    symbol: message.kind == .thought ? "brain.head.profile" : "sparkles")
+                AgentMarkdownView(markdown: message.text)
+                    .foregroundStyle(message.kind == .thought ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .tint(accent)
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 11)
+            .background {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(.white.opacity(message.kind == .thought ? 0.035 : 0.055))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(.white.opacity(0.10), lineWidth: 0.7)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, message.kind == .response ? 40 : 18)
     }
 
     private func userMessageBlock(_ message: AgentUserMessagePresentation) -> some View {
-        Text(message.text)
-            .font(.system(size: 13, weight: .medium, design: .rounded))
-            .textSelection(.enabled)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(accent.opacity(0.16), in: RoundedRectangle(cornerRadius: 13))
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        userBubble(message.text, label: "You")
     }
 
     @ViewBuilder
     private func noticeCards(_ snapshot: AgentRunSnapshot) -> some View {
         ForEach(Array(snapshot.notices.enumerated()), id: \.offset) { _, notice in
-            Label(notice, systemImage: "info.circle.fill")
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
-                .padding(9)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(.orange)
+                Text(notice)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .background(
+                LinearGradient(
+                    colors: [.orange.opacity(0.12), .white.opacity(0.025)],
+                    startPoint: .leading,
+                    endPoint: .trailing),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.orange.opacity(0.18), lineWidth: 0.7)
+            }
         }
     }
 
     @ViewBuilder
     private func failureCard(_ snapshot: AgentRunSnapshot) -> some View {
         if case let .failed(message) = snapshot.phase {
-            VStack(alignment: .leading, spacing: 5) {
-                Label("Agent stopped", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                Text(message)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .textSelection(.enabled)
+            HStack(alignment: .top, spacing: 11) {
+                ZStack {
+                    Circle().fill(.red.opacity(0.16))
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.red)
+                }
+                .frame(width: 30, height: 30)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Agent stopped")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                    Text(message)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .foregroundStyle(.red)
-            .padding(10)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 11))
+            .background(
+                LinearGradient(
+                    colors: [.red.opacity(0.16), .pink.opacity(0.045)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(.red.opacity(0.24), lineWidth: 0.8)
+            }
         }
     }
 
     @ViewBuilder
     private func plan(_ snapshot: AgentRunSnapshot) -> some View {
         if !snapshot.plan.isEmpty {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 10) {
                 sectionLabel("Plan", symbol: "list.bullet.clipboard")
                 ForEach(Array(snapshot.plan.enumerated()), id: \.offset) { _, entry in
-                    Label(entry.content, systemImage: planSymbol(entry.status))
-                        .font(.system(size: 12, design: .rounded))
-                        .foregroundStyle(entry.status == .completed ? .secondary : .primary)
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        Image(systemName: planSymbol(entry.status))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(entry.status == .inProgress ? accent : .secondary)
+                            .symbolEffect(
+                                .variableColor.iterative,
+                                isActive: entry.status == .inProgress)
+                        Text(entry.content)
+                            .font(.system(size: 12, design: .rounded))
+                            .foregroundStyle(
+                                entry.status == .completed ? .secondary : .primary)
+                    }
                 }
+            }
+            .padding(12)
+            .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(.white.opacity(0.08), lineWidth: 0.7)
             }
         }
     }
@@ -343,20 +409,20 @@ struct AgentRunPanelView: View {
             ? "\(detailCount)+ steps"
             : "\(detailCount) \(detailCount == 1 ? "step" : "steps")"
         let detailSummary = thinking.isWorking && detailCount == 0
-            ? "Starting agent"
-            : "\(detailCountLabel) · \(isExpanded ? "Hide" : "Show") details"
+            ? "Starting the agent"
+            : "\(detailCountLabel)  •  \(isExpanded ? "Hide" : "Show") details"
         return VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.snappy(duration: 0.24)) {
                     model.toggleThinkingDetails(thinkingID: thinking.id)
                 }
             } label: {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .center, spacing: 11) {
                     thinkingActivityIcon(thinking)
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(thinking.isWorking ? "Thinking…" : "Thinking")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundStyle(thinking.hasFailedTool ? .red : .primary)
                         Text(detailSummary)
                             .font(.system(size: 10, weight: .medium, design: .rounded))
@@ -368,7 +434,6 @@ struct AgentRunPanelView: View {
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .padding(.top, 3)
                 }
                 .contentShape(Rectangle())
             }
@@ -376,7 +441,7 @@ struct AgentRunPanelView: View {
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 10) {
-                    Divider().opacity(0.42)
+                    panelSeparator
                     if thinking.omittedDetailCount > 0 {
                         Label(
                             "\(thinking.omittedDetailCount) earlier steps omitted",
@@ -388,39 +453,55 @@ struct AgentRunPanelView: View {
                         thinkingDetail(detail)
                     }
                 }
-                .padding(.top, 9)
+                .padding(.top, 10)
+                .padding(.leading, 9)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(accent.opacity(0.20))
+                        .frame(width: 2)
+                        .padding(.top, 14)
+                }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, thinking.isWorking ? 10 : 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, thinking.isWorking ? 11 : 9)
         .background(
-            thinking.hasFailedTool ? Color.red.opacity(0.075) : accent.opacity(0.075),
+            LinearGradient(
+                colors: thinking.hasFailedTool
+                    ? [.red.opacity(0.14), .red.opacity(0.035)]
+                    : [accent.opacity(thinking.isWorking ? 0.15 : 0.085), .white.opacity(0.025)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(alignment: .leading) {
-            Capsule()
-                .fill(thinking.hasFailedTool ? Color.red.opacity(0.75) : accent.opacity(0.78))
-                .frame(width: 3)
-                .padding(.vertical, 7)
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    thinking.hasFailedTool
+                        ? Color.red.opacity(0.24)
+                        : accent.opacity(thinking.isWorking ? 0.24 : 0.12),
+                    lineWidth: 0.7)
         }
+        .shadow(
+            color: thinking.isWorking ? accent.opacity(0.10) : .clear,
+            radius: 10,
+            y: 4)
         .animation(.snappy(duration: 0.24), value: thinking)
     }
 
     @ViewBuilder
     private func thinkingActivityIcon(_ thinking: AgentThinkingPresentation) -> some View {
-        ZStack {
-            Circle().fill(accent.opacity(0.14))
-            if thinking.isWorking {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(accent)
-            } else {
+        if thinking.isWorking {
+            AgentRunWorkingGlyph(tint: accent, size: 28)
+        } else {
+            ZStack {
+                Circle().fill((thinking.hasFailedTool ? Color.red : accent).opacity(0.13))
                 Image(systemName: thinking.hasFailedTool ? "exclamationmark" : "sparkles")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(thinking.hasFailedTool ? .red : accent)
             }
+            .frame(width: 28, height: 28, alignment: .topLeading)
         }
-        .frame(width: 24, height: 24, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -457,10 +538,7 @@ struct AgentRunPanelView: View {
     @ViewBuilder
     private func toolActivityIcon(_ tool: AgentToolPresentation) -> some View {
         if tool.isWorking {
-            ProgressView()
-                .controlSize(.small)
-                .tint(accent)
-                .frame(width: 18, height: 18, alignment: .topLeading)
+            AgentRunWorkingGlyph(tint: accent, size: 19)
         } else {
             Image(systemName: toolSymbol(tool))
                 .font(.system(size: 13, weight: .semibold))
@@ -472,29 +550,61 @@ struct AgentRunPanelView: View {
     @ViewBuilder
     private func permissions(_ snapshot: AgentRunSnapshot) -> some View {
         ForEach(snapshot.permissions) { permission in
-            VStack(alignment: .leading, spacing: 10) {
-                Label(permission.toolTitle, systemImage: "hand.raised.fill")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                Text("Say “allow”, “allow all”, “deny”, or “deny all” — or choose below.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    ZStack {
+                        Circle().fill(accent.opacity(0.17))
+                        Image(systemName: "hand.raised.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(accent)
+                    }
+                    .frame(width: 30, height: 30)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Permission requested")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(accent)
+                            .textCase(.uppercase)
+                            .tracking(0.8)
+                        Text(permission.toolTitle)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        Text("Say “allow”, “allow all”, “deny”, or “deny all”.")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 HStack {
                     ForEach(permission.options, id: \.id) { option in
                         Button(option.label) {
                             model.selectPermission(permission, optionID: option.id)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(option.kind == .allowOnce || option.kind == .allowAlways
-                            ? accent
-                            : .red.opacity(0.82))
+                        .buttonStyle(AgentRunActionButtonStyle(
+                            role: option.kind == .allowOnce || option.kind == .allowAlways
+                                ? .accent
+                                : .subtle,
+                            tint: option.kind == .allowOnce || option.kind == .allowAlways
+                                ? accent
+                                : .red))
                         .disabled(
                             permission.isResolving
                                 || model.resolvingPermissions.contains(permission.key))
                     }
                 }
             }
-            .padding(12)
-            .background(accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 13))
+            .padding(13)
+            .background(
+                LinearGradient(
+                    colors: [accent.opacity(0.16), .white.opacity(0.035)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(accent.opacity(0.28), lineWidth: 0.8)
+            }
+            .shadow(color: accent.opacity(0.12), radius: 12, y: 5)
             .transition(.scale(scale: 0.96).combined(with: .opacity))
         }
         .animation(.snappy(duration: 0.2), value: snapshot.permissions.map(\.id))
@@ -503,39 +613,57 @@ struct AgentRunPanelView: View {
     @ViewBuilder
     private func voiceInput(_ snapshot: AgentRunSnapshot) -> some View {
         if !snapshot.phase.isTerminal {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "waveform.badge.mic")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .symbolEffect(.variableColor.iterative, isActive: true)
-                    .frame(width: 20, height: 20)
+            HStack(alignment: .center, spacing: 11) {
+                ZStack {
+                    Circle()
+                        .fill(AngularGradient(
+                            colors: [accent, accentHighlight, accent],
+                            center: .center))
+                    Image(systemName: "waveform")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .symbolEffect(.variableColor.iterative, isActive: true)
+                }
+                .frame(width: 30, height: 30)
+                .shadow(color: accent.opacity(0.28), radius: 7)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(snapshot.voiceInput.isEmpty ? "Listening for you…" : snapshot.voiceInput)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(snapshot.voiceInput.isEmpty ? .secondary : .primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Speak a follow-up, or say “stop” to end the conversation.")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .lineLimit(2)
+                        .contentTransition(.interpolate)
+                    Text("Speak a follow-up  •  say “stop” to finish")
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
                         .foregroundStyle(.tertiary)
                 }
             }
-            .padding(11)
-            .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .background(
+                LinearGradient(
+                    colors: [accent.opacity(0.13), .white.opacity(0.035)],
+                    startPoint: .leading,
+                    endPoint: .trailing),
+                in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(accent.opacity(0.20), lineWidth: 0.7)
+            }
         }
     }
 
     private func actions(_ snapshot: AgentRunSnapshot) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             if snapshot.phase == .running {
                 Button("Stop turn", systemImage: "stop.circle.fill") {
                     model.onAction?(.cancel(runID: snapshot.runID))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red.opacity(0.84))
+                .buttonStyle(AgentRunActionButtonStyle(role: .danger, tint: .red))
             } else if snapshot.phase == .cancelling {
                 Button("Cancelling…", systemImage: "clock") {}
-                    .buttonStyle(.bordered)
+                    .buttonStyle(AgentRunActionButtonStyle(role: .subtle, tint: accent))
                     .disabled(true)
             }
             Spacer()
@@ -543,33 +671,124 @@ struct AgentRunPanelView: View {
                 Button("End conversation", systemImage: "rectangle.portrait.and.arrow.right") {
                     model.onAction?(.endConversation(runID: snapshot.runID))
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(AgentRunActionButtonStyle(role: .subtle, tint: accent))
             } else {
                 Button("Delete", systemImage: "trash", role: .destructive) {
                     model.onAction?(.delete(runID: snapshot.runID))
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(AgentRunActionButtonStyle(role: .danger, tint: .red))
                 Button("Copy output", systemImage: "doc.on.doc") {
                     model.onAction?(.copy(runID: snapshot.runID))
                 }
+                .buttonStyle(AgentRunActionButtonStyle(role: .subtle, tint: accent))
                 Button("Close", systemImage: "xmark") {
                     model.onAction?(.close(runID: snapshot.runID))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(accent)
+                .buttonStyle(AgentRunActionButtonStyle(role: .accent, tint: accent))
             }
         }
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
+    }
+
+    private func conversationDock(_ snapshot: AgentRunSnapshot) -> some View {
+        VStack(spacing: 9) {
+            if !snapshot.phase.isTerminal {
+                voiceInput(snapshot)
+            }
+            actions(snapshot)
+        }
         .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.top, snapshot.phase.isTerminal ? 11 : 9)
+        .padding(.bottom, 12)
+        .background {
+            LinearGradient(
+                colors: [.white.opacity(0.055), .black.opacity(0.035)],
+                startPoint: .top,
+                endPoint: .bottom)
+        }
+        .overlay(alignment: .top) {
+            panelSeparator
+        }
+    }
+
+    private func userBubble(_ text: String, label: String) -> some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            Label(label, systemImage: "person.fill")
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(accent.opacity(0.92))
+                .textCase(.uppercase)
+                .tracking(0.9)
+
+            Text(text)
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .lineSpacing(2)
+                .textSelection(.enabled)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10)
+                .background(
+                    LinearGradient(
+                        colors: [accent.opacity(0.30), accentHighlight.opacity(0.16)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing),
+                    in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .stroke(accent.opacity(0.28), lineWidth: 0.7)
+                }
+                .shadow(color: accent.opacity(0.10), radius: 8, y: 3)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, 74)
+    }
+
+    private var miniAgentMark: some View {
+        ZStack {
+            Circle()
+                .fill(AngularGradient(
+                    colors: [accent, accentHighlight, accent.opacity(0.72), accent],
+                    center: .center))
+            Circle().stroke(.white.opacity(0.28), lineWidth: 0.7)
+            Image(systemName: "sparkles")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: 27, height: 27)
+        .shadow(color: accent.opacity(0.24), radius: 6, y: 2)
+        .accessibilityHidden(true)
+    }
+
+    private func statusPill(_ phase: AgentRunPhase) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(phaseTint(phase))
+                .frame(width: 5, height: 5)
+                .shadow(color: phaseTint(phase).opacity(0.65), radius: 4)
+            Text(phaseLabel(phase))
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 20)
+        .background(.white.opacity(0.055), in: Capsule())
+        .overlay {
+            Capsule().stroke(.white.opacity(0.09), lineWidth: 0.6)
+        }
+        .fixedSize()
+    }
+
+    private var panelSeparator: some View {
+        LinearGradient(
+            colors: [.clear, .white.opacity(0.14), accent.opacity(0.22), .clear],
+            startPoint: .leading,
+            endPoint: .trailing)
+            .frame(height: 0.7)
     }
 
     private func sectionLabel(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol)
-            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .font(.system(size: 9, weight: .bold, design: .rounded))
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
-            .tracking(0.8)
+            .tracking(1)
     }
 
     private var accent: Color {
@@ -582,11 +801,15 @@ struct AgentRunPanelView: View {
             : AgentRunPanelLayout.expandedSize
     }
 
-    private var backgroundGlow: some View {
-        LinearGradient(
-            colors: [accent.opacity(0.18), .clear, accent.opacity(0.07)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing)
+    private var accentHighlight: Color {
+        switch model.snapshot?.accent ?? .blue {
+        case .cyan: .blue
+        case .blue: .indigo
+        case .purple: .pink
+        case .pink: .purple
+        case .orange: .pink
+        case .green: .cyan
+        }
     }
 
     private func compactStatus(_ snapshot: AgentRunSnapshot) -> String {
@@ -613,11 +836,21 @@ struct AgentRunPanelView: View {
 
     private func phaseLabel(_ phase: AgentRunPhase) -> String {
         switch phase {
-        case .listening: "Listening for follow-up"
-        case .running: "Running"
+        case .listening: "Listening"
+        case .running: "Working"
         case .cancelling: "Cancelling"
         case let .completed(reason): reason == .cancelled ? "Cancelled" : "Completed"
         case .failed: "Failed"
+        }
+    }
+
+    private func phaseTint(_ phase: AgentRunPhase) -> Color {
+        switch phase {
+        case .listening: .cyan
+        case .running: accent
+        case .cancelling: .orange
+        case let .completed(reason): reason == .cancelled ? .secondary : .green
+        case .failed: .red
         }
     }
 

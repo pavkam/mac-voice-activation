@@ -308,6 +308,27 @@ struct AgentRunPanelPresenterTests {
         #expect(image.height == 420)
     }
 
+    @MainActor @Test func view_WhenRendered_DrawsChromeToEveryPanelEdge() throws {
+        let model = AgentRunPanelModel()
+        model.begin(runningSnapshot(runID: UUID()))
+        let renderer = ImageRenderer(content: AgentRunPanelView(model: model))
+        renderer.scale = 1
+        renderer.proposedSize = ProposedViewSize(width: 620, height: 420)
+        let image = try #require(renderer.cgImage)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        let edgePoints = [
+            (x: image.width / 2, y: 0),
+            (x: image.width / 2, y: image.height - 1),
+            (x: 0, y: image.height / 2),
+            (x: image.width - 1, y: image.height / 2),
+        ]
+
+        let edgeAlpha = try edgePoints.map { point in
+            try #require(bitmap.colorAt(x: point.x, y: point.y)).alphaComponent
+        }
+        #expect(edgeAlpha.allSatisfy { $0 >= 0.9 })
+    }
+
     @MainActor @Test func view_WhenMinimized_RendersAsCompactNotification() throws {
         let model = AgentRunPanelModel()
         model.begin(runningSnapshot(runID: UUID()))
