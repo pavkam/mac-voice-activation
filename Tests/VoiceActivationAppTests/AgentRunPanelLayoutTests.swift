@@ -51,4 +51,27 @@ struct AgentRunPanelLayoutTests {
         #expect(frame == NSRect(x: -638, y: 354, width: 620, height: 420))
         #expect(visibleFrame.contains(frame))
     }
+
+    @Test func placement_WhenMinimizedAndRestored_ReturnsToSavedExpandedLocation() {
+        let originalScreen = NSRect(x: 0, y: 24, width: 1_440, height: 876)
+        let otherScreen = NSRect(x: 1_440, y: 0, width: 1_920, height: 1_080)
+        let expandedFrame = NSRect(x: 280, y: 160, width: 620, height: 420)
+        var placement = AgentRunPanelPlacement()
+
+        let compactFrame = placement.minimize(
+            frame: expandedFrame,
+            in: originalScreen)
+        let movedCompactFrame = NSRect(
+            x: otherScreen.maxX - 388,
+            y: otherScreen.maxY - 100,
+            width: 372,
+            height: 84)
+        let restoredFrame = placement.restore(
+            from: movedCompactFrame,
+            availableVisibleFrames: [originalScreen, otherScreen],
+            fallbackVisibleFrame: otherScreen)
+
+        #expect(compactFrame.maxX == originalScreen.maxX - 16)
+        #expect(restoredFrame == expandedFrame)
+    }
 }

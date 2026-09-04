@@ -1553,6 +1553,47 @@ struct VoiceActivationCoordinatorTests {
         #expect(fixture.speech.mode == .passiveWake)
     }
 
+    @MainActor
+    @Test func execution_WhenAgentFailsAfterActivity_KeepsConversationOpenForRecovery()
+        async throws
+    {
+        let fixture = try Fixture(timing: .fast, profiles: [try makeAgentProfile()])
+        var lifecycleEvents: [AgentRunLifecycleEvent] = []
+        fixture.coordinator.onAgentRunEvent = { lifecycleEvents.append($0) }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent inspect", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        await fixture.agentRunner.emit(
+            .agentMessageDelta(messageID: "progress", text: "I found useful output."),
+            from: 0)
+
+        await fixture.agentRunner.fail(
+            runIndex: 0,
+            error: ControlledAgentRunnerError.runFailed)
+        await waitUntil {
+            lifecycleEvents.contains { event in
+                if case .turnFailed = event { return true }
+                return false
+            }
+        }
+
+        guard case let .started(runID, _, _) = lifecycleEvents.first else {
+            Issue.record("Expected an agent run start")
+            return
+        }
+        #expect(lifecycleEvents.last == .turnFailed(
+            runID: runID,
+            message: "The fake agent run failed."))
+        #expect(fixture.coordinator.state == .executing)
+
+        fixture.speech.emit("continue from there", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 2 }
+        #expect(await fixture.agentRunner.recordedInvocations().map(\.prompt) == [
+            "inspect", "continue from there",
+        ])
+        await fixture.agentRunner.complete(runIndex: 1)
+    }
+
     @MainActor @Test func agentCompletion_WhenNewerAgentIsRunning_DoesNotCleanUpNewExecution() async throws {
         let profile = try makeAgentProfile()
         let fixture = try Fixture(profiles: [profile])

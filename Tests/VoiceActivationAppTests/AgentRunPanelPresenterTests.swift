@@ -361,30 +361,32 @@ struct AgentRunPanelPresenterTests {
         #expect(!model.isAutoFollowing)
     }
 
-    @MainActor @Test func toolDetails_WhenToolCompletes_CollapsesButCanBeExpandedAgain() {
+    @MainActor @Test func thinkingDetails_WhenWorkSettles_CollapsesButCanBeExpandedAgain() {
         let model = AgentRunPanelModel()
         let runID = UUID()
-        model.begin(toolSnapshot(runID: runID, status: .inProgress))
+        let thinkingID = UUID()
+        model.begin(thinkingSnapshot(runID: runID, thinkingID: thinkingID, isSettled: false))
 
-        model.toggleToolDetails(toolID: "tool-1")
-        #expect(model.isToolExpanded(toolID: "tool-1"))
+        model.toggleThinkingDetails(thinkingID: thinkingID)
+        #expect(model.isThinkingExpanded(thinkingID: thinkingID))
 
-        model.update(toolSnapshot(runID: runID, status: .completed))
-        #expect(!model.isToolExpanded(toolID: "tool-1"))
+        model.update(thinkingSnapshot(runID: runID, thinkingID: thinkingID, isSettled: true))
+        #expect(!model.isThinkingExpanded(thinkingID: thinkingID))
 
-        model.toggleToolDetails(toolID: "tool-1")
-        #expect(model.isToolExpanded(toolID: "tool-1"))
+        model.toggleThinkingDetails(thinkingID: thinkingID)
+        #expect(model.isThinkingExpanded(thinkingID: thinkingID))
     }
 
-    @MainActor @Test func toolDetails_WhenTurnSettlesWithoutFinalStatus_Collapses() {
+    @MainActor @Test func thinkingDetails_WhenGroupDisappears_DropsExpansionState() {
         let model = AgentRunPanelModel()
         let runID = UUID()
-        model.begin(toolSnapshot(runID: runID, status: .inProgress))
-        model.toggleToolDetails(toolID: "tool-1")
+        let thinkingID = UUID()
+        model.begin(thinkingSnapshot(runID: runID, thinkingID: thinkingID, isSettled: false))
+        model.toggleThinkingDetails(thinkingID: thinkingID)
 
-        model.update(toolSnapshot(runID: runID, status: .inProgress, isSettled: true))
+        model.update(runningSnapshot(runID: runID))
 
-        #expect(!model.isToolExpanded(toolID: "tool-1"))
+        #expect(!model.isThinkingExpanded(thinkingID: thinkingID))
     }
 
     @MainActor
@@ -410,16 +412,20 @@ struct AgentRunPanelPresenterTests {
     }
 
     @MainActor
-    private func toolSnapshot(
+    private func thinkingSnapshot(
         runID: UUID,
-        status: AgentToolCallStatus,
-        isSettled: Bool = false) -> AgentRunSnapshot
+        thinkingID: UUID,
+        isSettled: Bool) -> AgentRunSnapshot
     {
         let tool = AgentToolPresentation(
             id: "tool-1",
             title: "Read Package.swift",
             kind: .read,
-            status: status,
+            status: isSettled ? .completed : .inProgress,
+            isSettled: isSettled)
+        let thinking = AgentThinkingPresentation(
+            id: thinkingID,
+            details: [.tool(tool)],
             isSettled: isSettled)
         return AgentRunSnapshot(
             runID: runID,
@@ -430,7 +436,7 @@ struct AgentRunPanelPresenterTests {
             phase: .running,
             voiceInput: "",
             output: "",
-            timeline: [.tool(tool)],
+            timeline: [.thinking(thinking)],
             diagnostics: "",
             plan: [],
             tools: [tool],

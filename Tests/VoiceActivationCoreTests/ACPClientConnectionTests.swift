@@ -265,6 +265,10 @@ struct ACPClientConnectionTests {
         #expect(instructionBlock["type"] == .string("text"))
         #expect(instruction.localizedCaseInsensitiveContains("Markdown"))
         #expect(instruction.localizedCaseInsensitiveContains("user-facing"))
+        #expect(instruction.localizedCaseInsensitiveContains("progress narration"))
+        #expect(instruction.localizedCaseInsensitiveContains("one short sentence"))
+        #expect(instruction.localizedCaseInsensitiveContains("individual tool calls"))
+        #expect(instruction.localizedCaseInsensitiveContains("final answer"))
         #expect(requestBlock["type"] == .string("text"))
         #expect(requestText == "Inspect the project")
         try await transport.feed(sessionUpdate(

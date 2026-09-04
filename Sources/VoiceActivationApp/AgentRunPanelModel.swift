@@ -13,7 +13,7 @@ final class AgentRunPanelModel {
     var isAutoFollowing = true
     private(set) var isMinimized = false
     var resolvingPermissions: Set<AgentPermissionKey> = []
-    private(set) var expandedToolIDs: Set<String> = []
+    private(set) var expandedThinkingIDs: Set<UUID> = []
     private(set) var elapsedStartedAt: Date
     @ObservationIgnored var onAction: ((AgentRunPanelAction) -> Void)?
     @ObservationIgnored private let now: @MainActor () -> Date
@@ -30,7 +30,7 @@ final class AgentRunPanelModel {
         isAutoFollowing = true
         isMinimized = false
         resolvingPermissions = []
-        expandedToolIDs = []
+        expandedThinkingIDs = []
         isUserScrolling = false
     }
 
@@ -38,26 +38,39 @@ final class AgentRunPanelModel {
         guard let previousSnapshot = self.snapshot,
               previousSnapshot.runID == snapshot.runID
         else { return }
-        let previouslyFinished = Dictionary(
-            uniqueKeysWithValues: previousSnapshot.tools.map { ($0.id, $0.isFinished) })
-        let newlyFinishedToolIDs = snapshot.tools.lazy.filter { tool in
-            tool.isFinished && previouslyFinished[tool.id] != true
+        let previousThinking = previousSnapshot.timeline.compactMap { item ->
+            AgentThinkingPresentation? in
+            guard case let .thinking(thinking) = item else { return nil }
+            return thinking
+        }
+        let currentThinking = snapshot.timeline.compactMap { item ->
+            AgentThinkingPresentation? in
+            guard case let .thinking(thinking) = item else { return nil }
+            return thinking
+        }
+        let previouslySettled = Dictionary(
+            uniqueKeysWithValues: previousThinking.map { ($0.id, $0.isSettled) })
+        let newlySettledThinkingIDs = currentThinking.lazy.filter { thinking in
+            thinking.isSettled && previouslySettled[thinking.id] != true
         }.map(\.id)
-        expandedToolIDs.subtract(newlyFinishedToolIDs)
-        expandedToolIDs.formIntersection(snapshot.tools.lazy.map(\.id))
+        expandedThinkingIDs.subtract(newlySettledThinkingIDs)
+        expandedThinkingIDs.formIntersection(currentThinking.lazy.map(\.id))
         self.snapshot = snapshot
         resolvingPermissions = Set(snapshot.permissions.lazy.filter(\.isResolving).map(\.key))
     }
 
-    func toggleToolDetails(toolID: String) {
-        guard snapshot?.tools.contains(where: { $0.id == toolID }) == true else { return }
-        if !expandedToolIDs.insert(toolID).inserted {
-            expandedToolIDs.remove(toolID)
+    func toggleThinkingDetails(thinkingID: UUID) {
+        guard snapshot?.timeline.contains(where: { item in
+            guard case let .thinking(thinking) = item else { return false }
+            return thinking.id == thinkingID
+        }) == true else { return }
+        if !expandedThinkingIDs.insert(thinkingID).inserted {
+            expandedThinkingIDs.remove(thinkingID)
         }
     }
 
-    func isToolExpanded(toolID: String) -> Bool {
-        expandedToolIDs.contains(toolID)
+    func isThinkingExpanded(thinkingID: UUID) -> Bool {
+        expandedThinkingIDs.contains(thinkingID)
     }
 
     func setMinimized(_ isMinimized: Bool) {

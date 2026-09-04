@@ -11,6 +11,7 @@ public enum AgentRunLifecycleEvent: Equatable, Sendable {
     case turnCancellationStarted(runID: UUID)
     case event(runID: UUID, event: AgentRunEvent)
     case turnCompleted(runID: UUID, result: AgentRunResult)
+    case turnFailed(runID: UUID, message: String)
     case completed(runID: UUID, result: AgentRunResult)
     case failed(runID: UUID, message: String)
 }
@@ -77,6 +78,7 @@ public final class VoiceActivationCoordinator {
     private var pushToTalkContinuesConversation = false
     private var agentConversationEndResult: AgentRunResult?
     private var agentSpeechOutputActive = false
+    private var agentTurnHadActivity = false
 
     public convenience init(
         speechSession: any SpeechSessionProtocol,
@@ -909,6 +911,7 @@ public final class VoiceActivationCoordinator {
         runID: UUID,
         generation: Int)
     {
+        agentTurnHadActivity = false
         executionTask = Task { @MainActor [weak self, agentRunner] in
             do {
                 try Task.checkCancellation()
@@ -967,6 +970,9 @@ public final class VoiceActivationCoordinator {
             executionGeneration == generation,
             activeAgentRunID == runID
         else { return }
+        if event.isMeaningfulAgentActivity {
+            agentTurnHadActivity = true
+        }
         onAgentRunEvent?(.event(runID: runID, event: event))
     }
 
@@ -979,6 +985,7 @@ public final class VoiceActivationCoordinator {
             executionGeneration == generation,
             activeAgentRunID == runID
         else { return }
+        agentTurnHadActivity = false
         onAgentRunEvent?(.turnCompleted(runID: runID, result: result))
         executionTask = nil
         if pendingAgentPrompts.isEmpty {
@@ -998,6 +1005,14 @@ public final class VoiceActivationCoordinator {
             activeAgentRunID == runID
         else { return }
         let message = error.localizedDescription
+        if agentTurnHadActivity {
+            agentTurnHadActivity = false
+            onAgentRunEvent?(.turnFailed(runID: runID, message: message))
+            executionTask = nil
+            state = .executing
+            return
+        }
+        agentTurnHadActivity = false
         agentSpeechOutputActive = false
         onAgentRunEvent?(.failed(runID: runID, message: message))
         executionTask = nil
@@ -1104,6 +1119,21 @@ public final class VoiceActivationCoordinator {
     private func stopSpeechSession() {
         generation &+= 1
         speechSession.stop()
+    }
+}
+
+private extension AgentRunEvent {
+    var isMeaningfulAgentActivity: Bool {
+        switch self {
+        case let .agentMessageDelta(_, text), let .thoughtDelta(_, text):
+            !text.isEmpty
+        case .toolCall, .toolCallUpdate, .permissionRequested, .deliveryNotice:
+            true
+        case let .plan(entries):
+            !entries.isEmpty
+        case .connected, .metadata, .diagnostic, .unknown:
+            false
+        }
     }
 }
 

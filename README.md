@@ -106,15 +106,17 @@ directly. Select an absolute working folder, choose a default permission policy,
 add an optional profile-specific system prompt, and save.
 
 The app keeps the foreground application focused while a floating panel streams
-an ordered Markdown timeline. Tool work starts as a compact animated row and
-collapses to an expandable result row when it finishes—even when a provider
-omits a final tool status; permission prompts disappear as soon as a choice is
-made. Say `allow`, `allow all`, `deny`, or `deny all` to answer the oldest
+an ordered Markdown timeline. Each work burst starts with one animated
+**Thinking** card, including the ACP startup delay. Reasoning and tool calls
+collect inside that card instead of flooding the timeline; it collapses when
+the next answer arrives and expands on demand. Permission prompts disappear as
+soon as a choice is made. Say `allow`, `allow all`, `deny`, or `deny all` to answer the oldest
 visible permission request without touching the panel. New output follows the
 bottom of the panel until you deliberately scroll upward. Drag the panel by its
 header to move it out of the way, or minimize it with an animated transition to
 a movable live-status pill at the top-right below the menu bar. The pill stays
-above other windows and restores the full conversation with one click.
+above other windows and restores the full conversation to its saved pre-minimize
+location with one click.
 
 The microphone stays live after the first response, including while a reply is
 being read aloud. Speaking interrupts narration and submits the utterance as a
@@ -132,7 +134,14 @@ Each profile keeps its own ACP session. The app retains at most four live
 profile sessions, evicts the least recently used idle one, and recovers once
 when a provider forgets a cached session before any agent work begins. Recovery
 and cache-eviction context resets are visible in the conversation; prompts are
-never replayed after output or a permission request.
+never replayed after output or a permission request. If a connection dies after
+producing useful output, that output remains visible and the conversation stays
+live. The next follow-up starts a fresh provider session.
+
+Every ACP prompt includes a Markdown presentation contract and asks the agent to
+keep progress narration to one short conversational sentence per work batch.
+Individual commands and routine tool results belong inside the expandable
+**Thinking** card, not in a running monologue.
 
 Settings can read replies aloud as they stream, using either the matching macOS
 system voice or an ElevenLabs voice loaded from the account catalog. The
@@ -142,7 +151,8 @@ immediately; unfinished text is queued within 350 milliseconds even while more
 tokens keep streaming. ElevenLabs prefetches upcoming speech while preserving
 playback order. The first thinking cue plays as soon as a request is accepted,
 before ACP startup; later pulses continue during cloud synthesis and pause only
-while speech plays. A bundled sound palette distinguishes listening,
+while speech plays. Before ElevenLabs playback begins, active effects stop and a
+short audio handoff protects the first syllable. A bundled sound palette distinguishes listening,
 thinking, and tool transitions without making runtime effect-generation calls.
 Voice cancellation says “Stopped” when
 reply speech is enabled, and tests inject silent audio players, so CI never emits

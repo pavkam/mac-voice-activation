@@ -83,7 +83,9 @@ identifiers, permissions, authentication, cancellation, concurrent pipe exit,
 bounded event delivery, lifecycle races, caching, and global run preemption.
 The same suites prove exact session routing, bounded least-recently-used profile
 caching, one-shot recovery when a provider forgets a session, and refusal to
-replay a prompt after observable agent activity.
+replay a prompt after observable agent activity. Coordinator coverage verifies
+that a late provider failure preserves streamed output, leaves conversation
+capture active, and sends the next utterance through a fresh run.
 
 App adapter tests use an injected login-item service to verify successful and
 failed Service Management registration without changing the developer Mac's
@@ -106,8 +108,9 @@ becoming key or main. Conversation-audio tests use injected silent players and
 an injected ElevenLabs transport to verify bounded-latency streaming flushes,
 ordered synthesis prefetch, stale-request cancellation, cloud failure fallback,
 Markdown formatting, permission resume, deduplicated tool-transition cues, and
-playback-only thinking-pulse suppression without producing sound or network
-traffic from the test process.
+playback-only thinking-pulse suppression. Placement tests verify that the
+top-right notification restores the saved expanded frame. Every audio test uses
+spies and produces no sound or network traffic from the test process.
 App tests cover pause and
 shutdown races during pending permission requests plus profile-identified hotkey
 releases. Hotkey recording tests synthesize AppKit events without registering

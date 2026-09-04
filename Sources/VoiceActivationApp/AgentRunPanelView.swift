@@ -51,9 +51,10 @@ struct AgentRunPanelView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         requestCard(snapshot)
-                        noticeCards(snapshot)
                         plan(snapshot)
                         timeline(snapshot)
+                        noticeCards(snapshot)
+                        failureCard(snapshot)
                         permissions(snapshot)
                         voiceInput(snapshot)
                         Color.clear.frame(height: 1).id("agent-run-bottom")
@@ -100,6 +101,9 @@ struct AgentRunPanelView: View {
                     followBottom(proxy)
                 }
                 .onChange(of: snapshot.voiceInput) {
+                    followBottom(proxy)
+                }
+                .onChange(of: snapshot.phase) {
                     followBottom(proxy)
                 }
             }
@@ -252,8 +256,8 @@ struct AgentRunPanelView: View {
                     messageBlock(message)
                 case let .userMessage(message):
                     userMessageBlock(message)
-                case let .tool(tool):
-                    toolCard(tool)
+                case let .thinking(thinking):
+                    thinkingCard(thinking)
                 }
             }
         }
@@ -302,6 +306,23 @@ struct AgentRunPanelView: View {
     }
 
     @ViewBuilder
+    private func failureCard(_ snapshot: AgentRunSnapshot) -> some View {
+        if case let .failed(message) = snapshot.phase {
+            VStack(alignment: .leading, spacing: 5) {
+                Label("Agent stopped", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                Text(message)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .textSelection(.enabled)
+            }
+            .foregroundStyle(.red)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 11))
+        }
+    }
+
+    @ViewBuilder
     private func plan(_ snapshot: AgentRunSnapshot) -> some View {
         if !snapshot.plan.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
@@ -315,21 +336,33 @@ struct AgentRunPanelView: View {
         }
     }
 
-    private func toolCard(_ tool: AgentToolPresentation) -> some View {
-        let isExpanded = model.isToolExpanded(toolID: tool.id)
+    private func thinkingCard(_ thinking: AgentThinkingPresentation) -> some View {
+        let isExpanded = model.isThinkingExpanded(thinkingID: thinking.id)
+        let detailCount = thinking.details.count
+        let detailCountLabel = thinking.omittedDetailCount > 0
+            ? "\(detailCount)+ steps"
+            : "\(detailCount) \(detailCount == 1 ? "step" : "steps")"
+        let detailSummary = thinking.isWorking && detailCount == 0
+            ? "Starting agent"
+            : "\(detailCountLabel) · \(isExpanded ? "Hide" : "Show") details"
         return VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.snappy(duration: 0.24)) {
-                    model.toggleToolDetails(toolID: tool.id)
+                    model.toggleThinkingDetails(thinkingID: thinking.id)
                 }
             } label: {
                 HStack(alignment: .top, spacing: 10) {
-                    toolActivityIcon(tool)
+                    thinkingActivityIcon(thinking)
 
-                    Text(toolSummary(tool))
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(tool.status == .failed ? .red : .primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(thinking.isWorking ? "Thinking…" : "Thinking")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(thinking.hasFailedTool ? .red : .primary)
+                        Text(detailSummary)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold))
@@ -342,38 +375,83 @@ struct AgentRunPanelView: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: 10) {
                     Divider().opacity(0.42)
-                    if let kind = tool.kind {
-                        Text(toolKindLabel(kind))
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
-                            .tracking(0.7)
+                    if thinking.omittedDetailCount > 0 {
+                        Label(
+                            "\(thinking.omittedDetailCount) earlier steps omitted",
+                            systemImage: "ellipsis.circle")
+                            .font(.system(size: 9, weight: .medium, design: .rounded))
+                            .foregroundStyle(.tertiary)
                     }
-                    Text(tool.title)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                    ForEach(thinking.details) { detail in
+                        thinkingDetail(detail)
+                    }
                 }
                 .padding(.top, 9)
-                .padding(.leading, 28)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(.horizontal, 11)
-        .padding(.vertical, tool.isFinished ? 8 : 10)
+        .padding(.vertical, thinking.isWorking ? 10 : 8)
         .background(
-            tool.status == .failed ? Color.red.opacity(0.075) : accent.opacity(0.065),
+            thinking.hasFailedTool ? Color.red.opacity(0.075) : accent.opacity(0.075),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(alignment: .leading) {
             Capsule()
-                .fill(tool.status == .failed ? Color.red.opacity(0.75) : accent.opacity(0.72))
-                .frame(width: 2)
+                .fill(thinking.hasFailedTool ? Color.red.opacity(0.75) : accent.opacity(0.78))
+                .frame(width: 3)
                 .padding(.vertical, 7)
         }
-        .animation(.snappy(duration: 0.24), value: tool)
+        .animation(.snappy(duration: 0.24), value: thinking)
+    }
+
+    @ViewBuilder
+    private func thinkingActivityIcon(_ thinking: AgentThinkingPresentation) -> some View {
+        ZStack {
+            Circle().fill(accent.opacity(0.14))
+            if thinking.isWorking {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(accent)
+            } else {
+                Image(systemName: thinking.hasFailedTool ? "exclamationmark" : "sparkles")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(thinking.hasFailedTool ? .red : accent)
+            }
+        }
+        .frame(width: 24, height: 24, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func thinkingDetail(_ detail: AgentThinkingDetail) -> some View {
+        switch detail {
+        case let .thought(message):
+            VStack(alignment: .leading, spacing: 5) {
+                sectionLabel("Reasoning", symbol: "brain.head.profile")
+                AgentMarkdownView(markdown: message.text)
+                    .font(.system(size: 11, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .padding(.leading, 6)
+        case let .tool(tool):
+            HStack(alignment: .top, spacing: 9) {
+                toolActivityIcon(tool)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(toolSummary(tool))
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(tool.status == .failed ? .red : .secondary)
+                        .textCase(.uppercase)
+                    Text(tool.title)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.leading, 6)
+        }
     }
 
     @ViewBuilder
@@ -524,8 +602,8 @@ struct AgentRunPanelView: View {
                 return message.text
             case let .userMessage(message):
                 return "You: \(message.text)"
-            case let .tool(tool):
-                return toolSummary(tool)
+            case let .thinking(thinking):
+                return thinking.isWorking ? "Thinking…" : "Thinking complete"
             case .omitted:
                 continue
             }

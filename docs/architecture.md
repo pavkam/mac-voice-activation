@@ -54,6 +54,7 @@ stateDiagram-v2
     Executing --> Listening: Command finishes
     AgentConversation --> AgentConversation: Agent turn finishes
     AgentConversation --> AgentConversation: Follow-up or Stop turn button
+    AgentConversation --> AgentConversation: Provider fails after producing output
     AgentConversation --> Listening: End or spoken cancellation
     Listening --> Failed: Recognition or configuration error
     Capturing --> Failed: Recognition or configuration error
@@ -139,7 +140,10 @@ missing-session error may reconnect and replay the prompt once, but only before
 the connection has received session output or a permission request. This keeps
 stale-session recovery automatic without risking duplicate tool actions.
 Updates carrying another session identifier are ignored rather than entering
-the active conversation.
+the active conversation. Any other connection failure discards the cached
+record. If that turn already produced meaningful activity, the coordinator
+preserves its output, returns the panel to live listening, and lets the next
+utterance create a fresh session.
 
 The client accepts ACP v1 newline-delimited UTF-8 JSON-RPC, preserves integer,
 string, and null request identifiers, and converts stable updates into typed
@@ -151,11 +155,15 @@ the turn first and discards queued delivery.
 `AgentRunPresentation` applies only events carrying the active run identifier,
 retains bounded output, diagnostics, tools, plans, and simultaneous permission
 requests, and reduces visible text and tool events into one ordered timeline.
-Tool updates mutate the original timeline item; a later message therefore stays
-after the tool that preceded it. Token bursts publish to SwiftUI at no more than
-20 updates per second. `AgentRunPanelController` hosts the Markdown renderer and
-expandable activity model in a non-activating floating `NSPanel`; the recording
-overlay passes its exact final frame into the initial panel morph.
+It creates one active thinking group as soon as each turn starts. Provider
+reasoning and tool updates mutate details inside that group; the next answer
+settles it and remains after the work that preceded it. Token bursts publish to
+SwiftUI at no more than 20 updates per second. `AgentRunPanelController` hosts
+the Markdown renderer and expandable activity model in a non-activating floating
+`NSPanel`. The recording overlay passes its exact final frame into the initial
+panel morph. Minimization
+stores the expanded frame separately from the top-right notification geometry,
+so restoration returns to the user's previous location.
 
 One presentation run identifier spans the whole conversation. User follow-ups,
 agent messages, and tools share one chronological timeline while individual ACP
@@ -175,7 +183,9 @@ Turn completion flushes only the remainder. The FIFO output boundary selects
 `AVSpeechSynthesizer` or ElevenLabs, prefetches at most two cloud syntheses while
 preserving playback order, falls back to the system voice after a cloud failure,
 and cancels stale synthesis by generation. Permission prompts and actual
-narration pause the delayed thinking pulse; pending cloud synthesis does not. A
+narration pause the delayed thinking pulse; pending cloud synthesis does not.
+Narration state is published before cloud playback, stops an active effect, and
+allows its audio buffer to drain before the first spoken sample. A
 resolved choice or completed utterance restarts its delay when work is still
 active. Spoken conversation cancellation gets a short acknowledgement.
 An injected, paginated ElevenLabs catalog boundary discovers named voices, while

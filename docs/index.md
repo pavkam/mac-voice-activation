@@ -35,9 +35,9 @@ through a shell.
 - Command targets insert spoken text into explicit process arguments through
   `{text}` or `{urlText}` placeholders. Agent targets send it as an ACP text
   content block.
-- Agent targets stream bounded text, plans, tools, diagnostics, and permission
-  choices into a non-activating floating panel, then keep listening for spoken
-  follow-ups in the same ACP session.
+- Agent targets stream bounded Markdown into a non-activating floating panel.
+  Reasoning and tools collect in one expandable **Thinking** card per work
+  burst, then the microphone stays live for spoken follow-ups.
 - Each agent profile can provide its own system prompt and default permission
   level; interactive permission requests can be answered by voice.
 - Streaming reply speech through macOS or ElevenLabs and narration-aware

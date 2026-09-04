@@ -92,6 +92,7 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
     }
 
     func playActivitySound(_ sound: AgentActivitySound) {
+        guard !isReportingSpeech else { return }
         workingTask?.cancel()
         workingTask = nil
         activitySoundPlayer.play(sound)
@@ -284,6 +285,14 @@ final class AgentConversationAudioPresenter {
             let remainingReply = reply
             reply = ""
             guard result.stopReason != .cancelled, readsReplies() else { return }
+            speak(remainingReply)
+        case let .turnFailed(runID, _):
+            guard self.runID == runID else { return }
+            cancelSpeechFlush()
+            updateWorking(false)
+            let remainingReply = reply
+            reply = ""
+            guard readsReplies() else { return }
             speak(remainingReply)
         case let .completed(runID, result):
             guard self.runID == runID else { return }

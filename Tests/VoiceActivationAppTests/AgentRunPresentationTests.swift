@@ -8,6 +8,47 @@ import Testing
 
 @Suite(.serialized)
 struct AgentRunPresentationTests {
+    @MainActor @Test func start_WhenAgentIsBooting_ShowsThinkingImmediately() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+
+        presentation.start(
+            runID: runID,
+            profile: try makeAgentProfile(),
+            prompt: "Inspect")
+
+        guard case let .some(.thinking(thinking)) = presentation.snapshot?.timeline.last else {
+            Issue.record("Expected an active thinking group while the provider starts")
+            return
+        }
+        #expect(thinking.details.isEmpty)
+        #expect(thinking.isWorking)
+    }
+
+    @MainActor @Test func beginTurn_WhenFollowUpStarts_ShowsThinkingBeforeProviderOutput()
+        throws
+    {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(
+            runID: runID,
+            profile: try makeAgentProfile(),
+            prompt: "Inspect")
+        presentation.completeTurn(
+            runID: runID,
+            result: AgentRunResult(stopReason: .endTurn))
+        presentation.submitFollowUp(runID: runID, prompt: "Continue")
+
+        presentation.beginTurn(runID: runID)
+
+        guard case let .some(.thinking(thinking)) = presentation.snapshot?.timeline.last else {
+            Issue.record("Expected follow-up startup to create an active thinking group")
+            return
+        }
+        #expect(thinking.details.isEmpty)
+        #expect(thinking.isWorking)
+    }
+
     @MainActor @Test func discard_WhenRunMatches_ClearsStateAndIgnoresLateEvents() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let runID = UUID()
@@ -117,15 +158,56 @@ struct AgentRunPresentationTests {
         let timeline = try #require(presentation.snapshot?.timeline)
         #expect(timeline.count == 3)
         guard case let .message(before) = timeline[0],
-              case let .tool(tool) = timeline[1],
+              case let .thinking(thinking) = timeline[1],
               case let .message(after) = timeline[2]
         else {
-            Issue.record("Expected message, tool, message timeline order")
+            Issue.record("Expected message, thinking group, message timeline order")
+            return
+        }
+        guard case let .some(.tool(tool)) = thinking.details.first else {
+            Issue.record("Expected the tool inside the thinking group")
             return
         }
         #expect(before.text == "I’ll inspect it.")
         #expect(tool.id == "tool-1")
+        #expect(thinking.isSettled)
         #expect(after.text == "\n\nFound the issue.")
+    }
+
+    @MainActor @Test func receive_WhenThoughtsAndToolsStream_GroupsOneWorkBurst() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Inspect")
+
+        presentation.receive(
+            runID: runID,
+            event: .thoughtDelta(messageID: "thought-1", text: "Checking"))
+        presentation.receive(
+            runID: runID,
+            event: .toolCall(AgentToolCall(
+                id: "read",
+                title: "Read Package.swift",
+                kind: .read,
+                status: .inProgress)))
+        presentation.receive(
+            runID: runID,
+            event: .thoughtDelta(messageID: "thought-2", text: "Comparing"))
+        presentation.receive(
+            runID: runID,
+            event: .toolCall(AgentToolCall(
+                id: "search",
+                title: "Search tests",
+                kind: .search,
+                status: .pending)))
+
+        let timeline = try #require(presentation.snapshot?.timeline)
+        #expect(timeline.count == 1)
+        guard case let .thinking(thinking) = timeline[0] else {
+            Issue.record("Expected one grouped thinking item")
+            return
+        }
+        #expect(thinking.details.count == 4)
+        #expect(!thinking.isSettled)
     }
 
     @MainActor @Test func receive_WhenAdjacentMessageChunksArrive_CoalescesOneTimelineBlock()
@@ -190,8 +272,10 @@ struct AgentRunPresentationTests {
 
         let timeline = try #require(presentation.snapshot?.timeline)
         #expect(timeline.count == 1)
-        guard case let .tool(tool) = timeline[0] else {
-            Issue.record("Expected the original tool timeline item")
+        guard case let .thinking(thinking) = timeline[0],
+              case let .some(.tool(tool)) = thinking.details.first
+        else {
+            Issue.record("Expected the updated tool inside its thinking group")
             return
         }
         #expect(tool.title == "Read Package.swift")
@@ -299,6 +383,26 @@ struct AgentRunPresentationTests {
         let tool = try #require(presentation.snapshot?.tools.first)
         #expect(tool.isFinished)
         #expect(!tool.isWorking)
+    }
+
+    @MainActor @Test func interruptTurn_WhenWorkWasProduced_ReturnsToListeningWithNotice()
+        throws
+    {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Inspect")
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "result", text: "Useful output"))
+
+        presentation.interruptTurn(runID: runID, message: "Connection closed")
+
+        let snapshot = try #require(presentation.snapshot)
+        #expect(snapshot.phase == .listening)
+        #expect(snapshot.output == "Useful output")
+        #expect(snapshot.notices.last ==
+            "The provider disconnected after producing output. Your next message starts a fresh session.")
+        #expect(snapshot.diagnostics.contains("Connection closed"))
     }
 
     @MainActor @Test func conversation_WhenFollowUpRuns_PreservesChronologicalMessages() throws {

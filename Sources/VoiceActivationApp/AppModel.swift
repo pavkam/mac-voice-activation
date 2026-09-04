@@ -598,6 +598,8 @@ final class AppModel {
             agentRunPresentation.receive(runID: runID, event: event)
         case let .turnCompleted(runID, result):
             agentRunPresentation.completeTurn(runID: runID, result: result)
+        case let .turnFailed(runID, message):
+            agentRunPresentation.interruptTurn(runID: runID, message: message)
         case let .completed(runID, result):
             agentRunPresentation.complete(runID: runID, result: result)
         case let .failed(runID, message):

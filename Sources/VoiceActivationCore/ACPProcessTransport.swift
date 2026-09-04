@@ -138,7 +138,13 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
             }
             codexConfiguration = existingConfiguration
         }
-        codexConfiguration["developer_instructions"] = configuration.systemPrompt
+        codexConfiguration["developer_instructions"] = """
+            Voice Activation presentation contract:
+            \(ACPAgentInstruction.responseStyle)
+
+            Profile-specific system instruction:
+            \(configuration.systemPrompt)
+            """
         let encodedConfiguration = try JSONSerialization.data(
             withJSONObject: codexConfiguration,
             options: [.sortedKeys])

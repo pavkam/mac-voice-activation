@@ -57,6 +57,7 @@ final class ElevenLabsSpeechOutputPlayer {
 
     private let synthesizer: any ElevenLabsSpeechSynthesizing
     private let audioPlayer: any AgentAudioDataPlaying
+    private let playbackLeadTime: Duration
     private var pending: [PendingRequest] = []
     private var activeSynthesis: Task<Data, any Error>?
     private var worker: Task<Void, Never>?
@@ -65,10 +66,12 @@ final class ElevenLabsSpeechOutputPlayer {
 
     init(
         synthesizer: any ElevenLabsSpeechSynthesizing = ElevenLabsSpeechClient(),
-        audioPlayer: any AgentAudioDataPlaying = SystemAgentAudioDataPlayer())
+        audioPlayer: any AgentAudioDataPlaying = SystemAgentAudioDataPlayer(),
+        playbackLeadTime: Duration = .milliseconds(80))
     {
         self.synthesizer = synthesizer
         self.audioPlayer = audioPlayer
+        self.playbackLeadTime = playbackLeadTime
     }
 
     func speak(
@@ -129,11 +132,19 @@ final class ElevenLabsSpeechOutputPlayer {
                 startPrefetching()
                 try Task.checkCancellation()
                 guard generation == activeGeneration else { return }
+                let isStartingSpeech = !isSpeaking
+                setSpeaking(true)
+                if isStartingSpeech {
+                    // Give the working effect and recognition pipeline time to release
+                    // their audio buffers before the first spoken sample is submitted.
+                    try await Task.sleep(for: playbackLeadTime)
+                }
+                try Task.checkCancellation()
+                guard generation == activeGeneration else { return }
                 guard audioPlayer.play(data) else {
                     fallBackRemainingQueue(startingWith: request)
                     break
                 }
-                setSpeaking(true)
 
                 while audioPlayer.isPlaying {
                     try await Task.sleep(for: .milliseconds(50))

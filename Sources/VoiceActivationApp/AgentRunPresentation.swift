@@ -51,6 +51,39 @@ struct AgentToolPresentation: Equatable, Identifiable, Sendable {
     }
 }
 
+enum AgentThinkingDetailID: Hashable, Sendable {
+    case thought(UUID)
+    case tool(String)
+}
+
+enum AgentThinkingDetail: Equatable, Identifiable, Sendable {
+    case thought(AgentMessagePresentation)
+    case tool(AgentToolPresentation)
+
+    var id: AgentThinkingDetailID {
+        switch self {
+        case let .thought(message): .thought(message.id)
+        case let .tool(tool): .tool(tool.id)
+        }
+    }
+}
+
+struct AgentThinkingPresentation: Equatable, Identifiable, Sendable {
+    let id: UUID
+    var details: [AgentThinkingDetail]
+    var omittedDetailCount: UInt64 = 0
+    var isSettled = false
+
+    var isWorking: Bool { !isSettled }
+
+    var hasFailedTool: Bool {
+        details.contains { detail in
+            guard case let .tool(tool) = detail else { return false }
+            return tool.status == .failed
+        }
+    }
+}
+
 enum AgentMessagePresentationKind: Equatable, Sendable {
     case response
     case thought
@@ -72,21 +105,21 @@ enum AgentRunTimelineItemID: Hashable, Sendable {
     case omitted
     case message(UUID)
     case userMessage(UUID)
-    case tool(String)
+    case thinking(UUID)
 }
 
 enum AgentRunTimelineItem: Equatable, Identifiable, Sendable {
     case omitted
     case message(AgentMessagePresentation)
     case userMessage(AgentUserMessagePresentation)
-    case tool(AgentToolPresentation)
+    case thinking(AgentThinkingPresentation)
 
     var id: AgentRunTimelineItemID {
         switch self {
         case .omitted: .omitted
         case let .message(message): .message(message.id)
         case let .userMessage(message): .userMessage(message.id)
-        case let .tool(tool): .tool(tool.id)
+        case let .thinking(thinking): .thinking(thinking.id)
         }
     }
 }
@@ -129,6 +162,7 @@ final class AgentRunPresentation {
     static let maximumTools = 32
     static let maximumTimelineTextBytes = 64 * 1_024
     static let maximumTimelineItems = 256
+    static let maximumThinkingDetailsPerGroup = 128
     static let publicationInterval = Duration.milliseconds(50)
 
     var onPublication: ((AgentRunSnapshot) -> Void)?
@@ -211,6 +245,7 @@ final class AgentRunPresentation {
         plan = []
         tools = []
         timeline = []
+        _ = activeThinkingGroup()
         timelineHasOmittedActivity = false
         permissions = []
         notices = []
@@ -242,6 +277,7 @@ final class AgentRunPresentation {
     func submitFollowUp(runID: UUID, prompt: String) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
         flushPendingPublication()
+        settleActiveThinkingGroup()
         timeline.append(.userMessage(AgentUserMessagePresentation(id: UUID(), text: prompt)))
         voiceInput = ""
         enforceTimelineBounds()
@@ -263,6 +299,7 @@ final class AgentRunPresentation {
         plan = []
         permissions = []
         voiceInput = ""
+        _ = activeThinkingGroup()
         publishNow()
     }
 
@@ -273,6 +310,20 @@ final class AgentRunPresentation {
         phase = .listening
         permissions = []
         voiceInput = ""
+        publishNow()
+    }
+
+    func interruptTurn(runID: UUID, message: String) {
+        guard self.runID == runID, phase?.isTerminal == false else { return }
+        flushPendingPublication()
+        settleTools()
+        phase = .listening
+        permissions = []
+        voiceInput = ""
+        diagnosticBuffer.append("[turn interrupted] \(message)\n")
+        appendNotice(
+            "The provider disconnected after producing output. "
+                + "Your next message starts a fresh session.")
         publishNow()
     }
 
@@ -374,9 +425,10 @@ final class AgentRunPresentation {
                 needsResponseSeparator = false
             }
             outputBuffer.append(text)
-            appendMessage(text, messageID: messageID, kind: .response)
+            settleActiveThinkingGroup()
+            appendResponseMessage(text, messageID: messageID)
         case let .thoughtDelta(messageID, text):
-            appendMessage(text, messageID: messageID, kind: .thought)
+            appendThinkingMessage(text, messageID: messageID)
         case let .toolCall(tool):
             upsertTool(AgentToolPresentation(
                 id: tool.id,
@@ -431,18 +483,13 @@ final class AgentRunPresentation {
         }
         if tools.count == Self.maximumTools {
             let removedTool = tools.remove(at: tools.startIndex)
-            let previousTimelineCount = timeline.count
-            timeline.removeAll { item in
-                guard case let .tool(candidate) = item else { return false }
-                return candidate.id == removedTool.id
-            }
-            if timeline.count != previousTimelineCount {
+            if removeTimelineTool(id: removedTool.id) {
                 markTimelineOmitted()
             }
             evictedToolCount = saturatingIncrement(evictedToolCount)
         }
         tools.append(tool)
-        timeline.append(.tool(tool))
+        appendThinkingDetail(.tool(tool))
         enforceTimelineBounds()
     }
 
@@ -468,16 +515,13 @@ final class AgentRunPresentation {
             tools[index].isSettled = true
             updateTimelineTool(tools[index])
         }
+        settleActiveThinkingGroup()
     }
 
-    private func appendMessage(
-        _ text: String,
-        messageID: String?,
-        kind: AgentMessagePresentationKind)
-    {
+    private func appendResponseMessage(_ text: String, messageID: String?) {
         guard !text.isEmpty else { return }
         if case var .message(message) = timeline.last,
-           message.kind == kind,
+           message.kind == .response,
            message.messageID == messageID
         {
             message.text.append(text)
@@ -489,17 +533,96 @@ final class AgentRunPresentation {
         timeline.append(.message(AgentMessagePresentation(
             id: UUID(),
             messageID: messageID,
-            kind: kind,
+            kind: .response,
             text: text)))
         enforceTimelineBounds()
     }
 
+    private func appendThinkingMessage(_ text: String, messageID: String?) {
+        guard !text.isEmpty else { return }
+        var thinking = activeThinkingGroup()
+        if case var .thought(message) = thinking.details.last,
+           message.messageID == messageID
+        {
+            message.text.append(text)
+            thinking.details[thinking.details.index(before: thinking.details.endIndex)] =
+                .thought(message)
+            replaceActiveThinkingGroup(with: thinking)
+        } else {
+            appendThinkingDetail(.thought(AgentMessagePresentation(
+                id: UUID(),
+                messageID: messageID,
+                kind: .thought,
+                text: text)))
+        }
+        enforceTimelineBounds()
+    }
+
+    private func appendThinkingDetail(_ detail: AgentThinkingDetail) {
+        var thinking = activeThinkingGroup()
+        if thinking.details.count == Self.maximumThinkingDetailsPerGroup {
+            thinking.details.removeFirst()
+            thinking.omittedDetailCount = saturatingIncrement(thinking.omittedDetailCount)
+        }
+        thinking.details.append(detail)
+        replaceActiveThinkingGroup(with: thinking)
+    }
+
+    private func activeThinkingGroup() -> AgentThinkingPresentation {
+        if case let .thinking(thinking) = timeline.last, !thinking.isSettled {
+            return thinking
+        }
+        let thinking = AgentThinkingPresentation(id: UUID(), details: [])
+        timeline.append(.thinking(thinking))
+        return thinking
+    }
+
+    private func replaceActiveThinkingGroup(with thinking: AgentThinkingPresentation) {
+        guard case .thinking = timeline.last else {
+            preconditionFailure("The active thinking group must be the final timeline item.")
+        }
+        timeline[timeline.index(before: timeline.endIndex)] = .thinking(thinking)
+    }
+
+    private func settleActiveThinkingGroup() {
+        guard case var .thinking(thinking) = timeline.last, !thinking.isSettled else { return }
+        guard !thinking.details.isEmpty else {
+            timeline.removeLast()
+            return
+        }
+        thinking.isSettled = true
+        timeline[timeline.index(before: timeline.endIndex)] = .thinking(thinking)
+    }
+
     private func updateTimelineTool(_ tool: AgentToolPresentation) {
-        guard let index = timeline.firstIndex(where: { item in
-            guard case let .tool(candidate) = item else { return false }
-            return candidate.id == tool.id
-        }) else { return }
-        timeline[index] = .tool(tool)
+        for timelineIndex in timeline.indices {
+            guard case var .thinking(thinking) = timeline[timelineIndex],
+                  let detailIndex = thinking.details.firstIndex(where: { detail in
+                      guard case let .tool(candidate) = detail else { return false }
+                      return candidate.id == tool.id
+                  })
+            else { continue }
+            thinking.details[detailIndex] = .tool(tool)
+            timeline[timelineIndex] = .thinking(thinking)
+            return
+        }
+    }
+
+    @discardableResult
+    private func removeTimelineTool(id: String) -> Bool {
+        for timelineIndex in timeline.indices {
+            guard case var .thinking(thinking) = timeline[timelineIndex],
+                  let detailIndex = thinking.details.firstIndex(where: { detail in
+                      guard case let .tool(tool) = detail else { return false }
+                      return tool.id == id
+                  })
+            else { continue }
+            thinking.details.remove(at: detailIndex)
+            thinking.omittedDetailCount = saturatingIncrement(thinking.omittedDetailCount)
+            timeline[timelineIndex] = .thinking(thinking)
+            return true
+        }
+        return false
     }
 
     private func enforceTimelineBounds() {
@@ -717,7 +840,12 @@ private extension AgentRunTimelineItem {
         switch self {
         case .message, .userMessage:
             true
-        case .omitted, .tool:
+        case let .thinking(thinking):
+            thinking.details.contains { detail in
+                guard case let .thought(message) = detail else { return false }
+                return !message.text.isEmpty
+            }
+        case .omitted:
             false
         }
     }
@@ -728,7 +856,12 @@ private extension AgentRunTimelineItem {
             message.text
         case let .userMessage(message):
             message.text
-        case .omitted, .tool:
+        case let .thinking(thinking):
+            thinking.details.reduce(into: "") { text, detail in
+                guard case let .thought(message) = detail else { return }
+                text.append(message.text)
+            }
+        case .omitted:
             ""
         }
     }
@@ -745,7 +878,28 @@ private extension AgentRunTimelineItem {
             return .userMessage(AgentUserMessagePresentation(
                 id: message.id,
                 text: transform(message.text, byteCount)))
-        case .omitted, .tool:
+        case var .thinking(thinking):
+            var remainingBytes = byteCount
+            var retainedDetails: [AgentThinkingDetail] = []
+            for detail in thinking.details {
+                guard case var .thought(message) = detail, remainingBytes > 0 else {
+                    retainedDetails.append(detail)
+                    continue
+                }
+                let originalByteCount = message.text.utf8.count
+                if originalByteCount <= remainingBytes {
+                    remainingBytes -= originalByteCount
+                    thinking.omittedDetailCount = saturatingIncrement(
+                        thinking.omittedDetailCount)
+                    continue
+                }
+                message.text = transform(message.text, remainingBytes)
+                remainingBytes = 0
+                retainedDetails.append(.thought(message))
+            }
+            thinking.details = retainedDetails
+            return .thinking(thinking)
+        case .omitted:
             return self
         }
     }

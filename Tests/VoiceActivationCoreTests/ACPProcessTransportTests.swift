@@ -243,9 +243,12 @@ struct ACPProcessTransportTests {
             JSONSerialization.jsonObject(with: outputData) as? [String: Any])
 
         #expect(object["model"] as? String == "existing-model")
-        #expect(
-            object["developer_instructions"] as? String
-                == "Be concise and conversational.")
+        let developerInstructions = try #require(
+            object["developer_instructions"] as? String)
+        #expect(developerInstructions.contains("Be concise and conversational."))
+        #expect(developerInstructions.localizedCaseInsensitiveContains("Markdown"))
+        #expect(developerInstructions.localizedCaseInsensitiveContains("progress narration"))
+        #expect(developerInstructions.localizedCaseInsensitiveContains("individual tool calls"))
     }
 
     @Test(.timeLimit(.minutes(1)))

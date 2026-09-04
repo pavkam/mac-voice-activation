@@ -76,9 +76,11 @@ private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
     private(set) var stopCount = 0
     var isPlaying = false
     var acceptsPlayback = true
+    var onPlay: (() -> Void)?
 
     func play(_ data: Data) -> Bool {
         payloads.append(data)
+        onPlay?()
         return acceptsPlayback
     }
 
@@ -90,6 +92,44 @@ private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
 
 @Suite(.timeLimit(.minutes(1)))
 struct ElevenLabsSpeechOutputPlayerTests {
+    @MainActor @Test func speak_WhenAudioIsReady_LeavesTimeForEffectsToStopBeforePlayback()
+        async
+    {
+        let synthesizer = ElevenLabsSpeechSynthesizerSpy()
+        let audioPlayer = AgentAudioDataPlayerSpy()
+        let player = ElevenLabsSpeechOutputPlayer(
+            synthesizer: synthesizer,
+            audioPlayer: audioPlayer,
+            playbackLeadTime: .milliseconds(80))
+
+        player.speak("Keep the opening intact.", apiKey: "secret", voiceID: "voice-1")
+        try? await Task.sleep(for: .milliseconds(20))
+
+        #expect(audioPlayer.payloads.isEmpty)
+        await waitUntil { audioPlayer.payloads.count == 1 }
+        player.stop()
+    }
+
+    @MainActor @Test func speak_WhenPlaybackBegins_ReportsSpeechBeforeStartingAudio() async {
+        let synthesizer = ElevenLabsSpeechSynthesizerSpy()
+        let audioPlayer = AgentAudioDataPlayerSpy()
+        let player = ElevenLabsSpeechOutputPlayer(
+            synthesizer: synthesizer,
+            audioPlayer: audioPlayer)
+        var isSpeaking = false
+        var wasSpeakingAtPlayback = false
+        player.onSpeakingChange = { isSpeaking = $0 }
+        audioPlayer.onPlay = { wasSpeakingAtPlayback = isSpeaking }
+        audioPlayer.isPlaying = true
+
+        player.speak("No clipped opening.", apiKey: "secret", voiceID: "voice-1")
+        await waitUntil { !audioPlayer.payloads.isEmpty }
+
+        #expect(wasSpeakingAtPlayback)
+        audioPlayer.isPlaying = false
+        player.stop()
+    }
+
     @MainActor @Test func speak_WhenChunksArrive_RequestsAndPlaysThemInOrder() async throws {
         let synthesizer = ElevenLabsSpeechSynthesizerSpy()
         let audioPlayer = AgentAudioDataPlayerSpy()

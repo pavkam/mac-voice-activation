@@ -15,6 +15,7 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
     private let model = AgentRunPanelModel()
     private let panel: AgentRunPanel
     private var currentRunID: UUID?
+    private var placement = AgentRunPanelPlacement()
 
     var onAction: ((AgentRunPanelAction) -> Void)? {
         get { model.onAction }
@@ -44,6 +45,7 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
 
     func begin(_ snapshot: AgentRunSnapshot, from handoff: RecordingOverlayHandoff?) {
         currentRunID = snapshot.runID
+        placement.reset()
         model.begin(snapshot)
         let visibleFrame = handoff?.visibleScreenFrame ?? NSScreen.main?.visibleFrame
             ?? NSRect(origin: .zero, size: AgentRunPanelLayout.expandedSize)
@@ -70,9 +72,7 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
 
     func minimize(runID: UUID) {
         guard currentRunID == runID, !model.isMinimized else { return }
-        let targetFrame = AgentRunPanelLayout.compactFrame(
-            minimizing: panel.frame,
-            in: visibleFrame)
+        let targetFrame = placement.minimize(frame: panel.frame, in: visibleFrame)
         withAnimation(.snappy(duration: AgentRunPanelLayout.transitionDuration)) {
             model.setMinimized(true)
         }
@@ -81,9 +81,10 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
 
     func restore(runID: UUID) {
         guard currentRunID == runID, model.isMinimized else { return }
-        let targetFrame = AgentRunPanelLayout.expandedFrame(
-            restoring: panel.frame,
-            in: visibleFrame)
+        let targetFrame = placement.restore(
+            from: panel.frame,
+            availableVisibleFrames: NSScreen.screens.map(\.visibleFrame),
+            fallbackVisibleFrame: visibleFrame)
         panel.orderFrontRegardless()
         withAnimation(.snappy(duration: AgentRunPanelLayout.transitionDuration)) {
             model.setMinimized(false)

@@ -113,8 +113,8 @@ finished tools and answered permission prompts collapse out of the way, with
 tool details still expandable. Completed output remains available to select or
 copy. Drag the panel by its provider header to move it, or use the minus button
 to animate it into a movable always-on-top status pill at the top-right below
-the menu bar; the arrow button restores the full conversation wherever the pill
-now sits. The microphone remains active after each response and during spoken
+the menu bar; the arrow button restores the full conversation to its saved
+pre-minimize location. The microphone remains active after each response and during spoken
 narration. Speaking interrupts narration and becomes the next request after the
 normal final-result or inactivity boundary. Say
 `stop`, `cancel`, or `dismiss` to end the whole conversation, including active
@@ -128,6 +128,11 @@ macOS or ElevenLabs voice and play a quiet, narration-aware pulse immediately
 when work begins and during longer thinking or tool pauses. ElevenLabs voices
 load from the API and can be previewed
 with **Test voice**; the optional key is stored in macOS Keychain.
+
+Each turn shows one expandable **Thinking** card. It appears during provider
+startup, collects reasoning and tool calls, and collapses when the next answer
+arrives. The built-in prompt asks agents to keep progress updates brief; the
+full technical stream remains available inside that card.
 
 Provider credentials remain in the provider's own CLI configuration; Voice
 Activation does not ask for or persist them. Continue with the

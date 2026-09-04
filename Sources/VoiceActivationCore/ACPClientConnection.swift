@@ -53,9 +53,8 @@ public actor ACPClientConnection {
     private static let clientTitle = "Voice Activation"
     private static let clientVersion = "0.1.0"
     private static let markdownPresentationPreamble = """
-        System instruction from Voice Activation: format every user-facing response as \
-        GitHub-flavored Markdown. Use headings, lists, emphasis, links, and fenced code \
-        when they improve clarity. Do not wrap the entire response in a code fence.
+        System instruction from Voice Activation:
+        \(ACPAgentInstruction.responseStyle)
         """
     static let markdownPresentationInstruction = """
         \(markdownPresentationPreamble)

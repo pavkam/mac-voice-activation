@@ -111,7 +111,10 @@ session activity or asks for permission, the runner discards the process,
 creates a fresh session, and retries that prompt once. The conversation shows a
 notice because the provider's earlier context is gone. Ambiguous errors, a
 second missing-session failure, and failures after activity begins are never
-replayed; duplicating agent actions would be worse than reporting the failure.
+replayed. After activity begins, streamed output remains visible, the current
+turn is marked interrupted, and live conversation input stays open. The next
+follow-up gets a fresh provider process instead of risking duplicate agent
+actions.
 
 The process transport disables `SIGPIPE` for child stdin, uses nonblocking
 writes, closes the parent write side during termination, drains stdout and
@@ -149,7 +152,9 @@ ACP subprocess communication follows the stable protocol-owner specification:
 - Each initial request and follow-up utterance becomes one `session/prompt` in
   the same profile session, containing a harness instruction text block followed
   by the untouched recognized request. The instruction asks for user-facing
-  GitHub-flavored Markdown.
+  GitHub-flavored Markdown and limits progress narration to one short sentence
+  per work batch. It tells the provider not to narrate individual tool calls or
+  routine intermediate results.
 - For the Codex preset, the profile system prompt is merged into the adapter's
   `CODEX_CONFIG` as `developer_instructions` before process launch, preserving
   other valid JSON configuration. This gives it developer authority for every
@@ -227,8 +232,9 @@ so the panel moves without taking keyboard focus or intercepting SwiftUI control
 The minimize control animates it to the screen's top-right below the menu bar and
 morphs it into a 372 by 84 point persistent status pill with the provider, latest
 activity, phase animation, and live elapsed time. The pill remains movable and
-restores the full conversation at its current top-right anchor, including after
-it has been dragged to another position.
+restores the full conversation at the expanded panel's saved pre-minimize
+location. Screen changes clamp that saved frame into the current available
+visible area.
 
 The expanded surface contains:
 
@@ -236,8 +242,8 @@ The expanded surface contains:
 - the immutable spoken request;
 - a live, selectable Markdown timeline that preserves the wire order of agent
   text and tool activity;
-- compact tool rows with a top-aligned animated activity indicator while
-  running and expandable details after completion;
+- one animated **Thinking** card per work burst, created before ACP startup and
+  containing expandable reasoning and tool details;
 - permission choices when required;
 - a live microphone row that shows the current follow-up transcription;
 - **Stop turn** while running and **End conversation** throughout the live
@@ -268,11 +274,12 @@ restores the expanded conversation.
 
 Token bursts publish on leading and trailing edges at a fixed 50-millisecond
 cadence. This preserves immediate feedback without making SwiftUI render once
-per token. Adjacent chunks coalesce only within their current timeline message;
-a tool call ends that block, so later prose renders below the tool. Plans replace
+per token. Adjacent answer chunks coalesce only within their current timeline
+message. Reasoning and tool calls between two answers collect into one bounded
+**Thinking** group; the next answer settles and collapses it. Plans replace
 atomically and clear at the start of the next turn. Tool updates retain their
-original timeline identity; if a provider omits a terminal tool update, turn
-settlement still stops the animation and presents the row as finished.
+identity inside the group; if a provider omits a terminal tool update, turn
+settlement still stops the animation.
 Simultaneous permissions remain independently actionable, and app-authored
 truncation or protocol notices cannot be mistaken for provider output. The
 copyable response section separates turns and excludes thought updates, which
@@ -331,7 +338,9 @@ busy. Tool start, completion, and failure use
 distinct one-shot cues; duplicate ACP status updates do not replay them. Cloud
 synthesis does not silence the thinking pulse before audio exists. It stops for
 permission choices, actual narration, cancellation, completion, and failure,
-then resumes after a 1.6-second delay if work continues after narration.
+then resumes after a 1.6-second delay if work continues after narration. When
+cloud audio becomes ready, narration state stops any active effect before
+playback and leaves a short buffer handoff so the opening syllable is not masked.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached
@@ -341,8 +350,10 @@ listening does not kill an already-running agent; the explicit agent
 cancellation actions own that decision.
 
 Malformed JSON, oversized frames, incompatible protocol versions, unexpected
-EOF, non-zero process termination, and JSON-RPC errors become user-safe failed
-run states with bounded diagnostics. A failed connection is never reused.
+EOF, non-zero process termination, and JSON-RPC errors become bounded,
+user-safe diagnostics. Failure before meaningful activity ends the run. Failure
+after activity interrupts only that turn, preserves its output, and keeps voice
+follow-up active. A failed connection is never reused.
 
 ## Resource and privacy bounds
 

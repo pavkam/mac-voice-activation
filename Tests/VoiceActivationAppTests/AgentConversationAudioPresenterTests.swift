@@ -215,6 +215,20 @@ struct AgentConversationAudioPresenterTests {
         player.stopAll()
     }
 
+    @MainActor @Test func systemPlayer_WhenToolCueArrivesDuringSpeech_DoesNotOverlapNarration() {
+        let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
+        let activitySounds = AgentActivitySoundPlayerSpy()
+        let player = AgentConversationAudioPlayer(
+            speechSynthesizer: systemSynthesizer,
+            activitySoundPlayer: activitySounds)
+
+        player.speak("Speaking now.", localeID: "en-US")
+        player.playActivitySound(.toolStarted)
+
+        #expect(activitySounds.sounds.isEmpty)
+        player.stopAll()
+    }
+
     @MainActor @Test func systemPlayer_WhenToolCuePlays_RestartsThinkingDelay() async {
         let activitySounds = AgentActivitySoundPlayerSpy()
         let player = AgentConversationAudioPlayer(
@@ -522,6 +536,32 @@ struct AgentConversationAudioPresenterTests {
         #expect(player.spoken.count == 1)
         #expect(player.spoken.first?.text == "Done")
         #expect(player.spoken.first?.localeID == "en-GB")
+    }
+
+    @MainActor @Test func lifecycle_WhenActiveTurnFails_ReadsRemainderAndKeepsConversationAudio()
+        throws
+    {
+        let player = AgentConversationAudioSpy()
+        let presenter = AgentConversationAudioPresenter(
+            player: player,
+            readsReplies: { true },
+            playsWorkingSound: { true },
+            localeID: { "en-US" })
+        let runID = UUID()
+        presenter.handle(.started(
+            runID: runID,
+            profile: try agentProfile(),
+            prompt: "Question"))
+        presenter.handle(.event(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer", text: "Useful remainder")))
+
+        presenter.handle(.turnFailed(runID: runID, message: "Connection closed"))
+        presenter.handle(.followUpSubmitted(runID: runID, prompt: "Continue"))
+
+        #expect(player.spoken.map(\.text) == ["Useful remainder"])
+        #expect(player.stopAllCount == 0)
+        #expect(player.workingStates.suffix(2) == [false, true])
     }
 
     @MainActor @Test func lifecycle_WhenFollowUpInterruptsTurn_StopsSpeechAndRestartsWorkingCue() throws {

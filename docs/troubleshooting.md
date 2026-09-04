@@ -158,6 +158,9 @@ Narration begins when a complete sentence arrives or 350 milliseconds after the
 first unfinished fragment, even if tokens keep arriving. It does not wait for
 the whole agent process to finish. ElevenLabs prepares up to two chunks in
 parallel, then plays every chunk in order rather than interrupting one another.
+The app stops active thinking and tool effects before playback and leaves a
+short handoff before the first cloud-audio sample. This prevents an effect from
+masking the opening syllable.
 Speaking during narration stops the current playback and captures that utterance
 as a follow-up. Conversation capture requests Apple's voice-processing mode to
 reduce speaker echo; unsupported audio devices fall back to ordinary capture.
