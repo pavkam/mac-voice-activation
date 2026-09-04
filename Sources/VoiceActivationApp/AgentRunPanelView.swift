@@ -128,12 +128,9 @@ struct AgentRunPanelView: View {
             HStack(spacing: 13) {
                 phaseIcon(snapshot, size: 44, symbolSize: 17)
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(snapshot.providerName)
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .tracking(-0.25)
-                    statusPill(snapshot.phase)
-                }
+                Text(snapshot.providerName)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .tracking(-0.25)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -704,25 +701,6 @@ struct AgentRunPanelView: View {
         .accessibilityHidden(true)
     }
 
-    private func statusPill(_ phase: AgentRunPhase) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(phaseTint(phase))
-                .frame(width: 5, height: 5)
-                .shadow(color: phaseTint(phase).opacity(0.65), radius: 4)
-            Text(phaseLabel(phase))
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 20)
-        .background(.white.opacity(0.055), in: Capsule())
-        .overlay {
-            Capsule().stroke(.white.opacity(0.09), lineWidth: 0.6)
-        }
-        .fixedSize()
-    }
-
     private var panelSeparator: some View {
         LinearGradient(
             colors: [.clear, .white.opacity(0.14), accent.opacity(0.22), .clear],
@@ -789,16 +767,6 @@ struct AgentRunPanelView: View {
         case .cancelling: "Cancelling"
         case let .completed(reason): reason == .cancelled ? "Cancelled" : "Completed"
         case .failed: "Failed"
-        }
-    }
-
-    private func phaseTint(_ phase: AgentRunPhase) -> Color {
-        switch phase {
-        case .listening: .cyan
-        case .running: accent
-        case .cancelling: .orange
-        case let .completed(reason): reason == .cancelled ? .secondary : .green
-        case .failed: .red
         }
     }
 
