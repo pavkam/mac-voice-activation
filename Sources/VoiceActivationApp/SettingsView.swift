@@ -168,8 +168,8 @@ struct SettingsView: View {
             Divider()
 
             settingToggle(
-                title: "Working pulse",
-                detail: "Plays an audible cue during longer pauses while the agent is thinking or using tools.",
+                title: "Agent activity sounds",
+                detail: "Plays distinct thinking, tool-start, completion, and failure cues.",
                 isOn: $model.playsAgentWorkingSound)
         }
     }

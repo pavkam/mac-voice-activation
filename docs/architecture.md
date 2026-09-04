@@ -167,13 +167,13 @@ Turn completion flushes only the remainder. The FIFO output boundary selects
 `AVSpeechSynthesizer` or ElevenLabs, prefetches at most two cloud syntheses while
 preserving playback order, falls back to the system voice after a cloud failure,
 and cancels stale synthesis by generation. Permission prompts and actual
-narration pause the delayed working pulse; pending cloud synthesis does not. A
+narration pause the delayed thinking pulse; pending cloud synthesis does not. A
 resolved choice or completed utterance restarts its delay when work is still
 active. Spoken conversation cancellation gets a short acknowledgement.
 An injected, paginated ElevenLabs catalog boundary discovers named voices, while
 the preview boundary reuses speech synthesis without coupling Settings to
 `NSSound`. Tests inject silent catalog, synthesizer, audio-data, preview, and
-working-pulse adapters.
+activity-sound adapters.
 
 See [ACP agent harness](agent-harness.md) for the complete wire, permission,
 resource, and recovery contract.
@@ -221,9 +221,10 @@ resource, and recovery contract.
   while rendering a word-aware tail, ensuring newly recognized speech remains
   visible without changing command input. `CaptureSoundPresenter` observes
   state edges and plays a bundled rising cue on entry to capture and a
-  descending cue on exit, falling back to system sounds only if an asset cannot
-  load. The panel accepts pointer input only so its cancel control can abort
-  capture.
+  descending cue on exit. `SystemAgentActivitySoundPlayer` uses the same sound
+  family for thinking and typed tool transitions. Both fall back to distinct
+  system sounds only if an asset cannot load. The panel accepts pointer input
+  only so its cancel control can abort capture.
 - The menu profile list is a bounded scrolling region, so user-defined profile
   counts cannot grow the menu-bar panel beyond the available screen.
 - The agent panel uses the same non-activating window contract, supports pointer

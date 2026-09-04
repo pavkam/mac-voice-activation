@@ -23,9 +23,13 @@ let package = Package(
                 "VoiceActivationCore",
             ],
             exclude: [
+                "Resources/AgentThinking.wav",
                 "Resources/CaptureEnd.wav",
                 "Resources/CaptureStart.wav",
                 "Resources/Info.plist",
+                "Resources/ToolComplete.wav",
+                "Resources/ToolFailed.wav",
+                "Resources/ToolStart.wav",
                 "Resources/VoiceActivation.icns",
             ]),
         .testTarget(

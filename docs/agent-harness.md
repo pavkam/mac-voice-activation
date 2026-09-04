@@ -291,7 +291,7 @@ terminates an unresponsive process and discards that cached connection.
 conversation recognition, and resumes passive wake listening after the normal
 cooldown.
 
-Settings independently enable spoken agent replies and a quiet working pulse.
+Settings independently enable spoken agent replies and quiet activity sounds.
 Reply speech strips Markdown formatting; fenced code is announced but not read
 character by character. Complete sentences enter a FIFO speech queue as soon as
 they stream from the agent. A fixed 350-millisecond deadline flushes unfinished
@@ -307,11 +307,12 @@ A short **Test voice** preview uses the same synthesis path; manual Voice ID ent
 remains available when catalog discovery fails.
 
 The voice also acknowledges a spoken conversation cancellation with “Stopped.”
-The working pulse begins only after a 1.6-second pause and repeats every 3.2
-seconds while the agent is thinking or using tools. Cloud synthesis does not
-silence it before audio exists. It stops for permission choices, actual
-narration, cancellation, completion, and failure, then resumes its delay if work
-continues after narration.
+The thinking pulse begins only after a 1.6-second pause and repeats every 3.2
+seconds while the agent remains busy. Tool start, completion, and failure use
+distinct one-shot cues; duplicate ACP status updates do not replay them. Cloud
+synthesis does not silence the thinking pulse before audio exists. It stops for
+permission choices, actual narration, cancellation, completion, and failure,
+then resumes its delay if work continues after narration.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached

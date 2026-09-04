@@ -21,8 +21,10 @@ mkdir -p "$contents_path/MacOS" "$contents_path/Resources"
 cp "$binary_dir/VoiceActivation" "$contents_path/MacOS/VoiceActivation"
 cp "$project_dir/Sources/VoiceActivationApp/Resources/Info.plist" "$contents_path/Info.plist"
 cp "$project_dir/Sources/VoiceActivationApp/Resources/VoiceActivation.icns" "$contents_path/Resources/VoiceActivation.icns"
-cp "$project_dir/Sources/VoiceActivationApp/Resources/CaptureStart.wav" "$contents_path/Resources/CaptureStart.wav"
-cp "$project_dir/Sources/VoiceActivationApp/Resources/CaptureEnd.wav" "$contents_path/Resources/CaptureEnd.wav"
+for sound_name in AgentThinking CaptureEnd CaptureStart ToolComplete ToolFailed ToolStart; do
+    cp "$project_dir/Sources/VoiceActivationApp/Resources/$sound_name.wav" \
+        "$contents_path/Resources/$sound_name.wav"
+done
 
 plutil -lint "$contents_path/Info.plist"
 codesign --force --deep --sign "$sign_identity" "$app_path"

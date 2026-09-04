@@ -135,7 +135,7 @@ Cancelling the run also cancels every pending permission request.
 
 ## Conversation speech or sounds do not play
 
-Confirm **Read replies aloud** and **Working pulse** are enabled in Settings and
+Confirm **Read replies aloud** and **Agent activity sounds** are enabled in Settings and
 that **Save Settings** succeeded. The macOS provider uses the configured locale's
 system voice and obeys the current output volume. For ElevenLabs, confirm the API
 key and selected Voice ID are valid and that the Mac can reach
@@ -143,7 +143,7 @@ key and selected Voice ID are valid and that the Mac can reach
 voice** to verify synthesis. If catalog loading fails, paste a known Voice ID in
 the fallback field. The key is read from macOS Keychain. A failed ElevenLabs
 request falls back to the macOS voice rather than dropping the spoken chunk. The
-working pulse waits 1.6 seconds before its first audible cue, remains active
+thinking pulse waits 1.6 seconds before its first audible cue, remains active
 while cloud speech is being generated, and pauses when narration actually plays.
 
 Narration begins when a complete sentence arrives or 350 milliseconds after the

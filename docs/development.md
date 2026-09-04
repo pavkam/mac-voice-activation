@@ -102,8 +102,9 @@ terminal tool settlement, and a panel that accepts pointer actions without
 becoming key or main. Conversation-audio tests use injected silent players and
 an injected ElevenLabs transport to verify bounded-latency streaming flushes,
 ordered synthesis prefetch, stale-request cancellation, cloud failure fallback,
-Markdown formatting, permission resume, and playback-only working-pulse
-suppression without producing sound or network traffic from the test process.
+Markdown formatting, permission resume, deduplicated tool-transition cues, and
+playback-only thinking-pulse suppression without producing sound or network
+traffic from the test process.
 App tests cover pause and
 shutdown races during pending permission requests plus profile-identified hotkey
 releases. Hotkey recording tests synthesize AppKit events without registering

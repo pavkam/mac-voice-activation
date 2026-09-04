@@ -59,8 +59,12 @@ if [[ ! -f REUSE.toml ]]; then
 else
     for path in \
         Package.resolved \
+        Sources/VoiceActivationApp/Resources/AgentThinking.wav \
         Sources/VoiceActivationApp/Resources/CaptureEnd.wav \
         Sources/VoiceActivationApp/Resources/CaptureStart.wav \
+        Sources/VoiceActivationApp/Resources/ToolComplete.wav \
+        Sources/VoiceActivationApp/Resources/ToolFailed.wav \
+        Sources/VoiceActivationApp/Resources/ToolStart.wav \
         Sources/VoiceActivationApp/Resources/VoiceActivation.icns
     do
         if ! grep -Fq "\"$path\"" REUSE.toml; then

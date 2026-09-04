@@ -17,6 +17,7 @@ through a shell.
 | [Getting started](getting-started.md) | Build, launch, grant permissions, and run the first command. |
 | [Configuration](configuration.md) | Configure wake phrases, command or agent targets, colors, locale, and push-to-talk. |
 | [ACP agent harness](agent-harness.md) | Configure Cursor, Codex, Claude, or a custom ACP v1 agent and understand streamed runs. |
+| [Sound design](sound-design.md) | Understand listening, thinking, and tool-transition cues. |
 | [Architecture](architecture.md) | Understand speech modes, state transitions, privacy, and process execution. |
 | [Troubleshooting](troubleshooting.md) | Diagnose permissions, recognition, shortcuts, commands, and agent runs. |
 | [Development](development.md) | Work with the package, tests, app bundle, and continuous integration. |
@@ -39,9 +40,10 @@ through a shell.
   follow-ups in the same ACP session.
 - Each agent profile can provide its own system prompt and default permission
   level; interactive permission requests can be answered by voice.
-- Streaming reply speech through macOS or ElevenLabs and a narration-aware
-  working pulse make agent conversations audible. ElevenLabs voices are loaded
-  from the account catalog and can be previewed; tests always replace network
-  and playback boundaries with silent adapters.
+- Streaming reply speech through macOS or ElevenLabs and narration-aware
+  activity sounds make agent conversations audible. Dedicated cues distinguish
+  thinking, tool start, tool completion, and tool failure. ElevenLabs voices are
+  loaded from the account catalog and can be previewed; tests always replace
+  network and playback boundaries with silent adapters.
 - The app has no Dock icon, server, Voice Activation account, audio archive,
   run-history database, or shell-evaluation layer.

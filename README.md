@@ -129,8 +129,10 @@ selected voice can be previewed before saving, with manual Voice ID entry as a
 fallback when the catalog is unavailable. Complete sentences are queued
 immediately; unfinished text is queued within 350 milliseconds even while more
 tokens keep streaming. ElevenLabs prefetches upcoming speech while preserving
-playback order. The working pulse continues during cloud synthesis and pauses
-only while speech plays. Voice cancellation says “Stopped” when
+playback order. The thinking pulse continues during cloud synthesis and pauses
+only while speech plays. A bundled sound palette distinguishes listening,
+thinking, and tool transitions without making runtime effect-generation calls.
+Voice cancellation says “Stopped” when
 reply speech is enabled, and tests inject silent audio players, so CI never emits
 speaker sounds.
 Closing the completed panel keeps its bounded output available from **Open** in
@@ -145,6 +147,8 @@ key is stored in macOS Keychain rather than source code or preferences. Voice
 Activation stores no prompt history, agent output, or raw tool payloads. See the
 [ACP agent harness guide](docs/agent-harness.md) for configuration, safety
 bounds, lifecycle details, and supported protocol behavior.
+The [sound-design guide](docs/sound-design.md) documents every cue and its
+playback contract.
 
 ## Development
 

@@ -244,6 +244,7 @@ private final class AppModelAgentConversationAudioSpy: AgentConversationAudioPla
     private(set) var spoken: [(text: String, localeID: String)] = []
 
     func setWorking(_ working: Bool) {}
+    func playActivitySound(_ sound: AgentActivitySound) {}
 
     func speak(_ text: String, localeID: String) {
         spoken.append((text, localeID))

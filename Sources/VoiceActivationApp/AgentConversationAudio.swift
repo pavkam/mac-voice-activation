@@ -10,6 +10,7 @@ protocol AgentConversationAudioPlaying: AnyObject {
     var onSpeakingChange: ((Bool) -> Void)? { get set }
 
     func setWorking(_ working: Bool)
+    func playActivitySound(_ sound: AgentActivitySound)
     func speak(_ text: String, localeID: String)
     func stopSpeaking()
     func stopAll()
@@ -37,75 +38,13 @@ struct AgentSpeechConfiguration: Equatable {
 }
 
 @MainActor
-protocol AgentWorkingPulsePlaying: AnyObject {
-    func play()
-    func stop()
-}
-
-@MainActor
-protocol AgentWorkingPulseAssetPlaying: AnyObject {
-    func playBundled(named name: String, volume: Float) -> Bool
-    func playSystem(named name: String)
-    func stop()
-}
-
-@MainActor
-final class AppAgentWorkingPulseAssets: AgentWorkingPulseAssetPlaying {
-    private var sound: NSSound?
-
-    func playBundled(named name: String, volume: Float) -> Bool {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "wav"),
-              let sound = NSSound(contentsOf: url, byReference: true)
-        else { return false }
-        sound.volume = volume
-        play(sound)
-        return true
-    }
-
-    func playSystem(named name: String) {
-        guard let sound = NSSound(named: NSSound.Name(name)) else { return }
-        play(sound)
-    }
-
-    func stop() {
-        sound?.stop()
-        sound = nil
-    }
-
-    private func play(_ sound: NSSound) {
-        self.sound?.stop()
-        self.sound = sound
-        sound.play()
-    }
-}
-
-@MainActor
-final class SystemAgentWorkingPulsePlayer: AgentWorkingPulsePlaying {
-    private let assetPlayer: any AgentWorkingPulseAssetPlaying
-
-    init(assetPlayer: any AgentWorkingPulseAssetPlaying = AppAgentWorkingPulseAssets()) {
-        self.assetPlayer = assetPlayer
-    }
-
-    func play() {
-        if !assetPlayer.playBundled(named: "CaptureStart", volume: 0.32) {
-            assetPlayer.playSystem(named: "Pop")
-        }
-    }
-
-    func stop() {
-        assetPlayer.stop()
-    }
-}
-
-@MainActor
 final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
     var onSpeakingChange: ((Bool) -> Void)?
 
     private let speechSynthesizer: any AgentSystemSpeechSynthesizing
     private let speechConfiguration: @MainActor () -> AgentSpeechConfiguration
     private let elevenLabsPlayer: ElevenLabsSpeechOutputPlayer
-    private let workingPulse: any AgentWorkingPulsePlaying
+    private let activitySoundPlayer: any AgentActivitySoundPlaying
     private let workingPulseInitialDelay: Duration
     private let workingPulseInterval: Duration
     private var speechMonitorTask: Task<Void, Never>?
@@ -122,7 +61,7 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
         },
         elevenLabsSynthesizer: any ElevenLabsSpeechSynthesizing = ElevenLabsSpeechClient(),
         elevenLabsAudioPlayer: any AgentAudioDataPlaying = SystemAgentAudioDataPlayer(),
-        workingPulse: any AgentWorkingPulsePlaying = SystemAgentWorkingPulsePlayer(),
+        activitySoundPlayer: any AgentActivitySoundPlaying = SystemAgentActivitySoundPlayer(),
         workingPulseInitialDelay: Duration = .seconds(1.6),
         workingPulseInterval: Duration = .seconds(3.2))
     {
@@ -131,7 +70,7 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
         elevenLabsPlayer = ElevenLabsSpeechOutputPlayer(
             synthesizer: elevenLabsSynthesizer,
             audioPlayer: elevenLabsAudioPlayer)
-        self.workingPulse = workingPulse
+        self.activitySoundPlayer = activitySoundPlayer
         self.workingPulseInitialDelay = workingPulseInitialDelay
         self.workingPulseInterval = workingPulseInterval
         elevenLabsPlayer.onSpeakingChange = { [weak self] speaking in
@@ -146,6 +85,13 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
         guard workingRequested != working else { return }
         workingRequested = working
         refreshWorkingPulse()
+    }
+
+    func playActivitySound(_ sound: AgentActivitySound) {
+        workingTask?.cancel()
+        workingTask = nil
+        activitySoundPlayer.play(sound)
+        scheduleWorkingPulseIfNeeded()
     }
 
     func speak(_ text: String, localeID: String) {
@@ -181,14 +127,19 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
     }
 
     func stopAll() {
-        setWorking(false)
+        workingRequested = false
+        refreshWorkingPulse()
         stopSpeaking()
     }
 
     private func refreshWorkingPulse() {
         workingTask?.cancel()
         workingTask = nil
-        workingPulse.stop()
+        activitySoundPlayer.stop()
+        scheduleWorkingPulseIfNeeded()
+    }
+
+    private func scheduleWorkingPulseIfNeeded() {
         guard workingRequested, !isReportingSpeech else { return }
 
         workingTask = Task { @MainActor [weak self] in
@@ -200,7 +151,7 @@ final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
             }
 
             while !Task.isCancelled, self.workingRequested, !self.isReportingSpeech {
-                self.workingPulse.play()
+                self.activitySoundPlayer.play(.thinking)
                 do {
                     try await Task.sleep(for: self.workingPulseInterval)
                 } catch {
@@ -266,6 +217,7 @@ final class AgentConversationAudioPresenter {
     private var runID: UUID?
     private var reply = ""
     private var activityIsWorking = false
+    private var toolSoundPhases: [String: ToolSoundPhase] = [:]
     private var speechFlushTask: Task<Void, Never>?
 
     init(
@@ -286,12 +238,14 @@ final class AgentConversationAudioPresenter {
             cancelSpeechFlush()
             self.runID = runID
             reply = ""
+            toolSoundPhases.removeAll(keepingCapacity: true)
             player.stopSpeaking()
             updateWorking(true)
         case let .followUpSubmitted(runID, _):
             guard self.runID == runID else { return }
             cancelSpeechFlush()
             reply = ""
+            toolSoundPhases.removeAll(keepingCapacity: true)
             player.stopSpeaking()
             updateWorking(true)
         case .notice:
@@ -300,6 +254,7 @@ final class AgentConversationAudioPresenter {
             guard self.runID == runID else { return }
             cancelSpeechFlush()
             reply = ""
+            toolSoundPhases.removeAll(keepingCapacity: true)
             updateWorking(true)
         case let .turnCancellationStarted(runID):
             guard self.runID == runID else { return }
@@ -324,6 +279,7 @@ final class AgentConversationAudioPresenter {
             player.stopAll()
             self.runID = nil
             reply = ""
+            toolSoundPhases.removeAll(keepingCapacity: true)
             if result.stopReason == .cancelled, readsReplies() {
                 player.speak("Stopped.", localeID: localeID())
             }
@@ -334,6 +290,7 @@ final class AgentConversationAudioPresenter {
             player.stopAll()
             self.runID = nil
             reply = ""
+            toolSoundPhases.removeAll(keepingCapacity: true)
         }
     }
 
@@ -343,6 +300,7 @@ final class AgentConversationAudioPresenter {
         player.stopAll()
         runID = nil
         reply = ""
+        toolSoundPhases.removeAll(keepingCapacity: true)
     }
 
     func refreshSettings() {
@@ -368,7 +326,13 @@ final class AgentConversationAudioPresenter {
             updateWorking(true)
         case .permissionRequested:
             updateWorking(false)
-        case .thoughtDelta, .toolCall, .toolCallUpdate, .plan, .connected:
+        case let .toolCall(tool):
+            handleToolSound(id: tool.id, status: tool.status)
+            updateWorking(true)
+        case let .toolCallUpdate(tool):
+            handleToolSound(id: tool.id, status: tool.status)
+            updateWorking(true)
+        case .thoughtDelta, .plan, .connected:
             updateWorking(true)
         case .metadata, .diagnostic, .unknown, .deliveryNotice:
             break
@@ -377,6 +341,14 @@ final class AgentConversationAudioPresenter {
 
     private func appendReply(_ text: String) {
         reply.append(text)
+    }
+
+    private func handleToolSound(id: String, status: AgentToolCallStatus?) {
+        let phase = ToolSoundPhase(status: status)
+        guard toolSoundPhases[id] != phase else { return }
+        toolSoundPhases[id] = phase
+        guard playsWorkingSound() else { return }
+        player.playActivitySound(phase.sound)
     }
 
     private func speakReadyReply() {
@@ -428,6 +400,31 @@ final class AgentConversationAudioPresenter {
     private func cancelSpeechFlush() {
         speechFlushTask?.cancel()
         speechFlushTask = nil
+    }
+
+    private enum ToolSoundPhase: Equatable {
+        case active
+        case completed
+        case failed
+
+        init(status: AgentToolCallStatus?) {
+            switch status {
+            case .completed:
+                self = .completed
+            case .failed:
+                self = .failed
+            case .pending, .inProgress, nil:
+                self = .active
+            }
+        }
+
+        var sound: AgentActivitySound {
+            switch self {
+            case .active: .toolStarted
+            case .completed: .toolCompleted
+            case .failed: .toolFailed
+            }
+        }
     }
 
     private static func firstSpeechBoundary(in text: String) -> String.Index? {

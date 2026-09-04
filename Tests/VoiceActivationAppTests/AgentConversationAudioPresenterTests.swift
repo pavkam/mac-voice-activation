@@ -12,12 +12,17 @@ private final class AgentConversationAudioSpy: AgentConversationAudioPlaying {
     var onSpeakingChange: ((Bool) -> Void)?
     var onSpeak: (() -> Void)?
     private(set) var workingStates: [Bool] = []
+    private(set) var activitySounds: [AgentActivitySound] = []
     private(set) var spoken: [(text: String, localeID: String)] = []
     private(set) var stopSpeakingCount = 0
     private(set) var stopAllCount = 0
 
     func setWorking(_ working: Bool) {
         workingStates.append(working)
+    }
+
+    func playActivitySound(_ sound: AgentActivitySound) {
+        activitySounds.append(sound)
     }
 
     func speak(_ text: String, localeID: String) {
@@ -106,35 +111,16 @@ private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
 }
 
 @MainActor
-private final class AgentWorkingPulsePlayerSpy: AgentWorkingPulsePlaying {
+private final class AgentActivitySoundPlayerSpy: AgentActivitySoundPlaying {
     private(set) var playCount = 0
+    private(set) var sounds: [AgentActivitySound] = []
     private(set) var stopCount = 0
     var onPlay: (() -> Void)?
 
-    func play() {
+    func play(_ sound: AgentActivitySound) {
         playCount += 1
+        sounds.append(sound)
         onPlay?()
-    }
-
-    func stop() {
-        stopCount += 1
-    }
-}
-
-@MainActor
-private final class AgentWorkingPulseAssetSpy: AgentWorkingPulseAssetPlaying {
-    var bundledResult = true
-    private(set) var bundledRequests: [(name: String, volume: Float)] = []
-    private(set) var systemNames: [String] = []
-    private(set) var stopCount = 0
-
-    func playBundled(named name: String, volume: Float) -> Bool {
-        bundledRequests.append((name: name, volume: volume))
-        return bundledResult
-    }
-
-    func playSystem(named name: String) {
-        systemNames.append(name)
     }
 
     func stop() {
@@ -145,39 +131,16 @@ private final class AgentWorkingPulseAssetSpy: AgentWorkingPulseAssetPlaying {
 @Suite(.timeLimit(.minutes(1)))
 struct AgentConversationAudioPresenterTests {
     @MainActor @Test func systemPlayer_WhenWorkingStateRepeats_DoesNotRestartPulseDelay() {
-        let workingPulse = AgentWorkingPulsePlayerSpy()
-        let player = AgentConversationAudioPlayer(workingPulse: workingPulse)
+        let activitySounds = AgentActivitySoundPlayerSpy()
+        let player = AgentConversationAudioPlayer(activitySoundPlayer: activitySounds)
 
         player.setWorking(true)
-        let stopCountAfterStarting = workingPulse.stopCount
+        let stopCountAfterStarting = activitySounds.stopCount
         player.setWorking(true)
         player.setWorking(true)
 
-        #expect(workingPulse.stopCount == stopCountAfterStarting)
+        #expect(activitySounds.stopCount == stopCountAfterStarting)
         player.stopAll()
-    }
-
-    @MainActor @Test func workingPulse_WhenBundledCueExists_PlaysAtAudibleVolumeAndStops() {
-        let assets = AgentWorkingPulseAssetSpy()
-        let pulse = SystemAgentWorkingPulsePlayer(assetPlayer: assets)
-
-        pulse.play()
-        pulse.stop()
-
-        #expect(assets.bundledRequests.map(\.name) == ["CaptureStart"])
-        #expect(assets.bundledRequests.map(\.volume) == [0.32])
-        #expect(assets.systemNames.isEmpty)
-        #expect(assets.stopCount == 1)
-    }
-
-    @MainActor @Test func workingPulse_WhenBundledCueIsUnavailable_UsesSystemFallback() {
-        let assets = AgentWorkingPulseAssetSpy()
-        assets.bundledResult = false
-        let pulse = SystemAgentWorkingPulsePlayer(assetPlayer: assets)
-
-        pulse.play()
-
-        #expect(assets.systemNames == ["Pop"])
     }
 
     @MainActor @Test func systemPlayer_WhenElevenLabsIsSelected_RoutesSpeechToElevenLabs()
@@ -213,10 +176,10 @@ struct AgentConversationAudioPresenterTests {
 
     @MainActor @Test func systemPlayer_WhenSpeaking_PausesWorkingPulse() async {
         let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
-        let workingPulse = AgentWorkingPulsePlayerSpy()
+        let workingPulse = AgentActivitySoundPlayerSpy()
         let player = AgentConversationAudioPlayer(
             speechSynthesizer: systemSynthesizer,
-            workingPulse: workingPulse,
+            activitySoundPlayer: workingPulse,
             workingPulseInitialDelay: .milliseconds(20),
             workingPulseInterval: .seconds(10))
 
@@ -238,11 +201,35 @@ struct AgentConversationAudioPresenterTests {
         player.stopAll()
     }
 
+    @MainActor @Test func systemPlayer_WhenToolCuePlays_RestartsThinkingDelay() async {
+        let activitySounds = AgentActivitySoundPlayerSpy()
+        let player = AgentConversationAudioPlayer(
+            activitySoundPlayer: activitySounds,
+            workingPulseInitialDelay: .milliseconds(120),
+            workingPulseInterval: .seconds(10))
+
+        player.setWorking(true)
+        try? await Task.sleep(for: .milliseconds(80))
+        player.playActivitySound(.toolStarted)
+        try? await Task.sleep(for: .milliseconds(70))
+
+        #expect(activitySounds.sounds == [.toolStarted])
+
+        await withCheckedContinuation { continuation in
+            activitySounds.onPlay = {
+                activitySounds.onPlay = nil
+                continuation.resume()
+            }
+        }
+        #expect(activitySounds.sounds == [.toolStarted, .thinking])
+        player.stopAll()
+    }
+
     @MainActor @Test func systemPlayer_WhenCloudSpeechIsStillGenerating_KeepsWorkingPulseAudible()
         async
     {
         let cloudSynthesizer = SuspendedAgentElevenLabsSpeechSynthesizer()
-        let workingPulse = AgentWorkingPulsePlayerSpy()
+        let workingPulse = AgentActivitySoundPlayerSpy()
         let player = AgentConversationAudioPlayer(
             speechConfiguration: {
                 AgentSpeechConfiguration(
@@ -252,7 +239,7 @@ struct AgentConversationAudioPresenterTests {
             },
             elevenLabsSynthesizer: cloudSynthesizer,
             elevenLabsAudioPlayer: AgentAudioDataPlayerSpy(),
-            workingPulse: workingPulse,
+            activitySoundPlayer: workingPulse,
             workingPulseInitialDelay: .milliseconds(20),
             workingPulseInterval: .seconds(10))
 
@@ -541,6 +528,80 @@ struct AgentConversationAudioPresenterTests {
 
         #expect(player.stopSpeakingCount == previousStopCount + 1)
         #expect(player.workingStates.last == true)
+    }
+
+    @MainActor @Test func lifecycle_WhenToolsTransition_PlaysEachActivityCueOnce() throws {
+        let player = AgentConversationAudioSpy()
+        let presenter = AgentConversationAudioPresenter(
+            player: player,
+            readsReplies: { true },
+            playsWorkingSound: { true },
+            localeID: { "en-US" })
+        let runID = UUID()
+        presenter.handle(.started(
+            runID: runID,
+            profile: try agentProfile(),
+            prompt: "Question"))
+
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCall(AgentToolCall(
+                id: "read",
+                title: "Read files",
+                kind: .read,
+                status: .pending))))
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCallUpdate(AgentToolCallUpdate(
+                id: "read",
+                status: .inProgress))))
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCallUpdate(AgentToolCallUpdate(
+                id: "read",
+                status: .completed))))
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCallUpdate(AgentToolCallUpdate(
+                id: "read",
+                status: .completed))))
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCall(AgentToolCall(id: "edit", title: "Edit file"))))
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCallUpdate(AgentToolCallUpdate(
+                id: "edit",
+                status: .failed))))
+
+        #expect(player.activitySounds == [
+            .toolStarted, .toolCompleted, .toolStarted, .toolFailed,
+        ])
+    }
+
+    @MainActor @Test func lifecycle_WhenActivitySoundsAreDisabled_PlaysNoToolCues() throws {
+        let player = AgentConversationAudioSpy()
+        let presenter = AgentConversationAudioPresenter(
+            player: player,
+            readsReplies: { true },
+            playsWorkingSound: { false },
+            localeID: { "en-US" })
+        let runID = UUID()
+        presenter.handle(.started(
+            runID: runID,
+            profile: try agentProfile(),
+            prompt: "Question"))
+
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCall(AgentToolCall(id: "tool", title: "Tool"))))
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCallUpdate(AgentToolCallUpdate(
+                id: "tool",
+                status: .completed))))
+
+        #expect(player.activitySounds.isEmpty)
     }
 
     @MainActor @Test func lifecycle_WhenVoiceCancelsConversation_ReadsStoppedAcknowledgement() throws {

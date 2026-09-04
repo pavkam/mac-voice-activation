@@ -53,9 +53,9 @@ service when on-device recognition is unavailable.
 
 - **Read replies aloud:** enabled by default. Voice Activation removes Markdown
   formatting and queues complete sentences while the agent is still generating
-  them. An incomplete sentence is queued after 350 milliseconds without new
-  output, and any remainder is queued when the turn ends. Code blocks are not
-  read character by character.
+  them. Incomplete text is queued no later than 350 milliseconds after its first
+  buffered fragment, even while output continues, and any remainder is queued
+  when the turn ends. Code blocks are not read character by character.
 - **Voice provider:** choose the local macOS system voice or ElevenLabs. The
   ElevenLabs option loads available voices from the account after an API key is
   entered. Select a named voice and use **Test voice** to generate a short
@@ -63,11 +63,12 @@ service when on-device recognition is unavailable.
   manually. The API key stays in macOS Keychain, never `UserDefaults` or project
   files. Synthesized response text is sent to ElevenLabs; a failed request falls
   back to the configured macOS voice so the reply does not disappear silently.
-- **Working pulse:** enabled by default. An audible cue begins after a short
-  silent delay and repeats while the agent is thinking or using tools. It stops
-  when permission input is needed, speech is playing, or the turn ends. Choosing
-  a permission option starts its delay again while the agent resumes, so the
-  pulse fills genuine pauses rather than competing with narration.
+- **Agent activity sounds:** enabled by default. A thinking cue begins after a
+  short silent delay and repeats while the agent remains busy. Distinct
+  one-shots announce tool start, completion, and failure without replaying
+  duplicate provider updates. The thinking cue stops when permission input is
+  needed, speech is playing, or the turn ends. Choosing a permission option
+  starts its delay again while the agent resumes.
 
 These are saved settings: editing a toggle, provider, Voice ID, or API key does
 not affect an active conversation until **Save Settings** succeeds.
