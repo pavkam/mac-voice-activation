@@ -36,7 +36,6 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
         panel.ignoresMouseEvents = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.isMovable = true
-        panel.isMovableByWindowBackground = true
         panel.isReleasedWhenClosed = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]

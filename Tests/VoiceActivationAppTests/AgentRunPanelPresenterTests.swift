@@ -248,10 +248,17 @@ struct AgentRunPanelPresenterTests {
         #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary))
         #expect(panel.collectionBehavior.contains(.stationary))
         #expect(panel.isMovable)
-        #expect(panel.isMovableByWindowBackground)
         #expect(!panel.hasShadow)
         #expect(!panel.canBecomeKey)
         #expect(!panel.canBecomeMain)
+    }
+
+    @MainActor @Test func panel_WhenHostingSwiftUIControls_DoesNotInterceptTheirClicksForDragging() {
+        let controller = AgentRunPanelController()
+        let panel = controller.panelForTesting
+
+        #expect(panel.contentView?.mouseDownCanMoveWindow == true)
+        #expect(!panel.isMovableByWindowBackground)
     }
 
     @MainActor @Test func view_WhenRendered_FillsTheExpandedPanel() throws {

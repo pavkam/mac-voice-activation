@@ -203,12 +203,12 @@ the key window. Pointer controls work without moving keyboard focus away from
 the user's current application.
 
 The panel opens at the recording overlay's bottom-centred screen and animates
-to a 620 by 420 point material surface. Its header and background are draggable,
-so it can move without taking keyboard focus. The minimize control morphs it
-into a 372 by 84 point persistent status pill with the provider, latest activity,
-phase animation, and live elapsed time. The pill remains movable and restores
-the full conversation at its current top-right anchor, including after it has
-been dragged to another position.
+to a 620 by 420 point material surface. Its header is draggable, so it can move
+without taking keyboard focus or turning the SwiftUI controls into a window-drag
+surface. The minimize control morphs it into a 372 by 84 point persistent status
+pill with the provider, latest activity, phase animation, and live elapsed time.
+The pill remains movable and restores the full conversation at its current
+top-right anchor, including after it has been dragged to another position.
 
 The expanded surface contains:
 
