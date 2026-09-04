@@ -26,6 +26,14 @@ final class AppModel {
     private(set) var isSavingSettings = false
     private(set) var agentRunSnapshot: AgentRunSnapshot?
 
+    var statusPresentation: MenuStatusPresentation {
+        MenuStatusPresentation.make(
+            state: state,
+            enabledProfileCount: activeWakeProfiles.count(where: \.isEnabled),
+            isListeningEnabled: passiveEnabled,
+            agentPhase: agentRunSnapshot?.phase)
+    }
+
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private let speechSession: any SpeechSessionProtocol
     @ObservationIgnored private let commandRunner: any CommandRunning

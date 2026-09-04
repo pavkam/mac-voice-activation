@@ -12,6 +12,15 @@ private final class MenuOverlayStub: RecordingOverlayDisplaying {
 }
 
 struct MenuContentViewTests {
+    @MainActor @Test func status_WhenListeningIsRequestedBeforeCoordinatorStarts_ShowsStarting() throws {
+        let model = try model(profileCount: 2)
+
+        let presentation = model.statusPresentation
+
+        #expect(presentation.title == "Starting")
+        #expect(presentation.detail == "Preparing wake phrase listening")
+    }
+
     @Test func listeningControl_WhenListening_OffersPauseAll() {
         let presentation = MenuListeningControlPresentation.make(isListening: true)
 

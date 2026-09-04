@@ -15,11 +15,13 @@
   open .build/VoiceActivation.app
   ```
 
-## The status remains Disabled
+## The status remains Starting
 
-Open the menu and enable listening. On first use, complete both
-the Microphone and Speech Recognition privacy prompts. If they were previously
-denied, enable them in System Settings, then quit and relaunch the app.
+**Starting** means listening is enabled but the speech session has not become
+ready yet. On first use, complete both the Microphone and Speech Recognition
+privacy prompts. If they were previously denied, enable them in System Settings,
+then quit and relaunch the app. An explicit **Paused** status now appears only
+after **Pause all** is selected.
 
 ## Passive listening reports an on-device error
 

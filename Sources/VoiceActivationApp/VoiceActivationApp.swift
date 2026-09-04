@@ -32,8 +32,10 @@ struct VoiceActivationApp: App {
         MenuBarExtra {
             MenuContentView(model: model)
         } label: {
-            Image(systemName: StatusIcon.symbol(for: model.state))
-                .accessibilityLabel(model.state.label)
+            let presentation = model.statusPresentation
+
+            Image(systemName: presentation.symbolName)
+                .accessibilityLabel(presentation.title)
         }
         .menuBarExtraStyle(.window)
 

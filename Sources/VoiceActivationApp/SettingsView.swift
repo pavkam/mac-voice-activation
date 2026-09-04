@@ -67,7 +67,9 @@ struct SettingsView: View {
 
             Spacer()
 
-            Label(model.state.label, systemImage: StatusIcon.symbol(for: model.state))
+            Label(
+                model.statusPresentation.title,
+                systemImage: model.statusPresentation.symbolName)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(statusColor)
                 .padding(.horizontal, 11)

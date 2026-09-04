@@ -52,7 +52,7 @@ and launch it again.
 
 The default configuration opens a Google search:
 
-1. Wait until the menu-bar status says **Listening**.
+1. Wait until the menu-bar status says **Ready**.
 2. Say `computer`.
 3. When the recording overlay appears, say a search query. Partial command text
    appears below its animated microphone.

@@ -9,10 +9,26 @@ struct MenuStatusPresentation: Equatable {
     static func make(
         state: ActivationState,
         enabledProfileCount: Int,
+        isListeningEnabled: Bool,
         agentPhase: AgentRunPhase? = nil) -> MenuStatusPresentation
     {
         if state == .executing, let agentPhase, !agentPhase.isTerminal {
             return agentConversationPresentation(phase: agentPhase)
+        }
+
+        if state == .disabled, isListeningEnabled {
+            guard enabledProfileCount > 0 else {
+                return MenuStatusPresentation(
+                    title: "No active wake phrases",
+                    detail: "Enable a profile to start listening",
+                    symbolName: "waveform.slash",
+                    isError: false)
+            }
+            return MenuStatusPresentation(
+                title: "Starting",
+                detail: "Preparing wake phrase listening",
+                symbolName: "waveform",
+                isError: false)
         }
 
         return switch state {

@@ -32,10 +32,7 @@ struct MenuContentView: View {
     }
 
     private var statusHeader: some View {
-        let presentation = MenuStatusPresentation.make(
-            state: model.state,
-            enabledProfileCount: enabledProfileCount,
-            agentPhase: model.agentRunSnapshot?.phase)
+        let presentation = model.statusPresentation
 
         return HStack(spacing: 13) {
             ZStack {
@@ -299,10 +296,6 @@ struct MenuContentView: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing)
         }
-    }
-
-    private var enabledProfileCount: Int {
-        model.activeWakeProfiles.count(where: \.isEnabled)
     }
 
     private var headerAccent: Color {
