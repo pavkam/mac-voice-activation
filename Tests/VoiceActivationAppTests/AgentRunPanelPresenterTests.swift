@@ -61,6 +61,19 @@ struct AgentRunPanelPresenterTests {
         #expect(cancellations == [runID])
     }
 
+    @MainActor @Test func cancel_WhenRunIsActive_HidesPanelImmediately() {
+        let display = AgentRunPanelDisplaySpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy())
+        let runID = UUID()
+        presenter.begin(runningSnapshot(runID: runID), from: nil)
+
+        display.onAction?(.cancel(runID: runID))
+
+        #expect(display.hidden == [runID])
+    }
+
     @MainActor @Test func endConversation_WhenRepeatedOrStale_IsRunScopedAndExactlyOnce() {
         let display = AgentRunPanelDisplaySpy()
         let presenter = AgentRunPanelPresenter(

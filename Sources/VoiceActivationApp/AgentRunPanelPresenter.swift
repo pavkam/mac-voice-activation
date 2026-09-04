@@ -114,6 +114,7 @@ final class AgentRunPanelPresenter {
                   cancelledRunID != runID
             else { return }
             cancelledRunID = runID
+            display.hide(runID: runID)
             onCancel?(runID)
         case let .endConversation(runID):
             guard snapshot.runID == runID,
