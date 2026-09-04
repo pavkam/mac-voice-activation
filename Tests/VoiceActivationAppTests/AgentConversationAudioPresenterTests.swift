@@ -2,18 +2,23 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
-import AVFoundation
 import Testing
 @testable import VoiceActivationApp
 @testable import VoiceActivationCore
 
 @MainActor
 private final class AgentConversationAudioSpy: AgentConversationAudioPlaying {
+    enum Event: Equatable {
+        case activity(AgentActivitySound)
+        case speech(String)
+    }
+
     var onSpeakingChange: ((Bool) -> Void)?
     var onSpeak: (() -> Void)?
     private(set) var workingStates: [Bool] = []
     private(set) var activitySounds: [AgentActivitySound] = []
     private(set) var spoken: [(text: String, localeID: String)] = []
+    private(set) var events: [Event] = []
     private(set) var stopSpeakingCount = 0
     private(set) var stopAllCount = 0
 
@@ -23,10 +28,12 @@ private final class AgentConversationAudioSpy: AgentConversationAudioPlaying {
 
     func playActivitySound(_ sound: AgentActivitySound) {
         activitySounds.append(sound)
+        events.append(.activity(sound))
     }
 
     func speak(_ text: String, localeID: String) {
         spoken.append((text, localeID))
+        events.append(.speech(text))
         onSpeak?()
     }
 
@@ -40,87 +47,43 @@ private final class AgentConversationAudioSpy: AgentConversationAudioPlaying {
 }
 
 @MainActor
-private final class AgentSystemSpeechSynthesizerSpy: AgentSystemSpeechSynthesizing {
-    private(set) var utterances: [AVSpeechUtterance] = []
+private final class AgentSpeechQueueSpy: AgentSpeechQueueing {
+    var onStateChange: ((AgentSpeechQueueState) -> Void)?
+    private(set) var requests: [AgentSpeechRequest] = []
     private(set) var stopCount = 0
-    var isSpeaking = false
-    var onSpeak: (() -> Void)?
 
-    func speak(_ utterance: AVSpeechUtterance) {
-        utterances.append(utterance)
-        isSpeaking = true
-        onSpeak?()
-    }
-
-    func stopSpeaking(at boundary: AVSpeechBoundary) -> Bool {
-        stopCount += 1
-        isSpeaking = false
-        return true
-    }
-}
-
-private actor AgentElevenLabsSpeechSynthesizerSpy: ElevenLabsSpeechSynthesizing {
-    private(set) var texts: [String] = []
-
-    func audio(text: String, apiKey: String, voiceID: String) async throws -> Data {
-        texts.append(text)
-        return Data(text.utf8)
-    }
-}
-
-private struct AgentElevenLabsSpeechFailure: Error {}
-
-private actor FailingAgentElevenLabsSpeechSynthesizer: ElevenLabsSpeechSynthesizing {
-    func audio(text: String, apiKey: String, voiceID: String) async throws -> Data {
-        throw AgentElevenLabsSpeechFailure()
-    }
-}
-
-private actor SuspendedAgentElevenLabsSpeechSynthesizer: ElevenLabsSpeechSynthesizing {
-    private var continuation: CheckedContinuation<Data, Never>?
-
-    func audio(text: String, apiKey: String, voiceID: String) async throws -> Data {
-        await withCheckedContinuation { continuation = $0 }
-    }
-
-    func release() {
-        continuation?.resume(returning: Data("audio".utf8))
-        continuation = nil
-    }
-
-    func isWaiting() -> Bool {
-        continuation != nil
-    }
-}
-
-@MainActor
-private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
-    private(set) var payloads: [Data] = []
-    var isPlaying = false
-    var onPlay: (() -> Void)?
-
-    func play(_ data: Data) -> Bool {
-        payloads.append(data)
-        onPlay?()
-        return true
+    func enqueue(_ request: AgentSpeechRequest) {
+        requests.append(request)
     }
 
     func stop() {
-        isPlaying = false
+        stopCount += 1
+    }
+
+    func emit(_ state: AgentSpeechQueueState) {
+        onStateChange?(state)
     }
 }
 
 @MainActor
-private final class AgentActivitySoundPlayerSpy: AgentActivitySoundPlaying {
-    private(set) var playCount = 0
+private final class AgentActivitySoundLoopSpy: AgentActivitySoundLooping {
+    private(set) var workingStates: [Bool] = []
+    private(set) var suppressionStates: [Bool] = []
     private(set) var sounds: [AgentActivitySound] = []
     private(set) var stopCount = 0
-    var onPlay: (() -> Void)?
+    var onSuppression: ((Bool) -> Void)?
+
+    func setWorking(_ working: Bool) {
+        workingStates.append(working)
+    }
+
+    func setSpeechSuppressed(_ suppressed: Bool) {
+        suppressionStates.append(suppressed)
+        onSuppression?(suppressed)
+    }
 
     func play(_ sound: AgentActivitySound) {
-        playCount += 1
         sounds.append(sound)
-        onPlay?()
     }
 
     func stop() {
@@ -130,198 +93,110 @@ private final class AgentActivitySoundPlayerSpy: AgentActivitySoundPlaying {
 
 @Suite(.timeLimit(.minutes(1)))
 struct AgentConversationAudioPresenterTests {
-    @MainActor @Test func systemPlayer_WhenWorkStarts_PlaysThinkingCueImmediately() {
-        let activitySounds = AgentActivitySoundPlayerSpy()
-        let player = AgentConversationAudioPlayer(
-            activitySoundPlayer: activitySounds,
-            workingPulseInitialDelay: .seconds(10),
-            workingPulseInterval: .seconds(10))
+    @MainActor @Test
+    func orchestrator_WhenWorkAndToolActivityArrive_DelegatesToActivityLoop() {
+        let speechQueue = AgentSpeechQueueSpy()
+        let activityLoop = AgentActivitySoundLoopSpy()
+        let player = AgentConversationAudioOrchestrator(
+            speechConfiguration: { .systemDefault },
+            speechQueue: speechQueue,
+            activityLoop: activityLoop)
 
         player.setWorking(true)
-
-        #expect(activitySounds.sounds == [.thinking])
-        player.stopAll()
-    }
-
-    @MainActor @Test func systemPlayer_WhenWorkingStateRepeats_DoesNotRestartPulseDelay() {
-        let activitySounds = AgentActivitySoundPlayerSpy()
-        let player = AgentConversationAudioPlayer(activitySoundPlayer: activitySounds)
-
-        player.setWorking(true)
-        let stopCountAfterStarting = activitySounds.stopCount
-        player.setWorking(true)
-        player.setWorking(true)
-
-        #expect(activitySounds.stopCount == stopCountAfterStarting)
-        player.stopAll()
-    }
-
-    @MainActor @Test func systemPlayer_WhenElevenLabsIsSelected_RoutesSpeechToElevenLabs()
-        async
-    {
-        let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
-        let elevenLabsSynthesizer = AgentElevenLabsSpeechSynthesizerSpy()
-        let dataPlayer = AgentAudioDataPlayerSpy()
-        let player = AgentConversationAudioPlayer(
-            speechSynthesizer: systemSynthesizer,
-            speechConfiguration: {
-                AgentSpeechConfiguration(
-                    provider: .elevenLabs,
-                    elevenLabsAPIKey: "secret",
-                    elevenLabsVoiceID: "voice-1")
-            },
-            elevenLabsSynthesizer: elevenLabsSynthesizer,
-            elevenLabsAudioPlayer: dataPlayer)
-
-        await withCheckedContinuation { continuation in
-            dataPlayer.onPlay = {
-                dataPlayer.onPlay = nil
-                continuation.resume()
-            }
-            player.speak("A much better voice.", localeID: "en-US")
-        }
-
-        #expect(systemSynthesizer.utterances.isEmpty)
-        #expect(await elevenLabsSynthesizer.texts == ["A much better voice."])
-        #expect(dataPlayer.payloads == [Data("A much better voice.".utf8)])
-        player.stopAll()
-    }
-
-    @MainActor @Test func systemPlayer_WhenSpeaking_PausesWorkingPulse() async {
-        let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
-        let workingPulse = AgentActivitySoundPlayerSpy()
-        let player = AgentConversationAudioPlayer(
-            speechSynthesizer: systemSynthesizer,
-            activitySoundPlayer: workingPulse,
-            workingPulseInitialDelay: .milliseconds(20),
-            workingPulseInterval: .seconds(10))
-
-        player.setWorking(true)
-        let playCountBeforeSpeaking = workingPulse.playCount
-        player.speak("Speaking now.", localeID: "en-US")
-        try? await Task.sleep(for: .milliseconds(70))
-
-        #expect(workingPulse.playCount == playCountBeforeSpeaking)
-
-        await withCheckedContinuation { continuation in
-            workingPulse.onPlay = {
-                workingPulse.onPlay = nil
-                continuation.resume()
-            }
-            systemSynthesizer.isSpeaking = false
-        }
-
-        #expect(workingPulse.playCount == playCountBeforeSpeaking + 1)
-        player.stopAll()
-    }
-
-    @MainActor @Test func systemPlayer_WhenToolCueArrivesDuringSpeech_DoesNotOverlapNarration() {
-        let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
-        let activitySounds = AgentActivitySoundPlayerSpy()
-        let player = AgentConversationAudioPlayer(
-            speechSynthesizer: systemSynthesizer,
-            activitySoundPlayer: activitySounds)
-
-        player.speak("Speaking now.", localeID: "en-US")
         player.playActivitySound(.toolStarted)
 
-        #expect(activitySounds.sounds.isEmpty)
-        player.stopAll()
-    }
-
-    @MainActor @Test func systemPlayer_WhenToolCuePlays_RestartsThinkingDelay() async {
-        let activitySounds = AgentActivitySoundPlayerSpy()
-        let player = AgentConversationAudioPlayer(
-            activitySoundPlayer: activitySounds,
-            workingPulseInitialDelay: .milliseconds(120),
-            workingPulseInterval: .seconds(10))
-
-        player.setWorking(true)
-        try? await Task.sleep(for: .milliseconds(80))
-        player.playActivitySound(.toolStarted)
-        try? await Task.sleep(for: .milliseconds(70))
-
-        #expect(activitySounds.sounds == [.thinking, .toolStarted])
-
-        await withCheckedContinuation { continuation in
-            activitySounds.onPlay = {
-                activitySounds.onPlay = nil
-                continuation.resume()
-            }
-        }
-        #expect(activitySounds.sounds == [.thinking, .toolStarted, .thinking])
-        player.stopAll()
-    }
-
-    @MainActor @Test func systemPlayer_WhenCloudSpeechIsStillGenerating_KeepsWorkingPulseAudible()
-        async
-    {
-        let cloudSynthesizer = SuspendedAgentElevenLabsSpeechSynthesizer()
-        let workingPulse = AgentActivitySoundPlayerSpy()
-        let player = AgentConversationAudioPlayer(
-            speechConfiguration: {
-                AgentSpeechConfiguration(
-                    provider: .elevenLabs,
-                    elevenLabsAPIKey: "secret",
-                    elevenLabsVoiceID: "voice-1")
-            },
-            elevenLabsSynthesizer: cloudSynthesizer,
-            elevenLabsAudioPlayer: AgentAudioDataPlayerSpy(),
-            activitySoundPlayer: workingPulse,
-            workingPulseInitialDelay: .milliseconds(20),
-            workingPulseInterval: .seconds(10))
-
-        player.setWorking(true)
-        player.speak("Generating speech.", localeID: "en-US")
-        await waitUntil {
-            let cloudRequestIsWaiting = await cloudSynthesizer.isWaiting()
-            return workingPulse.playCount == 1 && cloudRequestIsWaiting
-        }
-
-        #expect(workingPulse.playCount == 1)
-        player.stopAll()
-        await cloudSynthesizer.release()
+        #expect(activityLoop.workingStates == [true])
+        #expect(activityLoop.sounds == [.toolStarted])
     }
 
     @MainActor @Test
-    func systemPlayer_WhenElevenLabsFails_FallsBackToSystemVoice() async {
-        let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
-        let player = AgentConversationAudioPlayer(
-            speechSynthesizer: systemSynthesizer,
-            speechConfiguration: {
-                AgentSpeechConfiguration(
-                    provider: .elevenLabs,
-                    elevenLabsAPIKey: "secret",
-                    elevenLabsVoiceID: "voice-1")
-            },
-            elevenLabsSynthesizer: FailingAgentElevenLabsSpeechSynthesizer(),
-            elevenLabsAudioPlayer: AgentAudioDataPlayerSpy())
+    func orchestrator_WhenSpeechIsSubmitted_QueuesConfigurationSnapshot() {
+        let speechQueue = AgentSpeechQueueSpy()
+        let activityLoop = AgentActivitySoundLoopSpy()
+        let configuration = AgentSpeechConfiguration(
+            provider: .elevenLabs,
+            elevenLabsAPIKey: "secret",
+            elevenLabsVoiceID: "voice-1")
+        let player = AgentConversationAudioOrchestrator(
+            speechConfiguration: { configuration },
+            speechQueue: speechQueue,
+            activityLoop: activityLoop)
 
-        await withCheckedContinuation { continuation in
-            systemSynthesizer.onSpeak = {
-                systemSynthesizer.onSpeak = nil
-                continuation.resume()
-            }
-            player.speak("Still audible.", localeID: "en-GB")
-        }
+        player.speak("  A much better voice.  ", localeID: "en-GB")
 
-        #expect(systemSynthesizer.utterances.map(\.speechString) == ["Still audible."])
-        #expect(systemSynthesizer.utterances.first?.voice?.language == "en-GB")
-        player.stopAll()
+        #expect(speechQueue.requests == [AgentSpeechRequest(
+            text: "A much better voice.",
+            localeID: "en-GB",
+            configuration: configuration)])
     }
 
-    @MainActor @Test func systemPlayer_WhenSpeechChunksQueue_DoesNotInterruptEarlierChunk() {
-        let synthesizer = AgentSystemSpeechSynthesizerSpy()
-        let player = AgentConversationAudioPlayer(speechSynthesizer: synthesizer)
+    @MainActor @Test
+    func orchestrator_WhenSpeechIsPreparing_KeepsActivityAudioUnsuppressed() {
+        let speechQueue = AgentSpeechQueueSpy()
+        let activityLoop = AgentActivitySoundLoopSpy()
+        let player = AgentConversationAudioOrchestrator(
+            speechConfiguration: { .systemDefault },
+            speechQueue: speechQueue,
+            activityLoop: activityLoop)
 
-        player.speak("First sentence.", localeID: "en-US")
-        player.speak("Second sentence.", localeID: "en-US")
+        withExtendedLifetime(player) {
+            speechQueue.emit(.preparing)
+        }
 
-        #expect(synthesizer.utterances.map(\.speechString) == [
-            "First sentence.", "Second sentence.",
+        #expect(activityLoop.suppressionStates == [false])
+    }
+
+    @MainActor @Test
+    func orchestrator_WhenPlaybackStarts_StopsActivityBeforeReportingSpeech() {
+        let speechQueue = AgentSpeechQueueSpy()
+        let activityLoop = AgentActivitySoundLoopSpy()
+        let player = AgentConversationAudioOrchestrator(
+            speechConfiguration: { .systemDefault },
+            speechQueue: speechQueue,
+            activityLoop: activityLoop)
+        var events: [String] = []
+        activityLoop.onSuppression = { events.append("activity:\($0)") }
+        player.onSpeakingChange = { events.append("speech:\($0)") }
+
+        speechQueue.emit(.starting)
+        speechQueue.emit(.playing)
+
+        #expect(events == [
+            "activity:true", "activity:true", "speech:true",
         ])
-        #expect(synthesizer.stopCount == 0)
+    }
+
+    @MainActor @Test
+    func orchestrator_WhenPlaybackWaitsForAnotherSynthesis_ResumesActivityAndReportsSilence() {
+        let speechQueue = AgentSpeechQueueSpy()
+        let activityLoop = AgentActivitySoundLoopSpy()
+        let player = AgentConversationAudioOrchestrator(
+            speechConfiguration: { .systemDefault },
+            speechQueue: speechQueue,
+            activityLoop: activityLoop)
+        var speechStates: [Bool] = []
+        player.onSpeakingChange = { speechStates.append($0) }
+
+        speechQueue.emit(.playing)
+        speechQueue.emit(.preparing)
+
+        #expect(activityLoop.suppressionStates == [true, false])
+        #expect(speechStates == [true, false])
+    }
+
+    @MainActor @Test
+    func orchestrator_WhenStopped_CancelsBothIndependentPipelines() {
+        let speechQueue = AgentSpeechQueueSpy()
+        let activityLoop = AgentActivitySoundLoopSpy()
+        let player = AgentConversationAudioOrchestrator(
+            speechConfiguration: { .systemDefault },
+            speechQueue: speechQueue,
+            activityLoop: activityLoop)
+
         player.stopAll()
+
+        #expect(speechQueue.stopCount == 1)
+        #expect(activityLoop.stopCount == 1)
     }
 
     @MainActor @Test func lifecycle_WhenResponseSentencesStream_ReadsEachBeforeTurnCompletes()
@@ -356,6 +231,40 @@ struct AgentConversationAudioPresenterTests {
             result: AgentRunResult(stopReason: .endTurn)))
 
         #expect(player.spoken.map(\.text) == ["First sentence.", "Second sentence."])
+    }
+
+    @MainActor @Test
+    func lifecycle_WhenWorkFollowsAnUnpunctuatedMessage_QueuesSpeechBeforeTheWorkCue() throws {
+        let player = AgentConversationAudioSpy()
+        let presenter = AgentConversationAudioPresenter(
+            player: player,
+            readsReplies: { true },
+            playsWorkingSound: { true },
+            localeID: { "en-US" })
+        let runID = UUID()
+        presenter.handle(.started(
+            runID: runID,
+            profile: try agentProfile(),
+            prompt: "Question"))
+
+        presenter.handle(.event(
+            runID: runID,
+            event: .agentMessageDelta(
+                messageID: "progress",
+                text: "Let me check this")))
+        presenter.handle(.event(
+            runID: runID,
+            event: .toolCall(AgentToolCall(
+                id: "read",
+                title: "Read files",
+                kind: .read,
+                status: .inProgress))))
+
+        #expect(player.events == [
+            .speech("Let me check this"),
+            .activity(.toolStarted),
+        ])
+        presenter.shutdown()
     }
 
     @MainActor @Test func lifecycle_WhenOutputPauses_ReadsIncompleteSentenceBeforeTurnCompletes()

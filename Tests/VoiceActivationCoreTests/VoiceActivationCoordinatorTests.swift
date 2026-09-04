@@ -999,6 +999,27 @@ struct VoiceActivationCoordinatorTests {
     }
 
     @MainActor
+    @Test func agentConversation_WhenReplyPlaybackStarts_DoesNotRestartRecognition() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var turnCompleted = false
+        fixture.coordinator.onAgentRunEvent = { event in
+            if case .turnCompleted = event {
+                turnCompleted = true
+            }
+        }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent explain this", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        await fixture.agentRunner.complete(runIndex: 0)
+        await waitUntil { turnCompleted }
+        let startCount = fixture.speech.startCount
+
+        fixture.coordinator.setAgentSpeechOutputActive(true)
+
+        #expect(fixture.speech.startCount == startCount)
+    }
+
+    @MainActor
     @Test func agentConversation_WhenReplyIsBeingRead_LetsStopEndConversation() async throws {
         let fixture = try Fixture(profiles: [try makeAgentProfile()])
         var speechCancellationCount = 0

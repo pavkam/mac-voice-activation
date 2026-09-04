@@ -42,17 +42,21 @@ private actor GatedElevenLabsVoicePreviewSynthesizer: ElevenLabsSpeechSynthesizi
 private final class ElevenLabsVoicePreviewAudioPlayerSpy: AgentAudioDataPlaying {
     private(set) var playedData: [Data] = []
     private(set) var stopCount = 0
-    var isPlaying = false
     var acceptsAudio = true
 
-    func play(_ data: Data) -> Bool {
+    func play(
+        _ data: Data,
+        completion: @escaping @MainActor (Bool) -> Void) -> Bool
+    {
         playedData.append(data)
+        if acceptsAudio {
+            completion(true)
+        }
         return acceptsAudio
     }
 
     func stop() {
         stopCount += 1
-        isPlaying = false
     }
 }
 

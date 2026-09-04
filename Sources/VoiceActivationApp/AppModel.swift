@@ -101,7 +101,7 @@ final class AppModel {
             elevenLabsAPIKey: storedElevenLabsAPIKey,
             elevenLabsVoiceID: preferences.elevenLabsVoiceID)
         let resolvedAgentConversationAudioPlayer = agentConversationAudioPlayer
-            ?? AgentConversationAudioPlayer(speechConfiguration: {
+            ?? AgentConversationAudioOrchestrator(speechConfiguration: {
                 agentSpeechSettingsState.configuration
             })
 

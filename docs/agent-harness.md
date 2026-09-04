@@ -324,15 +324,17 @@ cooldown.
 Settings independently enable spoken agent replies and quiet activity sounds.
 Reply speech strips Markdown formatting; fenced code is announced but not read
 character by character. Complete sentences enter a FIFO speech queue as soon as
-they stream from the agent. A fixed 350-millisecond deadline flushes unfinished
-text after its first buffered fragment; later deltas cannot postpone that
+they stream from the agent. A message change or transition to thought, tool,
+plan, or permission work flushes unfinished progress text first. A fixed
+350-millisecond deadline remains the fallback; later deltas cannot postpone that
 deadline. Turn completion flushes only the remainder. The selected provider
 is either the locale-matching macOS voice or an ElevenLabs voice selected from
 the account's paginated voice catalog and using its
-low-latency streaming endpoint and `eleven_flash_v2_5`; up to two synthesis
-requests run ahead while completed audio still plays in strict order. A failed
-cloud request falls back to the macOS voice. ElevenLabs audio and credentials
-remain in memory and Keychain respectively, and response text is sent to ElevenLabs for synthesis.
+low-latency endpoint and `eleven_flash_v2_5`. Up to two complete segment
+syntheses run outside the main actor while prepared audio still plays in strict
+order. The app does not decode a partial MP3 response. A failed cloud request
+falls back to the macOS voice without discarding later segments. ElevenLabs
+audio and credentials remain in memory and Keychain respectively.
 A short **Test voice** preview uses the same synthesis path; manual Voice ID entry
 remains available when catalog discovery fails.
 
@@ -344,8 +346,10 @@ distinct one-shot cues; duplicate ACP status updates do not replay them. Cloud
 synthesis does not silence the thinking pulse before audio exists. It stops for
 permission choices, actual narration, cancellation, completion, and failure,
 then resumes after a 1.6-second delay if work continues after narration. When
-cloud audio becomes ready, narration state stops any active effect before
-playback and leaves a short buffer handoff so the opening syllable is not masked.
+cloud audio becomes ready, the queue enters an explicit starting state, stops
+the active effect, and begins delegate-tracked playback. Recognition stays alive
+at playback start, avoiding a synchronous audio-engine rebuild in front of the
+first syllable.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached

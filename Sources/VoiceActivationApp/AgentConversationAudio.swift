@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
 // SPDX-License-Identifier: MIT
 
-import AppKit
-import AVFoundation
+import Foundation
 import VoiceActivationCore
 
 @MainActor
@@ -17,222 +16,100 @@ protocol AgentConversationAudioPlaying: AnyObject {
 }
 
 @MainActor
-protocol AgentSystemSpeechSynthesizing: AnyObject {
-    var isSpeaking: Bool { get }
-
-    func speak(_ utterance: AVSpeechUtterance)
-    func stopSpeaking(at boundary: AVSpeechBoundary) -> Bool
-}
-
-extension AVSpeechSynthesizer: AgentSystemSpeechSynthesizing {}
-
-struct AgentSpeechConfiguration: Equatable {
-    let provider: AgentSpeechProvider
-    let elevenLabsAPIKey: String
-    let elevenLabsVoiceID: String
-
-    static let systemDefault = AgentSpeechConfiguration(
-        provider: .system,
-        elevenLabsAPIKey: "",
-        elevenLabsVoiceID: "")
-}
-
-@MainActor
-final class AgentConversationAudioPlayer: AgentConversationAudioPlaying {
+final class AgentConversationAudioOrchestrator: AgentConversationAudioPlaying {
     var onSpeakingChange: ((Bool) -> Void)?
 
-    private let speechSynthesizer: any AgentSystemSpeechSynthesizing
     private let speechConfiguration: @MainActor () -> AgentSpeechConfiguration
-    private let elevenLabsPlayer: ElevenLabsSpeechOutputPlayer
-    private let activitySoundPlayer: any AgentActivitySoundPlaying
-    private let workingPulseInitialDelay: Duration
-    private let workingPulseInterval: Duration
-    private var speechMonitorTask: Task<Void, Never>?
-    private var workingTask: Task<Void, Never>?
-    private var workingRequested = false
-    private var nativeSpeechIsActive = false
-    private var elevenLabsSpeechIsActive = false
+    private let speechQueue: any AgentSpeechQueueing
+    private let activityLoop: any AgentActivitySoundLooping
     private var isReportingSpeech = false
 
     init(
-        speechSynthesizer: any AgentSystemSpeechSynthesizing = AVSpeechSynthesizer(),
         speechConfiguration: @escaping @MainActor () -> AgentSpeechConfiguration = {
             .systemDefault
         },
         elevenLabsSynthesizer: any ElevenLabsSpeechSynthesizing = ElevenLabsSpeechClient(),
         elevenLabsAudioPlayer: any AgentAudioDataPlaying = SystemAgentAudioDataPlayer(),
+        systemSpeechPlayer: any AgentSystemSpeechPlaying = SystemAgentSpeechPlayer(),
         activitySoundPlayer: any AgentActivitySoundPlaying = SystemAgentActivitySoundPlayer(),
         workingPulseInitialDelay: Duration = .seconds(1.6),
         workingPulseInterval: Duration = .seconds(3.2))
     {
-        self.speechSynthesizer = speechSynthesizer
         self.speechConfiguration = speechConfiguration
-        elevenLabsPlayer = ElevenLabsSpeechOutputPlayer(
+        speechQueue = AgentSpeechQueue(
             synthesizer: elevenLabsSynthesizer,
-            audioPlayer: elevenLabsAudioPlayer)
-        self.activitySoundPlayer = activitySoundPlayer
-        self.workingPulseInitialDelay = workingPulseInitialDelay
-        self.workingPulseInterval = workingPulseInterval
-        elevenLabsPlayer.onSpeakingChange = { [weak self] speaking in
-            self?.elevenLabsSpeechChanged(speaking)
-        }
-        elevenLabsPlayer.onFailure = { [weak self] text, localeID in
-            self?.speakWithSystemVoice(text, localeID: localeID)
-        }
+            audioPlayer: elevenLabsAudioPlayer,
+            systemSpeechPlayer: systemSpeechPlayer)
+        activityLoop = AgentActivitySoundLoop(
+            player: activitySoundPlayer,
+            initialDelay: workingPulseInitialDelay,
+            interval: workingPulseInterval)
+        observeSpeechQueue()
+    }
+
+    init(
+        speechConfiguration: @escaping @MainActor () -> AgentSpeechConfiguration,
+        speechQueue: any AgentSpeechQueueing,
+        activityLoop: any AgentActivitySoundLooping)
+    {
+        self.speechConfiguration = speechConfiguration
+        self.speechQueue = speechQueue
+        self.activityLoop = activityLoop
+        observeSpeechQueue()
     }
 
     func setWorking(_ working: Bool) {
-        guard workingRequested != working else { return }
-        workingRequested = working
-        if working, !isReportingSpeech {
-            startWorkingPulseImmediately()
-        } else {
-            refreshWorkingPulse()
-        }
+        activityLoop.setWorking(working)
     }
 
     func playActivitySound(_ sound: AgentActivitySound) {
-        guard !isReportingSpeech else { return }
-        workingTask?.cancel()
-        workingTask = nil
-        activitySoundPlayer.play(sound)
-        scheduleWorkingPulseIfNeeded()
+        activityLoop.play(sound)
     }
 
     func speak(_ text: String, localeID: String) {
         let value = String(text.prefix(20_000))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
-
-        let configuration = speechConfiguration()
-        if configuration.provider == .elevenLabs,
-           !configuration.elevenLabsAPIKey.isEmpty,
-           !configuration.elevenLabsVoiceID.isEmpty
-        {
-            elevenLabsPlayer.speak(
-                value,
-                apiKey: configuration.elevenLabsAPIKey,
-                voiceID: configuration.elevenLabsVoiceID,
-                localeID: localeID)
-            return
-        }
-
-        speakWithSystemVoice(value, localeID: localeID)
+        speechQueue.enqueue(AgentSpeechRequest(
+            text: value,
+            localeID: localeID,
+            configuration: speechConfiguration()))
     }
 
     func stopSpeaking() {
-        speechMonitorTask?.cancel()
-        speechMonitorTask = nil
-        if speechSynthesizer.isSpeaking {
-            _ = speechSynthesizer.stopSpeaking(at: .immediate)
-        }
-        nativeSpeechIsActive = false
-        elevenLabsPlayer.stop()
-        updateReportingSpeech()
+        speechQueue.stop()
     }
 
     func stopAll() {
-        workingRequested = false
-        refreshWorkingPulse()
-        stopSpeaking()
+        activityLoop.stop()
+        speechQueue.stop()
     }
 
-    private func refreshWorkingPulse() {
-        workingTask?.cancel()
-        workingTask = nil
-        activitySoundPlayer.stop()
-        scheduleWorkingPulseIfNeeded()
-    }
-
-    private func startWorkingPulseImmediately() {
-        workingTask?.cancel()
-        workingTask = nil
-        activitySoundPlayer.stop()
-        guard workingRequested, !isReportingSpeech else { return }
-        activitySoundPlayer.play(.thinking)
-        scheduleWorkingPulseIfNeeded(after: workingPulseInterval)
-    }
-
-    private func scheduleWorkingPulseIfNeeded(after delay: Duration? = nil) {
-        guard workingRequested, !isReportingSpeech else { return }
-
-        workingTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                try await Task.sleep(for: delay ?? self.workingPulseInitialDelay)
-            } catch {
-                return
-            }
-
-            while !Task.isCancelled, self.workingRequested, !self.isReportingSpeech {
-                self.activitySoundPlayer.play(.thinking)
-                do {
-                    try await Task.sleep(for: self.workingPulseInterval)
-                } catch {
-                    return
-                }
-            }
+    private func observeSpeechQueue() {
+        speechQueue.onStateChange = { [weak self] state in
+            self?.speechStateChanged(state)
         }
     }
 
-    private func speakWithSystemVoice(_ value: String, localeID: String) {
-        let utterance = AVSpeechUtterance(string: value)
-        utterance.voice = AVSpeechSynthesisVoice(language: localeID)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.94
-        utterance.pitchMultiplier = 1.02
-        utterance.preUtteranceDelay = 0.08
-        nativeSpeechIsActive = true
-        updateReportingSpeech()
-        speechSynthesizer.speak(utterance)
-        guard speechMonitorTask == nil else { return }
-        speechMonitorTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(100))
-            } catch {
-                return
-            }
-            while !Task.isCancelled, let self, self.speechSynthesizer.isSpeaking {
-                do {
-                    try await Task.sleep(for: .milliseconds(100))
-                } catch {
-                    return
-                }
-            }
-            guard !Task.isCancelled, let self else { return }
-            self.speechMonitorTask = nil
-            self.nativeSpeechIsActive = false
-            self.updateReportingSpeech()
-        }
-    }
-
-    private func elevenLabsSpeechChanged(_ speaking: Bool) {
-        elevenLabsSpeechIsActive = speaking
-        updateReportingSpeech()
-    }
-
-    private func updateReportingSpeech() {
-        let speaking = nativeSpeechIsActive || elevenLabsSpeechIsActive
+    private func speechStateChanged(_ state: AgentSpeechQueueState) {
+        activityLoop.setSpeechSuppressed(state == .starting || state == .playing)
+        let speaking = state == .playing
         guard speaking != isReportingSpeech else { return }
         isReportingSpeech = speaking
-        refreshWorkingPulse()
         onSpeakingChange?(speaking)
     }
 }
 
 @MainActor
 final class AgentConversationAudioPresenter {
-    private static let maximumReplyCharacters = 20_000
-    private static let speechFlushDelay = Duration.milliseconds(350)
-
     private let player: any AgentConversationAudioPlaying
     private let readsReplies: () -> Bool
     private let playsWorkingSound: () -> Bool
     private let localeID: () -> String
+    private let narration: AgentNarrationSegmenter
     private var runID: UUID?
-    private var reply = ""
     private var activityIsWorking = false
     private var toolSoundPhases: [String: ToolSoundPhase] = [:]
-    private var speechFlushTask: Task<Void, Never>?
 
     init(
         player: any AgentConversationAudioPlaying,
@@ -244,21 +121,24 @@ final class AgentConversationAudioPresenter {
         self.readsReplies = readsReplies
         self.playsWorkingSound = playsWorkingSound
         self.localeID = localeID
+        narration = AgentNarrationSegmenter()
+        narration.onSegment = { [player] text in
+            guard readsReplies() else { return }
+            player.speak(text, localeID: localeID())
+        }
     }
 
     func handle(_ lifecycleEvent: AgentRunLifecycleEvent) {
         switch lifecycleEvent {
         case let .started(runID, _, _):
-            cancelSpeechFlush()
+            narration.reset()
             self.runID = runID
-            reply = ""
             toolSoundPhases.removeAll(keepingCapacity: true)
             player.stopSpeaking()
             updateWorking(true)
         case let .followUpSubmitted(runID, _):
             guard self.runID == runID else { return }
-            cancelSpeechFlush()
-            reply = ""
+            narration.reset()
             toolSoundPhases.removeAll(keepingCapacity: true)
             player.stopSpeaking()
             updateWorking(true)
@@ -266,13 +146,12 @@ final class AgentConversationAudioPresenter {
             break
         case let .turnStarted(runID):
             guard self.runID == runID else { return }
-            cancelSpeechFlush()
-            reply = ""
+            narration.reset()
             toolSoundPhases.removeAll(keepingCapacity: true)
             updateWorking(true)
         case let .turnCancellationStarted(runID):
             guard self.runID == runID else { return }
-            cancelSpeechFlush()
+            narration.reset()
             player.stopSpeaking()
             updateWorking(false)
         case let .event(runID, event):
@@ -280,55 +159,55 @@ final class AgentConversationAudioPresenter {
             handle(event)
         case let .turnCompleted(runID, result):
             guard self.runID == runID else { return }
-            cancelSpeechFlush()
+            if result.stopReason == .cancelled {
+                narration.reset()
+                player.stopSpeaking()
+            } else if readsReplies() {
+                narration.finish()
+            } else {
+                narration.reset()
+            }
             updateWorking(false)
-            let remainingReply = reply
-            reply = ""
-            guard result.stopReason != .cancelled, readsReplies() else { return }
-            speak(remainingReply)
         case let .turnFailed(runID, _):
             guard self.runID == runID else { return }
-            cancelSpeechFlush()
+            if readsReplies() {
+                narration.finish()
+            } else {
+                narration.reset()
+            }
             updateWorking(false)
-            let remainingReply = reply
-            reply = ""
-            guard readsReplies() else { return }
-            speak(remainingReply)
         case let .completed(runID, result):
             guard self.runID == runID else { return }
-            cancelSpeechFlush()
+            narration.reset()
             activityIsWorking = false
             player.stopAll()
             self.runID = nil
-            reply = ""
             toolSoundPhases.removeAll(keepingCapacity: true)
             if result.stopReason == .cancelled, readsReplies() {
                 player.speak("Stopped.", localeID: localeID())
             }
         case let .failed(runID, _):
             guard self.runID == runID else { return }
-            cancelSpeechFlush()
+            narration.reset()
             activityIsWorking = false
             player.stopAll()
             self.runID = nil
-            reply = ""
             toolSoundPhases.removeAll(keepingCapacity: true)
         }
     }
 
     func shutdown() {
-        cancelSpeechFlush()
+        narration.reset()
         activityIsWorking = false
         player.stopAll()
         runID = nil
-        reply = ""
         toolSoundPhases.removeAll(keepingCapacity: true)
     }
 
     func refreshSettings() {
         player.setWorking(activityIsWorking && playsWorkingSound())
         if !readsReplies() {
-            cancelSpeechFlush()
+            narration.reset()
             player.stopSpeaking()
         }
     }
@@ -340,29 +219,28 @@ final class AgentConversationAudioPresenter {
 
     private func handle(_ event: AgentRunEvent) {
         switch event {
-        case let .agentMessageDelta(_, text):
-            appendReply(text)
-            speakReadyReply()
-            boundReplyBuffer()
-            scheduleSpeechFlush()
+        case let .agentMessageDelta(messageID, text):
+            if readsReplies() {
+                narration.append(messageID: messageID, text: text)
+            }
             updateWorking(true)
         case .permissionRequested:
+            narration.markSemanticBoundary()
             updateWorking(false)
         case let .toolCall(tool):
+            narration.markSemanticBoundary()
             handleToolSound(id: tool.id, status: tool.status)
             updateWorking(true)
         case let .toolCallUpdate(tool):
+            narration.markSemanticBoundary()
             handleToolSound(id: tool.id, status: tool.status)
             updateWorking(true)
         case .thoughtDelta, .plan, .connected:
+            narration.markSemanticBoundary()
             updateWorking(true)
         case .metadata, .diagnostic, .unknown, .deliveryNotice:
             break
         }
-    }
-
-    private func appendReply(_ text: String) {
-        reply.append(text)
     }
 
     private func handleToolSound(id: String, status: AgentToolCallStatus?) {
@@ -373,55 +251,9 @@ final class AgentConversationAudioPresenter {
         player.playActivitySound(phase.sound)
     }
 
-    private func speakReadyReply() {
-        guard readsReplies() else { return }
-        while let boundary = Self.firstSpeechBoundary(in: reply) {
-            let chunk = String(reply[..<boundary])
-            reply.removeSubrange(..<boundary)
-            speak(chunk)
-        }
-    }
-
-    private func speak(_ markdown: String) {
-        let spokenText = AgentMarkdownFormatter.spokenText(from: markdown)
-        guard !spokenText.isEmpty else { return }
-        player.speak(spokenText, localeID: localeID())
-    }
-
-    private func boundReplyBuffer() {
-        guard reply.count > Self.maximumReplyCharacters else { return }
-        if let activeFence = Self.unclosedFenceMarker(in: reply) {
-            reply = "\(activeFence)\n"
-            return
-        }
-        reply = String(reply.suffix(Self.maximumReplyCharacters))
-    }
-
-    private func scheduleSpeechFlush() {
-        guard speechFlushTask == nil,
-              readsReplies(), !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              Self.unclosedFenceMarker(in: reply) == nil,
-              let runID
-        else { return }
-
-        speechFlushTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: Self.speechFlushDelay)
-            } catch {
-                return
-            }
-            guard let self, self.runID == runID, self.readsReplies() else { return }
-            self.speechFlushTask = nil
-            guard Self.unclosedFenceMarker(in: self.reply) == nil else { return }
-            let pendingReply = self.reply
-            self.reply = ""
-            self.speak(pendingReply)
-        }
-    }
-
-    private func cancelSpeechFlush() {
-        speechFlushTask?.cancel()
-        speechFlushTask = nil
+    private func updateWorking(_ working: Bool) {
+        activityIsWorking = working
+        player.setWorking(working && playsWorkingSound())
     }
 
     private enum ToolSoundPhase: Equatable {
@@ -447,84 +279,5 @@ final class AgentConversationAudioPresenter {
             case .failed: .toolFailed
             }
         }
-    }
-
-    private static func firstSpeechBoundary(in text: String) -> String.Index? {
-        var activeFence: String?
-        var lineStart = text.startIndex
-
-        while lineStart < text.endIndex {
-            let newline = text[lineStart...].firstIndex(of: "\n")
-            let lineEnd = newline ?? text.endIndex
-            let trimmedLine = text[lineStart..<lineEnd]
-                .drop(while: { $0 == " " || $0 == "\t" })
-            let wasInsideFence = activeFence != nil
-
-            if let fence = activeFence {
-                if trimmedLine.hasPrefix(fence) {
-                    activeFence = nil
-                }
-            } else if let fence = fenceMarker(in: trimmedLine) {
-                activeFence = fence
-            }
-
-            if !wasInsideFence, activeFence == nil {
-                var index = lineStart
-                while index < lineEnd {
-                    let character = text[index]
-                    let boundary = text.index(after: index)
-                    if (character == "." || character == "!" || character == "?"),
-                       boundary == lineEnd || text[boundary].isWhitespace
-                    {
-                        return boundary
-                    }
-                    index = boundary
-                }
-            }
-
-            guard let newline else { break }
-            let boundary = text.index(after: newline)
-            if activeFence == nil {
-                return boundary
-            }
-            lineStart = boundary
-        }
-        return nil
-    }
-
-    private static func unclosedFenceMarker(in text: String) -> String? {
-        var activeFence: String?
-        var lineStart = text.startIndex
-
-        while lineStart < text.endIndex {
-            let newline = text[lineStart...].firstIndex(of: "\n")
-            let lineEnd = newline ?? text.endIndex
-            let trimmedLine = text[lineStart..<lineEnd]
-                .drop(while: { $0 == " " || $0 == "\t" })
-
-            if let fence = activeFence {
-                if trimmedLine.hasPrefix(fence) {
-                    activeFence = nil
-                }
-            } else if let fence = fenceMarker(in: trimmedLine) {
-                activeFence = fence
-            }
-
-            guard let newline else { break }
-            lineStart = text.index(after: newline)
-        }
-
-        return activeFence
-    }
-
-    private static func fenceMarker(in line: Substring) -> String? {
-        if line.hasPrefix("```") { return "```" }
-        if line.hasPrefix("~~~") { return "~~~" }
-        return nil
-    }
-
-    private func updateWorking(_ working: Bool) {
-        activityIsWorking = working
-        player.setWorking(working && playsWorkingSound())
     }
 }

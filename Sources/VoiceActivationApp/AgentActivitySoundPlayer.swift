@@ -40,13 +40,12 @@ final class AppAgentActivitySoundAssets: AgentActivitySoundAssetPlaying {
             sound = loadedSound
         }
         sound.volume = volume
-        play(sound)
-        return true
+        return play(sound)
     }
 
     func playSystem(named name: String) {
         guard let sound = NSSound(named: NSSound.Name(name)) else { return }
-        play(sound)
+        _ = play(sound)
     }
 
     func stop() {
@@ -54,10 +53,14 @@ final class AppAgentActivitySoundAssets: AgentActivitySoundAssetPlaying {
         currentSound = nil
     }
 
-    private func play(_ sound: NSSound) {
+    private func play(_ sound: NSSound) -> Bool {
         currentSound?.stop()
         currentSound = sound
-        sound.play()
+        guard sound.play() else {
+            currentSound = nil
+            return false
+        }
+        return true
     }
 }
 

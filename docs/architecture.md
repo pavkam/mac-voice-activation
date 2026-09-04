@@ -175,19 +175,28 @@ bottom-follow policy tracks geometry throughout user interaction and changes
 only on user-driven scrolling; output growth and animated programmatic scrolling
 cannot disable it.
 
-`AgentConversationAudioPresenter` observes typed lifecycle events through an
-injected playback boundary. It collects only user-facing agent message deltas,
-converts complete Markdown sentences to speech immediately, and gives unfinished
-text a 350-millisecond maximum wait that continuous token delivery cannot reset.
-Turn completion flushes only the remainder. The FIFO output boundary selects
-`AVSpeechSynthesizer` or ElevenLabs, prefetches at most two cloud syntheses while
-preserving playback order, falls back to the system voice after a cloud failure,
-and cancels stale synthesis by generation. Permission prompts and actual
-narration pause the delayed thinking pulse; pending cloud synthesis does not.
-Narration state is published before cloud playback, stops an active effect, and
-allows its audio buffer to drain before the first spoken sample. A
-resolved choice or completed utterance restarts its delay when work is still
-active. Spoken conversation cancellation gets a short acknowledgement.
+`AgentConversationAudioPresenter` observes typed lifecycle events and sends
+user-facing message deltas to `AgentNarrationSegmenter`. Complete Markdown
+sentences enter speech immediately. A changed message identifier or transition
+to thought, tool, plan, or permission work flushes an unfinished progress
+message before that work starts. The 350-millisecond deadline is the fallback
+for providers that expose neither punctuation nor a semantic boundary.
+
+`AgentSpeechQueue` owns speech order, synthesis lookahead, playback, fallback,
+and cancellation epochs. It starts up to two ElevenLabs requests outside the
+main actor and may receive them out of order, but starts audio only in submission
+order. Queue state is explicit: `preparing`, `starting`, `playing`, or
+`idle`. Cloud preparation therefore does not silence activity audio, while
+`starting` stops the current effect before playback begins. Native speech and
+cloud audio report completion through framework delegates instead of polling
+`isSpeaking` or `isPlaying`.
+
+`AgentActivitySoundLoop` owns only working and tool sounds. It starts
+immediately with the accepted request, repeats while speech is preparing, pauses
+for audible narration, and resumes after its initial delay if work continues.
+`AgentConversationAudioOrchestrator` is the small arbitration boundary between
+that loop and the speech queue; it does not synthesize, poll, or schedule audio.
+Spoken conversation cancellation gets a short acknowledgement.
 An injected, paginated ElevenLabs catalog boundary discovers named voices, while
 the preview boundary reuses speech synthesis without coupling Settings to
 `NSSound`. Tests inject silent catalog, synthesizer, audio-data, preview, and
@@ -225,6 +234,8 @@ resource, and recovery contract.
 - During synthesized reply playback, the first non-empty recognized utterance
   stops narration and continues through the normal follow-up finalization path.
   Exact cancellation words still stop playback and close the conversation.
+  Playback start does not tear down and rebuild recognition; completion starts a
+  fresh recognition session to clear captured output before the next utterance.
   Conversation capture requests best-effort input voice processing to reduce
   synthesized output echo without making unsupported hardware a capture error.
 - `LaunchAtLoginSetting` reads and changes `SMAppService.mainApp` registration;

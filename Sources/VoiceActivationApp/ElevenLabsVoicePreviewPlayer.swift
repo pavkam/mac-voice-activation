@@ -24,6 +24,7 @@ final class ElevenLabsVoicePreviewPlayer: ElevenLabsVoicePreviewing {
     private let synthesizer: any ElevenLabsSpeechSynthesizing
     private let audioPlayer: any AgentAudioDataPlaying
     private var generation = 0
+    private var playbackContinuation: CheckedContinuation<Void, any Error>?
 
     init(
         synthesizer: any ElevenLabsSpeechSynthesizing = ElevenLabsSpeechClient(),
@@ -45,25 +46,28 @@ final class ElevenLabsVoicePreviewPlayer: ElevenLabsVoicePreviewing {
         guard generation == activeGeneration else {
             throw CancellationError()
         }
-        guard audioPlayer.play(data) else {
-            throw ElevenLabsVoicePreviewError.playbackFailed
-        }
-
-        do {
-            while audioPlayer.isPlaying {
-                try await Task.sleep(for: .milliseconds(50))
-                guard generation == activeGeneration else {
-                    throw CancellationError()
-                }
+        try await withCheckedThrowingContinuation { continuation in
+            playbackContinuation = continuation
+            guard audioPlayer.play(data, completion: { [weak self] _ in
+                self?.finishPlayback(generation: activeGeneration)
+            }) else {
+                playbackContinuation = nil
+                continuation.resume(throwing: ElevenLabsVoicePreviewError.playbackFailed)
+                return
             }
-        } catch {
-            audioPlayer.stop()
-            throw error
         }
     }
 
     func stop() {
         generation &+= 1
         audioPlayer.stop()
+        playbackContinuation?.resume(throwing: CancellationError())
+        playbackContinuation = nil
+    }
+
+    private func finishPlayback(generation activeGeneration: Int) {
+        guard generation == activeGeneration else { return }
+        playbackContinuation?.resume()
+        playbackContinuation = nil
     }
 }

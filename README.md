@@ -152,12 +152,14 @@ Settings can read replies aloud as they stream, using either the matching macOS
 system voice or an ElevenLabs voice loaded from the account catalog. The
 selected voice can be previewed before saving, with manual Voice ID entry as a
 fallback when the catalog is unavailable. Complete sentences are queued
-immediately; unfinished text is queued within 350 milliseconds even while more
-tokens keep streaming. ElevenLabs prefetches upcoming speech while preserving
-playback order. The first thinking cue plays as soon as a request is accepted,
-before ACP startup; later pulses continue during cloud synthesis and pause only
-while speech plays. Before ElevenLabs playback begins, active effects stop and a
-short audio handoff protects the first syllable. A bundled sound palette distinguishes listening,
+immediately; unfinished progress text is also queued when tool or thought work
+starts, with a 350-millisecond fallback when no semantic boundary arrives.
+ElevenLabs prepares two segments concurrently outside the UI actor while
+preserving playback order. The first thinking cue plays as soon as a request is
+accepted, before ACP startup; later pulses continue during cloud synthesis and
+pause only while speech plays. Active effects stop before delegate-tracked
+playback begins, without rebuilding the microphone session in front of the first
+syllable. A bundled sound palette distinguishes listening,
 thinking, and tool transitions without making runtime effect-generation calls.
 Voice cancellation says “Stopped” when
 reply speech is enabled, and tests inject silent audio players, so CI never emits

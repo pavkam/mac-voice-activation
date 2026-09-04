@@ -272,7 +272,13 @@ public final class VoiceActivationCoordinator {
         guard agentSpeechOutputActive != active else { return }
         agentSpeechOutputActive = active
         guard isAgentConversationActive, !pushToTalkActive else { return }
-        startConversationListening()
+        if active {
+            resetConversationCapture()
+            conversationUtterance = ""
+            currentTranscript = ""
+        } else {
+            startConversationListening()
+        }
     }
 
     public func resolveAgentPermission(
