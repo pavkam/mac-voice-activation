@@ -459,6 +459,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             case .cancelled, .timedOut:
                 record.suppressesExitDiagnostic = true
                 await transport.terminate()
+                await transport.closeReadStreams()
             case .connected, .failed:
                 break
             }

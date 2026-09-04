@@ -380,14 +380,16 @@ struct ACPAgentRunnerTests {
 
     @Test(.timeLimit(.minutes(1)))
     func run_WhenInitialConnectionStopsResponding_RestartsWithFreshConnection() async throws {
-        let stalledTransport = FakeACPTransport()
+        let stalledTransport = FakeACPTransport(finishesReadStreamsOnTermination: false)
         let replacementTransport = FakeACPTransport()
         let factory = RunnerTransportFactory(
             transports: [stalledTransport, replacementTransport])
         let clock = ManualACPAgentRunnerClock()
+        let drainClock = ManualACPAgentRunnerClock()
         let runner = ACPAgentRunner(
             transportFactory: factory,
             startupClock: clock,
+            drainClock: drainClock,
             testingHooks: ACPAgentRunnerTestingHooks())
         let recorder = RunnerEventRecorder()
         let profileID = UUID()
@@ -426,7 +428,10 @@ struct ACPAgentRunnerTests {
         }
         #expect(didRetry)
         guard didRetry else {
-            await stalledTransport.terminate()
+            activeRun.cancel()
+            await stalledTransport.closeReadStreams()
+            await drainClock.advance()
+            await replacementTransport.closeReadStreams()
             _ = try? await activeRun.value
             return
         }
@@ -443,6 +448,7 @@ struct ACPAgentRunnerTests {
 
         #expect(try await activeRun.value == AgentRunResult(stopReason: .endTurn))
         #expect(await stalledTransport.observedTerminationCount() == 1)
+        #expect(await stalledTransport.observedReadStreamCloseCount() == 1)
         let events = await recorder.recordedEvents()
         #expect(events == [
             .metadata(
@@ -451,6 +457,53 @@ struct ACPAgentRunnerTests {
             .connected(agentName: "Test Agent", sessionID: "replacement-session"),
         ])
         await runner.shutdown()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancel_WhenStartupRetainsReadStreams_ClosesThemWithoutWaitingForDeadline() async throws {
+        let transport = FakeACPTransport(finishesReadStreamsOnTermination: false)
+        let factory = RunnerTransportFactory(transports: [transport])
+        let startupClock = ManualACPAgentRunnerClock()
+        let cancellationClock = ManualACPAgentRunnerClock()
+        let runner = ACPAgentRunner(
+            transportFactory: factory,
+            clock: cancellationClock,
+            startupClock: startupClock,
+            testingHooks: ACPAgentRunnerTestingHooks())
+        let activeRun = run(
+            runner,
+            profileID: UUID(),
+            configuration: try makeConfiguration())
+
+        let didStart = await waitUntil {
+            let didCreateTransport = await factory.createdConfigurations().count == 1
+            let isWaitingForStartup = await startupClock.isSleeping()
+            return didCreateTransport && isWaitingForStartup
+        }
+        #expect(didStart)
+        guard didStart else {
+            activeRun.cancel()
+            await transport.closeReadStreams()
+            _ = try? await activeRun.value
+            return
+        }
+
+        activeRun.cancel()
+        let cancellation = Task { await runner.cancel() }
+        let didCloseStreams = await waitUntil {
+            await transport.observedReadStreamCloseCount() == 1
+        }
+        #expect(didCloseStreams)
+        if !didCloseStreams {
+            await transport.closeReadStreams()
+        }
+
+        await #expect(throws: CancellationError.self) {
+            try await activeRun.value
+        }
+        await cancellation.value
+        #expect(await transport.observedTerminationCount() == 1)
+        #expect(await cancellationClock.observedDurations() == [.seconds(2)])
     }
 
     @Test(.timeLimit(.minutes(1)))

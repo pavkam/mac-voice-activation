@@ -72,7 +72,7 @@ final class SystemAgentActivitySoundPlayer: AgentActivitySoundPlaying {
     func play(_ sound: AgentActivitySound) {
         let configuration = switch sound {
         case .thinking:
-            (name: "AgentThinking", fallback: "Pop", volume: Float(0.28))
+            (name: "AgentThinking", fallback: "Pop", volume: Float(0.70))
         case .toolStarted:
             (name: "ToolStart", fallback: "Morse", volume: Float(0.42))
         case .toolCompleted:

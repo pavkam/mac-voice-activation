@@ -38,7 +38,7 @@ struct AgentActivitySoundPlayerTests {
         #expect(assets.bundledRequests.map(\.name) == [
             "AgentThinking", "ToolStart", "ToolComplete", "ToolFailed",
         ])
-        #expect(assets.bundledRequests.map(\.volume) == [0.28, 0.42, 0.42, 0.42])
+        #expect(assets.bundledRequests.map(\.volume) == [0.70, 0.42, 0.42, 0.42])
         #expect(assets.systemNames.isEmpty)
     }
 

@@ -10,6 +10,7 @@ enum FakeACPTransportError: Error, Equatable, Sendable {
 }
 
 actor FakeACPTransport: ACPTransport {
+    private let finishesReadStreamsOnTermination: Bool
     private let outputStream: AsyncThrowingStream<Data, any Error>
     private let outputContinuation: AsyncThrowingStream<Data, any Error>.Continuation
     private let diagnosticStream: AsyncStream<Data>
@@ -30,7 +31,8 @@ actor FakeACPTransport: ACPTransport {
     private var suspendedSendContinuation: CheckedContinuation<Void, Never>?
     private var suspendedSendWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init() {
+    init(finishesReadStreamsOnTermination: Bool = true) {
+        self.finishesReadStreamsOnTermination = finishesReadStreamsOnTermination
         let output = AsyncThrowingStream<Data, any Error>.makeStream()
         outputStream = output.stream
         outputContinuation = output.continuation
@@ -121,7 +123,11 @@ actor FakeACPTransport: ACPTransport {
         terminationCount += 1
         suspendedSendContinuation?.resume()
         suspendedSendContinuation = nil
-        finish(status: -15)
+        if finishesReadStreamsOnTermination {
+            finish(status: -15)
+        } else {
+            finishExit(status: -15)
+        }
     }
 
     func suspendNextSend() {
