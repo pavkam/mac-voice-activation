@@ -123,9 +123,10 @@ struct AgentRunPanelView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(elapsed(snapshot.elapsedSeconds))
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
+            AgentRunElapsedTimeView(
+                phase: snapshot.phase,
+                elapsedSeconds: snapshot.elapsedSeconds,
+                startedAt: model.elapsedStartedAt)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 13)
@@ -443,10 +444,6 @@ struct AgentRunPanelView: View {
         }
     }
 
-    private func elapsed(_ seconds: Int) -> String {
-        String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
-
     private func planSymbol(_ status: AgentPlanStatus) -> String {
         switch status {
         case .pending: "circle"
@@ -488,5 +485,28 @@ struct AgentRunPanelView: View {
         case .switchMode: "Mode change"
         case .other: "Tool"
         }
+    }
+}
+
+struct AgentRunElapsedTimeView: View {
+    let phase: AgentRunPhase
+    let elapsedSeconds: Int
+    let startedAt: Date
+
+    @ViewBuilder
+    var body: some View {
+        Group {
+            if phase.isTerminal {
+                Text(formatted(elapsedSeconds))
+            } else {
+                Text(startedAt, style: .timer)
+            }
+        }
+        .font(.system(size: 12, weight: .medium, design: .monospaced))
+        .foregroundStyle(.secondary)
+    }
+
+    private func formatted(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }

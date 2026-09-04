@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import CoreGraphics
+import Foundation
 import Observation
 import VoiceActivationCore
 
@@ -12,10 +13,18 @@ final class AgentRunPanelModel {
     var isAutoFollowing = true
     var resolvingPermissions: Set<AgentPermissionKey> = []
     private(set) var expandedToolIDs: Set<String> = []
+    private(set) var elapsedStartedAt: Date
     @ObservationIgnored var onAction: ((AgentRunPanelAction) -> Void)?
+    @ObservationIgnored private let now: @MainActor () -> Date
     @ObservationIgnored private var isUserScrolling = false
 
+    init(now: @escaping @MainActor () -> Date = Date.init) {
+        self.now = now
+        elapsedStartedAt = now()
+    }
+
     func begin(_ snapshot: AgentRunSnapshot) {
+        elapsedStartedAt = now().addingTimeInterval(-TimeInterval(snapshot.elapsedSeconds))
         self.snapshot = snapshot
         isAutoFollowing = true
         resolvingPermissions = []
