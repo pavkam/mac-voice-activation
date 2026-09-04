@@ -82,7 +82,7 @@ struct SettingsView: View {
         SettingsCard(
             title: "Startup",
             subtitle: "Keep Voice Activation ready after you sign in.",
-            systemImage: "power")
+            systemImage: SettingsSectionSymbol.startup.rawValue)
         {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -115,7 +115,7 @@ struct SettingsView: View {
         SettingsCard(
             title: "Agent conversation",
             subtitle: "Keep longer agent sessions audible without making them noisy.",
-            systemImage: "bubble.left.and.waveform.fill")
+            systemImage: SettingsSectionSymbol.agentConversation.rawValue)
         {
             settingToggle(
                 title: "Read replies aloud",
@@ -267,7 +267,7 @@ struct SettingsView: View {
         SettingsCard(
             title: "Voice trigger",
             subtitle: "Choose what starts listening and how speech is recognized.",
-            systemImage: "ear.badge.waveform")
+            systemImage: SettingsSectionSymbol.voiceTrigger.rawValue)
         {
             settingsField("Speech locale", hint: "en-US", text: $model.localeID)
                 .frame(width: 170)
