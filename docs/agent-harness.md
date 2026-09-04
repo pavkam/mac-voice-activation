@@ -116,6 +116,11 @@ turn is marked interrupted, and live conversation input stays open. The next
 follow-up gets a fresh provider process instead of risking duplicate agent
 actions.
 
+The initial ACP handshake has a 12-second deadline. If the provider stops
+responding during startup, the runner terminates that process and starts one
+fresh connection. A second startup stall fails the turn with a clear error;
+the panel never remains on **Starting the agent** indefinitely.
+
 The process transport disables `SIGPIPE` for child stdin, uses nonblocking
 writes, closes the parent write side during termination, drains stdout and
 stderr independently, and marks an exited process unavailable immediately. It

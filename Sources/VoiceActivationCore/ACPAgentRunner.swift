@@ -8,6 +8,7 @@ public enum ACPAgentRunnerError: Error, Equatable, LocalizedError, Sendable {
     case shutDown
     case turnAlreadyActive
     case eventDeliveryOverflow
+    case startupTimedOut
 
     public var errorDescription: String? {
         switch self {
@@ -19,6 +20,8 @@ public enum ACPAgentRunnerError: Error, Equatable, LocalizedError, Sendable {
             "Another agent prompt is already active."
         case .eventDeliveryOverflow:
             "The agent produced more control events than can be delivered safely."
+        case .startupTimedOut:
+            "The agent did not finish starting within 12 seconds."
         }
     }
 }
@@ -58,13 +61,17 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     static let sessionEvictionNotice =
         "This profile's previous agent session was released to keep resource use bounded, "
         + "so a fresh session was started."
+    static let startupRecoveryNotice =
+        "Agent startup stalled, so a fresh connection was started."
 
+    private static let connectionStartupTimeout = Duration.seconds(12)
     private static let cancellationGracePeriod = Duration.seconds(2)
     private static let exitDrainGracePeriod = Duration.milliseconds(500)
     private static let promptSettlePeriod = Duration.milliseconds(25)
 
     private let transportFactory: any ACPTransportCreating
     private let clock: any ACPAgentRunnerClock
+    private let startupClock: any ACPAgentRunnerClock
     private let drainClock: any ACPAgentRunnerClock
     private let settleClock: any ACPAgentRunnerClock
     private let testingHooks: ACPAgentRunnerTestingHooks
@@ -82,6 +89,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     {
         self.transportFactory = transportFactory
         self.clock = clock
+        startupClock = ContinuousACPAgentRunnerClock()
         self.drainClock = drainClock
         self.settleClock = settleClock
         testingHooks = ACPAgentRunnerTestingHooks()
@@ -90,12 +98,14 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     init(
         transportFactory: any ACPTransportCreating = ACPProcessTransportFactory(),
         clock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
+        startupClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
         drainClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
         settleClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
         testingHooks: ACPAgentRunnerTestingHooks)
     {
         self.transportFactory = transportFactory
         self.clock = clock
+        self.startupClock = startupClock
         self.drainClock = drainClock
         self.settleClock = settleClock
         self.testingHooks = testingHooks
@@ -130,13 +140,29 @@ public actor ACPAgentRunner: AgentHarnessRunning {
 
         var runRecord: ACPAgentConnectionRecord?
         var didAttemptSessionRecovery = false
+        var didAttemptStartupRecovery = false
         var shouldPublishSessionRecoveryNotice = false
+        var shouldPublishStartupRecoveryNotice = false
         do {
             while true {
-                let record = try await connectionRecord(
-                    profileID: profileID,
-                    configuration: configuration,
-                    turnToken: token)
+                let record: ACPAgentConnectionRecord
+                do {
+                    record = try await connectionRecord(
+                        profileID: profileID,
+                        configuration: configuration,
+                        turnToken: token)
+                } catch let error as ACPAgentRunnerError {
+                    guard error == .startupTimedOut,
+                          !didAttemptStartupRecovery,
+                          ownsActiveTurn(token),
+                          !isActiveTurnCancelling(token)
+                    else {
+                        throw error
+                    }
+                    didAttemptStartupRecovery = true
+                    shouldPublishStartupRecoveryNotice = true
+                    continue
+                }
                 runRecord = record
                 guard ownsActiveTurn(token),
                       !isActiveTurnCancelling(token),
@@ -152,7 +178,12 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                 }
                 updateActiveTurn(token: token, record: record, connection: connection)
                 let recordID = record.id
-                if shouldPublishSessionRecoveryNotice {
+                if shouldPublishStartupRecoveryNotice {
+                    try publishSessionNotice(
+                        Self.startupRecoveryNotice,
+                        turnToken: token)
+                    shouldPublishStartupRecoveryNotice = false
+                } else if shouldPublishSessionRecoveryNotice {
                     try publishSessionNotice(
                         Self.sessionRecoveryNotice,
                         turnToken: token)
@@ -376,7 +407,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         await startObservers(for: record)
 
         do {
-            let connection = try await ACPClientConnection.connect(
+            let connection = try await connect(
+                record: record,
                 transport: transport,
                 configuration: configuration)
             guard records[profileID]?.id == record.id,
@@ -399,6 +431,50 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             }
             await dispose(record)
             throw error
+        }
+    }
+
+    private func connect(
+        record: ACPAgentConnectionRecord,
+        transport: any ACPTransport,
+        configuration: AgentHarnessConfiguration) async throws -> ACPClientConnection
+    {
+        let outcome = await withTaskGroup(of: ACPAgentConnectionStartupOutcome.self) { group in
+            group.addTask { [startupClock] in
+                await startupClock.sleep(for: Self.connectionStartupTimeout)
+                return Task.isCancelled ? .cancelled : .timedOut
+            }
+            group.addTask {
+                do {
+                    return .connected(try await ACPClientConnection.connect(
+                        transport: transport,
+                        configuration: configuration))
+                } catch {
+                    return .failed(error)
+                }
+            }
+
+            let first = await group.next() ?? .timedOut
+            switch first {
+            case .cancelled, .timedOut:
+                record.suppressesExitDiagnostic = true
+                await transport.terminate()
+            case .connected, .failed:
+                break
+            }
+            group.cancelAll()
+            return first
+        }
+
+        switch outcome {
+        case let .connected(connection):
+            return connection
+        case let .failed(error):
+            throw error
+        case .cancelled:
+            throw CancellationError()
+        case .timedOut:
+            throw ACPAgentRunnerError.startupTimedOut
         }
     }
 
@@ -569,7 +645,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         guard records[profileID]?.id == recordID else {
             return
         }
-        if let status = record.exitStatus,
+        if !record.suppressesExitDiagnostic,
+           let status = record.exitStatus,
            status != 0,
            let turn = activeTurn,
            turn.profileID == profileID,
@@ -874,6 +951,7 @@ private final class ACPAgentConnectionRecord {
     var standardError = Data()
     var diagnosticRemainder = Data()
     var exitStatus: Int32?
+    var suppressesExitDiagnostic = false
     var accessOrdinal: UInt64
     let exitObservation: ACPAgentProcessExitLatch
 
@@ -925,6 +1003,13 @@ private enum ACPAgentPromptSettleRace: Sendable {
     case processExited
     case settled
     case cancelled
+}
+
+private enum ACPAgentConnectionStartupOutcome: Sendable {
+    case connected(ACPClientConnection)
+    case failed(any Error)
+    case cancelled
+    case timedOut
 }
 
 private enum ACPAgentProcessExitWaitResult: Sendable {

@@ -183,6 +183,10 @@ private actor ManualACPAgentRunnerClock: ACPAgentRunnerClock {
         durations
     }
 
+    func isSleeping() -> Bool {
+        !waiters.isEmpty
+    }
+
     private func cancel(id: UUID) {
         waiters.removeValue(forKey: id)?.continuation.resume()
     }
@@ -371,6 +375,112 @@ struct ACPAgentRunnerTests {
         #expect(await staleTransport.observedTerminationCount() == 1)
         #expect(await factory.createdConfigurations() == [configuration, configuration])
 
+        await runner.shutdown()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func run_WhenInitialConnectionStopsResponding_RestartsWithFreshConnection() async throws {
+        let stalledTransport = FakeACPTransport()
+        let replacementTransport = FakeACPTransport()
+        let factory = RunnerTransportFactory(
+            transports: [stalledTransport, replacementTransport])
+        let clock = ManualACPAgentRunnerClock()
+        let runner = ACPAgentRunner(
+            transportFactory: factory,
+            startupClock: clock,
+            testingHooks: ACPAgentRunnerTestingHooks())
+        let recorder = RunnerEventRecorder()
+        let profileID = UUID()
+        let configuration = try makeConfiguration()
+        let activeRun = Task {
+            try await runner.run(
+                profileID: profileID,
+                configuration: configuration,
+                prompt: "Recover startup",
+                onEvent: { event in await recorder.record(event) })
+        }
+
+        #expect(await stalledTransport.nextSentMessage() == .request(
+            id: .integer(1),
+            method: "initialize",
+            params: .object([
+                "protocolVersion": .integer(1),
+                "clientCapabilities": .object([:]),
+                "clientInfo": .object([
+                    "name": .string("voice-activation"),
+                    "title": .string("Voice Activation"),
+                    "version": .string("0.1.0"),
+                ]),
+            ])))
+        let deadlineStarted = await waitUntil { await clock.isSleeping() }
+        #expect(deadlineStarted)
+        guard deadlineStarted else {
+            await stalledTransport.terminate()
+            _ = try? await activeRun.value
+            return
+        }
+
+        await clock.advance()
+        let didRetry = await waitUntil {
+            await factory.createdConfigurations().count == 2
+        }
+        #expect(didRetry)
+        guard didRetry else {
+            await stalledTransport.terminate()
+            _ = try? await activeRun.value
+            return
+        }
+
+        try await establishConnection(
+            replacementTransport,
+            workingDirectory: "/tmp/project",
+            sessionID: "replacement-session")
+        #expect(await replacementTransport.nextSentMessage() == promptRequest(
+            id: 3,
+            text: "Recover startup",
+            sessionID: "replacement-session"))
+        try await replacementTransport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+
+        #expect(try await activeRun.value == AgentRunResult(stopReason: .endTurn))
+        #expect(await stalledTransport.observedTerminationCount() == 1)
+        let events = await recorder.recordedEvents()
+        #expect(events == [
+            .metadata(
+                kind: AgentRunMetadataKind.sessionRecovered,
+                summary: ACPAgentRunner.startupRecoveryNotice),
+            .connected(agentName: "Test Agent", sessionID: "replacement-session"),
+        ])
+        await runner.shutdown()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func run_WhenReplacementConnectionAlsoStopsResponding_RetriesOnlyOnce() async throws {
+        let firstTransport = FakeACPTransport()
+        let secondTransport = FakeACPTransport()
+        let factory = RunnerTransportFactory(
+            transports: [firstTransport, secondTransport])
+        let clock = ManualACPAgentRunnerClock()
+        let runner = ACPAgentRunner(
+            transportFactory: factory,
+            startupClock: clock,
+            testingHooks: ACPAgentRunnerTestingHooks())
+        let configuration = try makeConfiguration()
+        let activeRun = run(runner, profileID: UUID(), configuration: configuration)
+
+        _ = await firstTransport.nextSentMessage()
+        #expect(await waitUntil { await clock.isSleeping() })
+        await clock.advance()
+
+        _ = await secondTransport.nextSentMessage()
+        #expect(await waitUntil { await clock.isSleeping() })
+        await clock.advance()
+
+        await #expect(throws: ACPAgentRunnerError.startupTimedOut) {
+            try await activeRun.value
+        }
+        #expect(await factory.createdConfigurations() == [configuration, configuration])
+        #expect(await firstTransport.observedTerminationCount() == 1)
+        #expect(await secondTransport.observedTerminationCount() == 1)
         await runner.shutdown()
     }
 
@@ -1452,6 +1562,21 @@ struct ACPAgentRunnerTests {
                 prompt: prompt,
                 onEvent: { _ in })
         }
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(1),
+        condition: @escaping @Sendable () async -> Bool) async -> Bool
+    {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if await condition() {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return await condition()
     }
 
     private func establishConnection(

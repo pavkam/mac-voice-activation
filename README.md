@@ -138,6 +138,11 @@ never replayed after output or a permission request. If a connection dies after
 producing useful output, that output remains visible and the conversation stays
 live. The next follow-up starts a fresh provider session.
 
+ACP startup is bounded as well. A stalled handshake is terminated after 12
+seconds and retried once with a fresh process. If that retry also stalls, the
+turn fails visibly instead of leaving the conversation on **Starting the
+agent** forever.
+
 Every ACP prompt includes a Markdown presentation contract and asks the agent to
 keep progress narration to one short conversational sentence per work batch.
 Individual commands and routine tool results belong inside the expandable
