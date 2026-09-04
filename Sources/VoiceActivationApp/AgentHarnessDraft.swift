@@ -8,6 +8,7 @@ struct AgentHarnessDraft: Equatable {
     var argumentDrafts: ArgumentDraftCollection
     var workingDirectory: String
     var permissionPolicy: AgentPermissionPolicy
+    var systemPrompt: String
 
     var arguments: [String] {
         get { argumentDrafts.values }
@@ -20,7 +21,8 @@ struct AgentHarnessDraft: Equatable {
         executablePath: String,
         arguments: [String],
         workingDirectory: String,
-        permissionPolicy: AgentPermissionPolicy)
+        permissionPolicy: AgentPermissionPolicy,
+        systemPrompt: String = "")
     {
         self.preset = preset
         self.displayName = displayName
@@ -28,6 +30,7 @@ struct AgentHarnessDraft: Equatable {
         argumentDrafts = ArgumentDraftCollection(values: arguments)
         self.workingDirectory = workingDirectory
         self.permissionPolicy = permissionPolicy
+        self.systemPrompt = systemPrompt
     }
 
     init(configuration: AgentHarnessConfiguration) {
@@ -37,6 +40,7 @@ struct AgentHarnessDraft: Equatable {
         argumentDrafts = ArgumentDraftCollection(values: configuration.arguments)
         workingDirectory = configuration.workingDirectory
         permissionPolicy = configuration.permissionPolicy
+        systemPrompt = configuration.systemPrompt
     }
 
     static func empty(workingDirectory: String) -> AgentHarnessDraft {
@@ -46,7 +50,8 @@ struct AgentHarnessDraft: Equatable {
             executablePath: "",
             arguments: [],
             workingDirectory: workingDirectory,
-            permissionPolicy: .ask)
+            permissionPolicy: .ask,
+            systemPrompt: "")
     }
 
     mutating func selectPreset(
@@ -121,6 +126,7 @@ struct AgentHarnessDraft: Equatable {
             executablePath: executablePath,
             arguments: arguments,
             workingDirectory: workingDirectory,
-            permissionPolicy: permissionPolicy)
+            permissionPolicy: permissionPolicy,
+            systemPrompt: systemPrompt)
     }
 }

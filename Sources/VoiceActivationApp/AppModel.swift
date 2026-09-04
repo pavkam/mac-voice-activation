@@ -17,6 +17,11 @@ final class AppModel {
     var agentSpeechProvider: AgentSpeechProvider
     var elevenLabsVoiceID: String
     var elevenLabsAPIKey: String
+    private(set) var elevenLabsVoices: [ElevenLabsVoice] = []
+    private(set) var isLoadingElevenLabsVoices = false
+    private(set) var isPreviewingElevenLabsVoice = false
+    private(set) var elevenLabsVoiceStatus: String?
+    private(set) var elevenLabsVoiceError: String?
     var settingsError: String?
     private(set) var isSavingSettings = false
     private(set) var agentRunSnapshot: AgentRunSnapshot?
@@ -36,7 +41,10 @@ final class AppModel {
     @ObservationIgnored private let agentConversationAudioPlayer: any AgentConversationAudioPlaying
     @ObservationIgnored private let agentConversationAudioPresenter: AgentConversationAudioPresenter
     @ObservationIgnored private let agentSpeechCredentialStore: any AgentSpeechCredentialStoring
+    @ObservationIgnored private let elevenLabsVoiceCatalog: any ElevenLabsVoiceCatalogLoading
+    @ObservationIgnored private let elevenLabsVoicePreview: any ElevenLabsVoicePreviewing
     @ObservationIgnored private let agentSpeechSettingsState: AgentSpeechSettingsState
+    @ObservationIgnored private var elevenLabsVoiceCatalogGeneration = 0
     @ObservationIgnored private var started = false
     @ObservationIgnored private var isShutdown = false
     @ObservationIgnored private var permissionGranted = false
@@ -67,6 +75,10 @@ final class AppModel {
         agentConversationAudioPlayer: (any AgentConversationAudioPlaying)? = nil,
         agentSpeechCredentialStore: any AgentSpeechCredentialStoring =
             KeychainAgentSpeechCredentialStore(),
+        elevenLabsVoiceCatalog: any ElevenLabsVoiceCatalogLoading =
+            ElevenLabsVoiceCatalogClient(),
+        elevenLabsVoicePreview: any ElevenLabsVoicePreviewing =
+            ElevenLabsVoicePreviewPlayer(),
         isExecutableFile: @escaping @MainActor (String) -> Bool = AppModel.executableFileExists,
         isDirectory: @escaping @MainActor (String) -> Bool = AppModel.directoryExists,
         startsAutomatically: Bool = true)
@@ -91,6 +103,8 @@ final class AppModel {
         self.isDirectory = isDirectory
         self.permissionRequest = permissionRequest
         self.agentSpeechCredentialStore = agentSpeechCredentialStore
+        self.elevenLabsVoiceCatalog = elevenLabsVoiceCatalog
+        self.elevenLabsVoicePreview = elevenLabsVoicePreview
         self.agentSpeechSettingsState = agentSpeechSettingsState
         overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
         agentRunPresentation = AgentRunPresentation()
@@ -171,6 +185,72 @@ final class AppModel {
 
     func togglePassiveListening() {
         setPassiveEnabled(!passiveEnabled)
+    }
+
+    func loadElevenLabsVoices() async {
+        elevenLabsVoiceCatalogGeneration &+= 1
+        let generation = elevenLabsVoiceCatalogGeneration
+        let apiKey = elevenLabsAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard agentSpeechProvider == .elevenLabs, !apiKey.isEmpty else {
+            elevenLabsVoices = []
+            isLoadingElevenLabsVoices = false
+            elevenLabsVoiceStatus = nil
+            elevenLabsVoiceError = nil
+            return
+        }
+
+        isLoadingElevenLabsVoices = true
+        elevenLabsVoiceStatus = nil
+        elevenLabsVoiceError = nil
+        do {
+            let voices = try await elevenLabsVoiceCatalog.voices(apiKey: apiKey)
+            try Task.checkCancellation()
+            guard generation == elevenLabsVoiceCatalogGeneration else { return }
+            elevenLabsVoices = voices
+            if elevenLabsVoiceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                elevenLabsVoiceID = voices.first?.id ?? ""
+            }
+            elevenLabsVoiceStatus = voices.isEmpty
+                ? "No voices were returned. You can still enter a voice ID manually."
+                : "\(voices.count) voice\(voices.count == 1 ? "" : "s") available."
+        } catch is CancellationError {
+            // A newer catalog request owns the visible state.
+        } catch {
+            guard generation == elevenLabsVoiceCatalogGeneration else { return }
+            elevenLabsVoices = []
+            elevenLabsVoiceError = error.localizedDescription
+        }
+        if generation == elevenLabsVoiceCatalogGeneration {
+            isLoadingElevenLabsVoices = false
+        }
+    }
+
+    func previewElevenLabsVoice() async {
+        guard !isPreviewingElevenLabsVoice else { return }
+        let apiKey = elevenLabsAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let voiceID = elevenLabsVoiceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty else {
+            elevenLabsVoiceError = "Enter an ElevenLabs API key to test a voice."
+            return
+        }
+        guard !voiceID.isEmpty else {
+            elevenLabsVoiceError = "Select an ElevenLabs voice to test it."
+            return
+        }
+
+        isPreviewingElevenLabsVoice = true
+        elevenLabsVoiceStatus = nil
+        elevenLabsVoiceError = nil
+        defer { isPreviewingElevenLabsVoice = false }
+        do {
+            try await elevenLabsVoicePreview.play(apiKey: apiKey, voiceID: voiceID)
+            elevenLabsVoiceStatus = "Voice preview finished."
+        } catch is CancellationError {
+            elevenLabsVoicePreview.stop()
+        } catch {
+            elevenLabsVoiceError = error.localizedDescription
+        }
     }
 
     func setWakeProfileEnabled(_ id: UUID, enabled: Bool) {
@@ -264,6 +344,8 @@ final class AppModel {
         }
         agentRunPresentation.shutdown()
         agentConversationAudioPresenter.shutdown()
+        elevenLabsVoiceCatalogGeneration &+= 1
+        elevenLabsVoicePreview.stop()
     }
 
     func setPushToTalkHotKey(_ hotKey: PushToTalkHotKey?, for profileID: UUID) {
@@ -324,6 +406,9 @@ final class AppModel {
         }
         coordinator.onAgentSpeechCancellation = { [weak self] in
             self?.agentConversationAudioPlayer.stopSpeaking()
+        }
+        coordinator.onAgentVoiceUtterance = { [weak self] utterance in
+            self?.handleAgentVoiceUtterance(utterance) ?? false
         }
         do {
             try registerShortcuts(activeWakeProfiles)
@@ -441,6 +526,14 @@ final class AppModel {
         key: AgentPermissionKey,
         optionID: String)
     {
+        resolveAgentPermission(runID: runID, key: key, selectedOptionID: optionID)
+    }
+
+    private func resolveAgentPermission(
+        runID: UUID,
+        key: AgentPermissionKey,
+        selectedOptionID: String?)
+    {
         guard agentRunPresentation.beginPermissionResolution(runID: runID, key: key) else {
             return
         }
@@ -449,7 +542,33 @@ final class AppModel {
             runID: runID,
             turnToken: key.turnToken,
             requestID: key.requestID,
-            optionID: optionID)
+            optionID: selectedOptionID)
+    }
+
+    private func handleAgentVoiceUtterance(_ utterance: String) -> Bool {
+        guard let snapshot = agentRunSnapshot,
+              !snapshot.phase.isTerminal,
+              let permission = snapshot.permissions.first,
+              let decision = AgentPermissionVoiceCommand.match(
+                  utterance,
+                  options: permission.options)
+        else {
+            return false
+        }
+
+        switch decision {
+        case let .select(optionID):
+            resolveAgentPermission(
+                runID: snapshot.runID,
+                key: permission.key,
+                selectedOptionID: optionID)
+        case .cancel:
+            resolveAgentPermission(
+                runID: snapshot.runID,
+                key: permission.key,
+                selectedOptionID: nil)
+        }
+        return true
     }
 
     func handleAgentRunLifecycleEvent(_ event: AgentRunLifecycleEvent) {

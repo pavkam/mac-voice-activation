@@ -10,10 +10,14 @@ public enum AgentHarnessPreset: String, CaseIterable, Codable, Sendable {
 public enum AgentPermissionPolicy: String, CaseIterable, Codable, Sendable {
     case ask
     case allowOnce
+    case allowAlways
     case reject
+    case rejectAlways
 }
 
 public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
+    public static let maximumSystemPromptBytes = 8_192
+
     private enum CodingKeys: String, CodingKey {
         case preset
         case displayName
@@ -21,12 +25,14 @@ public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
         case arguments
         case workingDirectory
         case permissionPolicy
+        case systemPrompt
     }
 
     public enum ValidationError: Error, Equatable, LocalizedError {
         case displayNameRequired
         case executableMustBeAbsolute
         case workingDirectoryMustBeAbsolute
+        case systemPromptTooLarge(maximumBytes: Int)
 
         public var errorDescription: String? {
             switch self {
@@ -36,6 +42,8 @@ public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
                 "The agent harness executable path must be absolute."
             case .workingDirectoryMustBeAbsolute:
                 "The agent harness working directory must be absolute."
+            case let .systemPromptTooLarge(maximumBytes):
+                "The agent system prompt exceeds the \(maximumBytes)-byte UTF-8 limit."
             }
         }
     }
@@ -46,6 +54,7 @@ public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
     public let arguments: [String]
     public let workingDirectory: String
     public let permissionPolicy: AgentPermissionPolicy
+    public let systemPrompt: String
 
     public init(
         preset: AgentHarnessPreset,
@@ -53,7 +62,8 @@ public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
         executablePath: String,
         arguments: [String],
         workingDirectory: String,
-        permissionPolicy: AgentPermissionPolicy) throws
+        permissionPolicy: AgentPermissionPolicy,
+        systemPrompt: String = "") throws
     {
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedDisplayName.isEmpty else {
@@ -65,6 +75,11 @@ public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
         guard workingDirectory.hasPrefix("/") else {
             throw ValidationError.workingDirectoryMustBeAbsolute
         }
+        let normalizedSystemPrompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedSystemPrompt.utf8.count <= Self.maximumSystemPromptBytes else {
+            throw ValidationError.systemPromptTooLarge(
+                maximumBytes: Self.maximumSystemPromptBytes)
+        }
 
         self.preset = preset
         self.displayName = normalizedDisplayName
@@ -72,6 +87,7 @@ public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
         self.arguments = arguments
         self.workingDirectory = workingDirectory
         self.permissionPolicy = permissionPolicy
+        self.systemPrompt = normalizedSystemPrompt
     }
 
     public init(from decoder: Decoder) throws {
@@ -82,7 +98,8 @@ public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
             executablePath: container.decode(String.self, forKey: .executablePath),
             arguments: container.decode([String].self, forKey: .arguments),
             workingDirectory: container.decode(String.self, forKey: .workingDirectory),
-            permissionPolicy: container.decode(AgentPermissionPolicy.self, forKey: .permissionPolicy))
+            permissionPolicy: container.decode(AgentPermissionPolicy.self, forKey: .permissionPolicy),
+            systemPrompt: container.decodeIfPresent(String.self, forKey: .systemPrompt) ?? "")
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -93,5 +110,6 @@ public struct AgentHarnessConfiguration: Codable, Equatable, Sendable {
         try container.encode(arguments, forKey: .arguments)
         try container.encode(workingDirectory, forKey: .workingDirectory)
         try container.encode(permissionPolicy, forKey: .permissionPolicy)
+        try container.encode(systemPrompt, forKey: .systemPrompt)
     }
 }

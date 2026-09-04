@@ -288,6 +288,36 @@ struct ACPClientConnectionTests {
         await connection.close()
     }
 
+    @Test func prompt_WhenProfileHasSystemPrompt_SendsItBeforeTheSpokenRequest() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(
+            transport: transport,
+            systemPrompt: "Use short answers and call out destructive actions.")
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Inspect the project", recorder: recorder)
+        _ = await recorder.nextEvent()
+
+        guard case let .request(_, "session/prompt", .object(parameters)) =
+            await transport.nextSentMessage(),
+            case let .array(blocks) = parameters["prompt"],
+            blocks.count == 2,
+            case let .object(instructionBlock) = blocks[0],
+            case let .string(instruction) = instructionBlock["text"],
+            case let .object(requestBlock) = blocks[1],
+            case let .string(requestText) = requestBlock["text"]
+        else {
+            Issue.record("Expected a system instruction followed by the spoken request")
+            return
+        }
+        #expect(instruction.contains("Use short answers and call out destructive actions."))
+        #expect(instruction.localizedCaseInsensitiveContains("Markdown"))
+        #expect(requestText == "Inspect the project")
+
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await promptTask.value
+        await connection.close()
+    }
+
     @Test func prompt_WhenEventDeliveryIsDelayed_FlushesWireOrderBeforeReturning() async throws {
         let transport = FakeACPTransport()
         let connection = try await establishConnection(transport: transport)
@@ -502,6 +532,28 @@ struct ACPClientConnectionTests {
 
         #expect(await transport.nextSentMessage() == permissionSelection(
             id: .integer(41),
+            optionID: "always"))
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await promptTask.value
+        await connection.close()
+    }
+
+    @Test func permission_WhenPolicyAllowsAlways_PrefersOfferedAllowAlwaysOption() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport, policy: .allowAlways)
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Edit", recorder: recorder)
+        _ = await recorder.nextEvent()
+        _ = await transport.nextSentMessage()
+        try await transport.feed(permissionRequest(
+            id: .integer(42),
+            options: [
+                permissionOption(id: "once", name: "Once", kind: "allow_once"),
+                permissionOption(id: "always", name: "Always", kind: "allow_always"),
+            ]))
+
+        #expect(await transport.nextSentMessage() == permissionSelection(
+            id: .integer(42),
             optionID: "always"))
         try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
         _ = try await promptTask.value
@@ -844,6 +896,28 @@ struct ACPClientConnectionTests {
                 kind: "reject_always")]))
 
         #expect(await transport.nextSentMessage() == permissionCancellation(id: .integer(9)))
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await promptTask.value
+        await connection.close()
+    }
+
+    @Test func permission_WhenPolicyRejectsAlways_PrefersOfferedRejectAlwaysOption() async throws {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(transport: transport, policy: .rejectAlways)
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Delete", recorder: recorder)
+        _ = await recorder.nextEvent()
+        _ = await transport.nextSentMessage()
+        try await transport.feed(permissionRequest(
+            id: .integer(10),
+            options: [
+                permissionOption(id: "not-now", name: "Not now", kind: "reject_once"),
+                permissionOption(id: "never", name: "Never", kind: "reject_always"),
+            ]))
+
+        #expect(await transport.nextSentMessage() == permissionSelection(
+            id: .integer(10),
+            optionID: "never"))
         try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
         _ = try await promptTask.value
         await connection.close()
@@ -1219,12 +1293,15 @@ struct ACPClientConnectionTests {
 
     private func establishConnection(
         transport: FakeACPTransport,
-        policy: AgentPermissionPolicy = .ask) async throws -> ACPClientConnection
+        policy: AgentPermissionPolicy = .ask,
+        systemPrompt: String = "") async throws -> ACPClientConnection
     {
         let connectionTask = Task {
             try await ACPClientConnection.connect(
                 transport: transport,
-                configuration: try makeConfiguration(policy: policy))
+                configuration: try makeConfiguration(
+                    policy: policy,
+                    systemPrompt: systemPrompt))
         }
         _ = await transport.nextSentMessage()
         try await transport.feed(initializeResponse())
@@ -1277,7 +1354,8 @@ struct ACPClientConnectionTests {
     }
 
     private func makeConfiguration(
-        policy: AgentPermissionPolicy = .ask) throws -> AgentHarnessConfiguration
+        policy: AgentPermissionPolicy = .ask,
+        systemPrompt: String = "") throws -> AgentHarnessConfiguration
     {
         try AgentHarnessConfiguration(
             preset: .codex,
@@ -1285,7 +1363,8 @@ struct ACPClientConnectionTests {
             executablePath: "/usr/bin/agent",
             arguments: ["acp"],
             workingDirectory: "/tmp/project",
-            permissionPolicy: policy)
+            permissionPolicy: policy,
+            systemPrompt: systemPrompt)
     }
 
     private func initializeResponse(

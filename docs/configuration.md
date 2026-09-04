@@ -52,10 +52,12 @@ service when on-device recognition is unavailable.
   output, and any remainder is queued when the turn ends. Code blocks are not
   read character by character.
 - **Voice provider:** choose the local macOS system voice or ElevenLabs. The
-  ElevenLabs option uses the saved Voice ID and keeps its API key in macOS
-  Keychain, never `UserDefaults` or project files. Synthesized response text is
-  sent to ElevenLabs; a failed request falls back to the configured macOS voice
-  so the reply does not disappear silently.
+  ElevenLabs option loads available voices from the account after an API key is
+  entered. Select a named voice and use **Test voice** to generate a short
+  preview before saving. If the catalog cannot be loaded, enter a Voice ID
+  manually. The API key stays in macOS Keychain, never `UserDefaults` or project
+  files. Synthesized response text is sent to ElevenLabs; a failed request falls
+  back to the configured macOS voice so the reply does not disappear silently.
 - **Working pulse:** enabled by default. An audible cue begins after a short
   silent delay and repeats while the agent is thinking or using tools. It stops
   when permission input is needed, speech is playing, or the turn ends. Choosing
@@ -129,7 +131,8 @@ checks common Homebrew, local, ChatGPT, and NVM locations.
 | Display name | Label shown in the menu and floating run panel. |
 | Executable | Detected command or absolute ACP process path. |
 | Working folder | Absolute project directory supplied to `session/new`. |
-| Permission policy | Ask in the panel, automatically allow once, or reject. |
+| Permission policy | Default ACP response: ask, scoped allow, or scoped deny. |
+| System prompt | Optional instructions prepended to every request. |
 | Adapter arguments | Direct process arguments; no shell parsing occurs. |
 
 The Cursor preset uses `cursor-agent acp`. Codex and Claude use pinned ACP
@@ -147,7 +150,9 @@ the same ACP session. A follow-up spoken while the agent is still working
 cancels the current turn before it starts. Say only `cancel`, `stop`, or
 `dismiss` to end the whole conversation immediately, or choose **End
 conversation** in the panel or menu. **Stop turn** remains available when only
-the current agent turn should be cancelled.
+the current agent turn should be cancelled. When a permission request is
+visible, say only `allow`, `allow all`, `deny`, or `deny all` to resolve the
+oldest request. Longer phrases remain normal follow-ups.
 
 ## Capture timing
 

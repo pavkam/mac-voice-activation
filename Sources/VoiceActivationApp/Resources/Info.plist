@@ -6,6 +6,10 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>VoiceActivation</string>
+    <key>CFBundleDisplayName</key>
+    <string>Voice Activation</string>
+    <key>CFBundleGetInfoString</key>
+    <string>Voice-first commands and live agent conversations from the macOS menu bar.</string>
     <key>CFBundleIconFile</key>
     <string>VoiceActivation</string>
     <key>CFBundleIdentifier</key>
@@ -20,13 +24,17 @@
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Voice Activation listens for your wake phrase and push-to-talk speech.</string>
+    <string>Voice Activation uses the microphone for wake phrases, push-to-talk commands, live agent follow-ups, and spoken permission choices.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 Voice Activation contributors.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>Voice Activation transcribes speech so it can invoke your configured command.</string>
+    <string>Voice Activation transcribes your speech to run configured commands and continue live agent conversations.</string>
 </dict>
 </plist>

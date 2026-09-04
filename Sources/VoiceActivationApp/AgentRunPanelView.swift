@@ -312,6 +312,9 @@ struct AgentRunPanelView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Label(permission.toolTitle, systemImage: "hand.raised.fill")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
+                Text("Say “allow”, “allow all”, “deny”, or “deny all” — or choose below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 HStack {
                     ForEach(permission.options, id: \.id) { option in
                         Button(option.label) {

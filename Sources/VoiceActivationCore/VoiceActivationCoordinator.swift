@@ -40,6 +40,7 @@ public final class VoiceActivationCoordinator {
     public var onActiveProfileChange: ((WakeProfile?) -> Void)?
     public var onAgentRunEvent: ((AgentRunLifecycleEvent) -> Void)?
     public var onAgentSpeechCancellation: (() -> Void)?
+    public var onAgentVoiceUtterance: ((String) -> Bool)?
 
     private let speechSession: any SpeechSessionProtocol
     private let commandRunner: any CommandRunning
@@ -596,7 +597,9 @@ public final class VoiceActivationCoordinator {
         startSession(
             mode: .conversation,
             localeID: localeID,
-            contextualStrings: ["stop", "cancel", "dismiss"])
+            contextualStrings: [
+                "stop", "cancel", "dismiss", "allow", "allow all", "deny", "deny all",
+            ])
     }
 
     private func handleConversationCapture(_ update: SpeechUpdate) {
@@ -667,6 +670,8 @@ public final class VoiceActivationCoordinator {
 
         if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
             cancelAgentConversationFromSpeech()
+        } else if onAgentVoiceUtterance?(transcript) == true {
+            return
         } else {
             submitAgentFollowUp(transcript)
         }

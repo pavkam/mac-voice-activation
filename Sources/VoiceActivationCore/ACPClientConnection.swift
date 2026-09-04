@@ -46,11 +46,14 @@ public actor ACPClientConnection {
     private static let clientName = "voice-activation"
     private static let clientTitle = "Voice Activation"
     private static let clientVersion = "0.1.0"
-    static let markdownPresentationInstruction = """
+    private static let markdownPresentationPreamble = """
         System instruction from Voice Activation: format every user-facing response as \
         GitHub-flavored Markdown. Use headings, lists, emphasis, links, and fenced code \
-        when they improve clarity. Do not wrap the entire response in a code fence. The \
-        following content block is the user's request.
+        when they improve clarity. Do not wrap the entire response in a code fence.
+        """
+    static let markdownPresentationInstruction = """
+        \(markdownPresentationPreamble)
+        The following content block is the user's request.
         """
 
     private let transport: any ACPTransport
@@ -133,7 +136,7 @@ public actor ACPClientConnection {
                     "prompt": .array([
                         .object([
                             "type": .string("text"),
-                            "text": .string(Self.markdownPresentationInstruction),
+                            "text": .string(systemInstruction()),
                         ]),
                         .object([
                             "type": .string("text"),
@@ -564,13 +567,43 @@ public actor ACPClientConnection {
             } else {
                 await sendResponse(id: id, result: permissionCancellation())
             }
+        case .allowAlways:
+            let selection = request.options.first(where: { $0.kind == .allowAlways })
+                ?? request.options.first(where: { $0.kind == .allowOnce })
+            if let selection {
+                await sendResponse(id: id, result: permissionSelection(optionID: selection.id))
+            } else {
+                await sendResponse(id: id, result: permissionCancellation())
+            }
         case .reject:
             if let selection = request.options.first(where: { $0.kind == .rejectOnce }) {
                 await sendResponse(id: id, result: permissionSelection(optionID: selection.id))
             } else {
                 await sendResponse(id: id, result: permissionCancellation())
             }
+        case .rejectAlways:
+            let selection = request.options.first(where: { $0.kind == .rejectAlways })
+                ?? request.options.first(where: { $0.kind == .rejectOnce })
+            if let selection {
+                await sendResponse(id: id, result: permissionSelection(optionID: selection.id))
+            } else {
+                await sendResponse(id: id, result: permissionCancellation())
+            }
         }
+    }
+
+    private func systemInstruction() -> String {
+        guard !configuration.systemPrompt.isEmpty else {
+            return Self.markdownPresentationInstruction
+        }
+        return """
+            \(Self.markdownPresentationPreamble)
+
+            Profile-specific system instruction:
+            \(configuration.systemPrompt)
+
+            The following content block is the user's request.
+            """
     }
 
     private func decodePermissionRequest(

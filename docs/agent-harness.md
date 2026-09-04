@@ -18,8 +18,9 @@ push-to-talk shortcut. Its run target is one of:
   least one argument contains `{text}` or `{urlText}`. The executable is
   launched directly without a shell.
 - **Agent harness:** an ACP v1 executable, argument vector, working directory,
-  provider preset, and permission policy. The recognized command is sent as a
-  text block in `session/prompt`; it is never interpolated into a shell command.
+  provider preset, default permission policy, and optional system prompt. The
+  system prompt and recognized command are sent as separate text blocks in
+  `session/prompt`; neither is interpolated into a shell command.
 
 Existing saved profiles have no target discriminator. They decode as command
 targets without changing their UUID, phrase, accent, enabled state, shortcut,
@@ -159,14 +160,18 @@ content the agent sends through ACP.
 
 ## Permission handling
 
-An agent profile has one of three permission policies:
+An agent profile has one of five permission policies:
 
 - **Ask:** show the ACP tool description and the agent-provided choices in the
   run panel. Work remains paused until the user chooses or cancels.
 - **Allow once:** automatically select an `allow_once` option, falling back to
   `allow_always` only when the agent offers no one-shot choice.
-- **Reject:** select a one-shot rejection when available, otherwise return a
+- **Always allow:** select `allow_always` when offered, falling back to
+  `allow_once` when the provider exposes only a one-shot choice.
+- **Deny once:** select a one-shot rejection when available, otherwise return a
   cancelled outcome.
+- **Always deny:** select `reject_always` when offered, falling back to
+  `reject_once` and then a cancelled outcome.
 
 The panel displays agent-provided choice labels; it does not invent an approval
 the agent did not offer. Selecting any choice collapses that request immediately
@@ -178,6 +183,12 @@ displayed choice carries a globally unique opaque turn identifier as well as the
 wire request ID, so a
 delayed click cannot resolve a reused request ID from a later turn or replacement
 connection.
+
+With **Ask every time**, live conversation recognition also accepts exact spoken
+decisions. `allow`, `allow all`, `deny`, and `deny all` resolve the oldest
+visible permission using ACP option kinds, not localized button text. Exact
+agent-provided option labels are accepted too. Longer utterances are left alone
+and continue as ordinary follow-ups.
 
 ## Streaming presentation
 
@@ -263,10 +274,13 @@ Reply speech strips Markdown formatting; fenced code is announced but not read
 character by character. Complete sentences enter a FIFO speech queue as soon as
 they stream from the agent. A 350-millisecond output pause flushes an unfinished
 sentence, and turn completion flushes only the remainder. The selected provider
-is either the locale-matching macOS voice or an ElevenLabs voice using its
+is either the locale-matching macOS voice or an ElevenLabs voice selected from
+the account's paginated voice catalog and using its
 low-latency streaming endpoint and `eleven_flash_v2_5`; a failed cloud request
 falls back to the macOS voice. ElevenLabs audio and credentials remain in memory
 and Keychain respectively, and response text is sent to ElevenLabs for synthesis.
+A short **Test voice** preview uses the same synthesis path; manual Voice ID entry
+remains available when catalog discovery fails.
 
 The voice also acknowledges a spoken conversation cancellation with “Stopped.”
 The working pulse begins only after a 1.6-second pause and repeats every 3.2
@@ -353,4 +367,5 @@ verification, and the exact pushed commit's CI workflow.
 - [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp)
 - [Claude ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp)
 - [ElevenLabs streaming text-to-speech API](https://elevenlabs.io/docs/api-reference/text-to-speech/stream)
+- [ElevenLabs voice catalog API](https://elevenlabs.io/docs/api-reference/voices/search)
 - [ElevenLabs low-latency streaming guide](https://elevenlabs.io/docs/eleven-api/guides/how-to/text-to-speech/streaming)

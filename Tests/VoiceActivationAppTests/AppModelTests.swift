@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 @testable import VoiceActivationApp
-import VoiceActivationCore
+@testable import VoiceActivationCore
 
 @MainActor
 private final class ShortcutSpy: PushToTalkShortcutManaging {
@@ -164,6 +164,75 @@ private actor AppModelAgentRunnerSpy: AgentHarnessRunning {
     }
 }
 
+private actor AppModelPermissionAgentRunnerSpy: AgentHarnessRunning {
+    struct Resolution: Equatable, Sendable {
+        let turnToken: AgentTurnToken
+        let requestID: ACPRequestID
+        let optionID: String?
+    }
+
+    let turnToken = AgentTurnToken()
+    let requestID = ACPRequestID.string("voice-permission")
+    private var resolutions: [Resolution] = []
+    private var continuation: CheckedContinuation<AgentRunResult, Never>?
+
+    func run(
+        profileID: UUID,
+        configuration: AgentHarnessConfiguration,
+        prompt: String,
+        onEvent: @escaping @Sendable (AgentRunEvent) async -> Void
+    ) async throws -> AgentRunResult {
+        await onEvent(.permissionRequested(AgentPermissionRequest(
+            turnToken: turnToken,
+            requestID: requestID,
+            toolCall: AgentToolCallUpdate(
+                id: "tool-1",
+                title: "Edit settings",
+                kind: .edit,
+                status: .pending),
+            options: [
+                AgentPermissionOption(
+                    id: "allow-once",
+                    label: "Allow once",
+                    kind: .allowOnce),
+                AgentPermissionOption(
+                    id: "allow-always",
+                    label: "Allow always",
+                    kind: .allowAlways),
+                AgentPermissionOption(
+                    id: "deny-once",
+                    label: "Deny",
+                    kind: .rejectOnce),
+            ])))
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func resolvePermission(
+        turnToken: AgentTurnToken,
+        requestID: ACPRequestID,
+        optionID: String?) async
+    {
+        resolutions.append(Resolution(
+            turnToken: turnToken,
+            requestID: requestID,
+            optionID: optionID))
+        continuation?.resume(returning: AgentRunResult(stopReason: .endTurn))
+        continuation = nil
+    }
+
+    func cancel() async {
+        continuation?.resume(returning: AgentRunResult(stopReason: .cancelled))
+        continuation = nil
+    }
+
+    func reset(profileIDs: Set<UUID>) async {}
+    func shutdown() async {}
+
+    func recordedResolutions() -> [Resolution] {
+        resolutions
+    }
+}
+
 @MainActor
 private final class AppModelAgentConversationAudioSpy: AgentConversationAudioPlaying {
     var onSpeakingChange: ((Bool) -> Void)?
@@ -201,6 +270,34 @@ private final class AgentSpeechCredentialStoreSpy: AgentSpeechCredentialStoring 
     func saveElevenLabsAPIKey(_ apiKey: String?) throws {
         self.apiKey = apiKey
         savedKeys.append(apiKey)
+    }
+}
+
+private actor AppModelElevenLabsVoiceCatalogSpy: ElevenLabsVoiceCatalogLoading {
+    private let availableVoices: [ElevenLabsVoice]
+    private(set) var requestedAPIKeys: [String] = []
+
+    init(voices: [ElevenLabsVoice]) {
+        availableVoices = voices
+    }
+
+    func voices(apiKey: String) async throws -> [ElevenLabsVoice] {
+        requestedAPIKeys.append(apiKey)
+        return availableVoices
+    }
+}
+
+@MainActor
+private final class AppModelElevenLabsVoicePreviewSpy: ElevenLabsVoicePreviewing {
+    private(set) var requests: [(apiKey: String, voiceID: String)] = []
+    private(set) var stopCount = 0
+
+    func play(apiKey: String, voiceID: String) async throws {
+        requests.append((apiKey, voiceID))
+    }
+
+    func stop() {
+        stopCount += 1
     }
 }
 
@@ -1097,6 +1194,69 @@ struct AppModelTests {
         #expect(credentials.apiKey == "new-key")
     }
 
+    @MainActor @Test func loadElevenLabsVoices_WhenAPIKeyIsValid_SelectsFirstVoice() async throws {
+        let voices = [
+            ElevenLabsVoice(
+                id: "voice-1",
+                name: "Alexandra",
+                category: "premade",
+                description: "Warm"),
+            ElevenLabsVoice(
+                id: "voice-2",
+                name: "Morgan",
+                category: nil,
+                description: nil),
+        ]
+        let catalog = AppModelElevenLabsVoiceCatalogSpy(voices: voices)
+        let fixture = try Fixture(elevenLabsVoiceCatalog: catalog)
+        fixture.model.agentSpeechProvider = .elevenLabs
+        fixture.model.elevenLabsAPIKey = "catalog-key"
+        fixture.model.elevenLabsVoiceID = ""
+
+        await fixture.model.loadElevenLabsVoices()
+
+        #expect(fixture.model.elevenLabsVoices == voices)
+        #expect(fixture.model.elevenLabsVoiceID == "voice-1")
+        #expect(await catalog.requestedAPIKeys == ["catalog-key"])
+        #expect(!fixture.model.isLoadingElevenLabsVoices)
+    }
+
+    @MainActor @Test func previewElevenLabsVoice_WhenVoiceIsSelected_UsesDraftCredentials() async throws {
+        let preview = AppModelElevenLabsVoicePreviewSpy()
+        let fixture = try Fixture(elevenLabsVoicePreview: preview)
+        fixture.model.agentSpeechProvider = .elevenLabs
+        fixture.model.elevenLabsAPIKey = "draft-key"
+        fixture.model.elevenLabsVoiceID = "voice-42"
+
+        await fixture.model.previewElevenLabsVoice()
+
+        #expect(preview.requests.count == 1)
+        #expect(preview.requests.first?.apiKey == "draft-key")
+        #expect(preview.requests.first?.voiceID == "voice-42")
+        #expect(!fixture.model.isPreviewingElevenLabsVoice)
+    }
+
+    @MainActor @Test func agentPermission_WhenUserSaysAllowAll_ResolvesAndCollapsesPrompt() async throws {
+        let profile = try makeAgentProfile(displayName: "Codex")
+        let runner = AppModelPermissionAgentRunnerSpy()
+        let fixture = try Fixture(profiles: [profile], agentRunner: runner)
+        await fixture.model.start()
+        fixture.speech.emit("Codex edit my settings", isFinal: true)
+        await waitUntil {
+            fixture.model.agentRunSnapshot?.permissions.count == 1
+                && fixture.speech.mode == .conversation
+        }
+
+        fixture.speech.emit("allow all", isFinal: true)
+        await waitUntil { await runner.recordedResolutions().count == 1 }
+
+        let resolution = try #require(await runner.recordedResolutions().first)
+        #expect(resolution.turnToken == runner.turnToken)
+        #expect(resolution.requestID == runner.requestID)
+        #expect(resolution.optionID == "allow-always")
+        #expect(fixture.model.agentRunSnapshot?.permissions.isEmpty == true)
+    }
+
     @MainActor @Test func saveSettings_WhenElevenLabsKeyIsEmpty_PreservesSavedSpeechSettings()
         async throws
     {
@@ -1127,6 +1287,10 @@ struct AppModelTests {
                 SilentAgentConversationAudioPlayer(),
             agentSpeechCredentialStore: any AgentSpeechCredentialStoring =
                 AgentSpeechCredentialStoreSpy(),
+            elevenLabsVoiceCatalog: any ElevenLabsVoiceCatalogLoading =
+                AppModelElevenLabsVoiceCatalogSpy(voices: []),
+            elevenLabsVoicePreview: any ElevenLabsVoicePreviewing =
+                AppModelElevenLabsVoicePreviewSpy(),
             isExecutableFile: @escaping @MainActor (String) -> Bool = { path in
                 FileManager.default.isExecutableFile(atPath: path)
             },
@@ -1155,6 +1319,8 @@ struct AppModelTests {
                 soundPlayer: SilentCaptureSoundPlayer(),
                 agentConversationAudioPlayer: agentConversationAudioPlayer,
                 agentSpeechCredentialStore: agentSpeechCredentialStore,
+                elevenLabsVoiceCatalog: elevenLabsVoiceCatalog,
+                elevenLabsVoicePreview: elevenLabsVoicePreview,
                 isExecutableFile: isExecutableFile,
                 isDirectory: isDirectory,
                 startsAutomatically: false)

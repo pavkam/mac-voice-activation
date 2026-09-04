@@ -163,7 +163,10 @@ falls back to the system voice after a cloud failure, and cancels stale synthesi
 by generation. Permission prompts and active narration pause the delayed working
 pulse; a resolved choice or completed utterance restarts its delay when work is
 still active. Spoken conversation cancellation gets a short acknowledgement.
-Tests inject silent synthesizer, audio-data, and working-pulse adapters.
+An injected, paginated ElevenLabs catalog boundary discovers named voices, while
+the preview boundary reuses speech synthesis without coupling Settings to
+`NSSound`. Tests inject silent catalog, synthesizer, audio-data, preview, and
+working-pulse adapters.
 
 See [ACP agent harness](agent-harness.md) for the complete wire, permission,
 resource, and recovery contract.
@@ -220,6 +223,10 @@ resource, and recovery contract.
   permissions, turn cancellation, and conversation exit without stealing
   keyboard focus. It follows live output only when already at the bottom and
   remains visible after completion for selection and copying.
+- Conversation recognition offers exact spoken permission commands to the app
+  model before submitting an utterance as a follow-up. The model resolves the
+  oldest presented request by typed ACP option kind, so transport code never
+  interprets natural language.
 
 ## Privacy boundary
 
@@ -227,8 +234,9 @@ Passive wake recognition sets `requiresOnDeviceRecognition` and refuses to run
 when the locale lacks on-device support. Interactive command capture can use
 Apple's speech service. Audio is not stored. Partial text exists in memory only
 during the current capture; the most recent submitted request remains for menu
-feedback. Agent prompts, output, diagnostics, plans, tools, and permissions are
-bounded in memory and never persisted by the app. Pending spoken follow-ups and
-app-authored notices are bounded independently.
+feedback. Conversation prompts, output, diagnostics, plans, tools, and
+permissions are bounded in memory and never persisted by the app. A
+profile-specific system prompt is saved only as explicit profile configuration.
+Pending spoken follow-ups and app-authored notices are bounded independently.
 
 Next: [development and verification](development.md).

@@ -64,12 +64,39 @@ struct AgentHarnessConfigurationTests {
             executablePath: "/opt/homebrew/bin/npx",
             arguments: ["-y", "@agentclientprotocol/codex-acp@1.8.0"],
             workingDirectory: "/Users/alex/Development/voice-activation",
-            permissionPolicy: .allowOnce)
+            permissionPolicy: .allowAlways,
+            systemPrompt: "Be concise and lead with the outcome.")
 
         let decoded = try JSONDecoder().decode(
             AgentHarnessConfiguration.self,
             from: JSONEncoder().encode(configuration))
 
         #expect(decoded == configuration)
+    }
+
+    @Test func decoding_WhenLegacyConfigurationHasNoSystemPrompt_DefaultsToEmpty() throws {
+        let data = try #require("""
+        {"preset":"custom","displayName":"Local agent","executablePath":"/usr/local/bin/agent","arguments":["acp"],"workingDirectory":"/tmp","permissionPolicy":"ask"}
+        """.data(using: .utf8))
+
+        let configuration = try JSONDecoder().decode(AgentHarnessConfiguration.self, from: data)
+
+        #expect(configuration.systemPrompt.isEmpty)
+    }
+
+    @Test func init_WhenSystemPromptExceedsLimit_RejectsAgentConfiguration() {
+        #expect(throws: AgentHarnessConfiguration.ValidationError.systemPromptTooLarge(
+            maximumBytes: AgentHarnessConfiguration.maximumSystemPromptBytes)) {
+            try AgentHarnessConfiguration(
+                preset: .custom,
+                displayName: "Local agent",
+                executablePath: "/usr/local/bin/agent",
+                arguments: ["acp"],
+                workingDirectory: "/tmp",
+                permissionPolicy: .ask,
+                systemPrompt: String(
+                    repeating: "a",
+                    count: AgentHarnessConfiguration.maximumSystemPromptBytes + 1))
+        }
     }
 }

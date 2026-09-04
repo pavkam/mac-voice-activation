@@ -88,12 +88,61 @@ struct AgentHarnessSettingsView: View {
                 .frame(width: 180)
             }
 
+            Text("This is the default response to agent permission requests for this wake profile. You can still answer pending requests by voice when Ask every time is selected.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            systemPromptEditor(draft: draft, tint: tint)
+
             executableField(
                 location: executableLocation,
                 hasResolvedPath: hasResolvedPath,
                 tint: tint)
             workingDirectoryField
             advancedArguments(draft: draft)
+        }
+    }
+
+    private func systemPromptEditor(draft: AgentHarnessDraft, tint: Color) -> some View {
+        let byteCount = draft.systemPrompt.utf8.count
+        let isOversized = byteCount > AgentHarnessConfiguration.maximumSystemPromptBytes
+
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("System prompt")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(byteCount) / \(AgentHarnessConfiguration.maximumSystemPromptBytes) bytes")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(isOversized ? Color.red : Color.secondary)
+            }
+
+            ZStack(alignment: .topLeading) {
+                if draft.systemPrompt.isEmpty {
+                    Text("Optional instructions for this agent's tone, priorities, and response style…")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+
+                TextEditor(text: $profile.agentHarness.systemPrompt)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .padding(4)
+            }
+            .frame(minHeight: 88, maxHeight: 120)
+            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(isOversized ? Color.red.opacity(0.7) : tint.opacity(0.22))
+            }
+
+            Text("Sent before every spoken request on this profile. Responses are still requested as Markdown.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -391,9 +440,11 @@ private extension AgentHarnessPreset {
 private extension AgentPermissionPolicy {
     var displayName: String {
         switch self {
-        case .ask: "Ask"
+        case .ask: "Ask every time"
         case .allowOnce: "Allow once"
-        case .reject: "Reject"
+        case .allowAlways: "Always allow"
+        case .reject: "Deny once"
+        case .rejectAlways: "Always deny"
         }
     }
 }

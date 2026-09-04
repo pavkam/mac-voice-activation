@@ -994,6 +994,34 @@ struct VoiceActivationCoordinatorTests {
     }
 
     @MainActor
+    @Test func agentConversation_WhenVoiceUtteranceIsConsumed_DoesNotSubmitItAsFollowUp() async throws {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        var consumedUtterances: [String] = []
+        var turnCompleted = false
+        fixture.coordinator.onAgentVoiceUtterance = { utterance in
+            consumedUtterances.append(utterance)
+            return true
+        }
+        fixture.coordinator.onAgentRunEvent = { event in
+            if case .turnCompleted = event {
+                turnCompleted = true
+            }
+        }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent request access", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+        await fixture.agentRunner.complete(runIndex: 0)
+        await waitUntil { turnCompleted }
+
+        fixture.speech.emit("allow all", isFinal: true)
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(consumedUtterances == ["allow all"])
+        #expect(await fixture.agentRunner.recordedInvocations().count == 1)
+        #expect(fixture.speech.contextualStrings.contains("allow all"))
+    }
+
+    @MainActor
     @Test func endAgentConversation_WhenTerminalEventStartsAcknowledgement_DoesNotRestartConversationCapture() async throws {
         let fixture = try Fixture(profiles: [try makeAgentProfile()])
         var turnCompleted = false

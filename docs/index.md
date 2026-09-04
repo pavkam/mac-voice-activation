@@ -32,8 +32,11 @@ through a shell.
 - Agent targets stream bounded text, plans, tools, diagnostics, and permission
   choices into a non-activating floating panel, then keep listening for spoken
   follow-ups in the same ACP session.
+- Each agent profile can provide its own system prompt and default permission
+  level; interactive permission requests can be answered by voice.
 - Streaming reply speech through macOS or ElevenLabs and a narration-aware
-  working pulse make agent conversations audible; tests always replace them
-  with silent playback and network adapters.
+  working pulse make agent conversations audible. ElevenLabs voices are loaded
+  from the account catalog and can be previewed; tests always replace network
+  and playback boundaries with silent adapters.
 - The app has no Dock icon, server, Voice Activation account, audio archive,
   run-history database, or shell-evaluation layer.

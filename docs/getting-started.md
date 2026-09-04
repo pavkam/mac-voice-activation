@@ -94,8 +94,12 @@ Install and authenticate a supported ACP provider first. Then open
 2. Choose Cursor, Codex, Claude, or Custom.
 3. Confirm the detected absolute executable path and choose an absolute working
    folder.
-4. Select **Ask**, **Allow once**, or **Reject** for tool permissions.
-5. Select **Save Settings**.
+4. Choose the default permission level for this wake profile. **Ask every time**
+   keeps each decision interactive; scoped allow and deny defaults resolve the
+   corresponding ACP option automatically.
+5. Optionally add a system prompt that customizes the agent's response style and
+   priorities for this profile.
+6. Select **Save Settings**.
 
 Trigger that phrase and speak the task. The recording overlay morphs into a
 non-activating agent panel that streams an ordered Markdown response while your
@@ -105,11 +109,14 @@ tool details still expandable. Completed output remains available to select or
 copy. The microphone remains active after each response: speak another request
 to continue in the same agent session. Say `stop`, `cancel`, or `dismiss` to
 end the whole conversation, including active work. The panel and menu also
-provide separate **Stop turn** and **End conversation** controls.
+provide separate **Stop turn** and **End conversation** controls. When a tool
+requests permission, say `allow`, `allow all`, `deny`, or `deny all` to answer
+it by voice; the request collapses after the decision is sent.
 
 Agent conversation settings can read replies aloud while they stream through a
 macOS or ElevenLabs voice and play a quiet, narration-aware pulse during longer
-thinking or tool pauses. The optional ElevenLabs key is stored in macOS Keychain.
+thinking or tool pauses. ElevenLabs voices load from the API and can be previewed
+with **Test voice**; the optional key is stored in macOS Keychain.
 
 Provider credentials remain in the provider's own CLI configuration; Voice
 Activation does not ask for or persist them. Continue with the

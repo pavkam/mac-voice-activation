@@ -36,6 +36,21 @@ struct SettingsView: View {
         .onChange(of: model.agentSpeechProvider) { saved = false }
         .onChange(of: model.elevenLabsVoiceID) { saved = false }
         .onChange(of: model.elevenLabsAPIKey) { saved = false }
+        .task(id: ElevenLabsVoiceCatalogQuery(
+            provider: model.agentSpeechProvider,
+            apiKey: model.elevenLabsAPIKey))
+        {
+            guard model.agentSpeechProvider == .elevenLabs else {
+                await model.loadElevenLabsVoices()
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(450))
+            } catch {
+                return
+            }
+            await model.loadElevenLabsVoices()
+        }
     }
 
     private var header: some View {
@@ -130,17 +145,12 @@ struct SettingsView: View {
                 }
 
                 if model.agentSpeechProvider == .elevenLabs {
-                    HStack(alignment: .top, spacing: 12) {
-                        secureSettingsField(
-                            "ElevenLabs API key",
-                            hint: "sk_…",
-                            text: $model.elevenLabsAPIKey)
-                        settingsField(
-                            "Voice ID",
-                            hint: "Voice ID",
-                            text: $model.elevenLabsVoiceID,
-                            monospaced: true)
-                    }
+                    secureSettingsField(
+                        "ElevenLabs API key",
+                        hint: "sk_…",
+                        text: $model.elevenLabsAPIKey)
+
+                    elevenLabsVoiceSelector
 
                     Label(
                         "The API key is stored in your macOS Keychain. Speech text is sent to ElevenLabs for synthesis.",
@@ -156,6 +166,98 @@ struct SettingsView: View {
                 title: "Working pulse",
                 detail: "Plays an audible cue during longer pauses while the agent is thinking or using tools.",
                 isOn: $model.playsAgentWorkingSound)
+        }
+    }
+
+    private var elevenLabsVoiceSelector: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Voice")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if model.isLoadingElevenLabsVoices {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading voices…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 8) {
+                if model.elevenLabsVoices.isEmpty {
+                    TextField("Voice ID", text: $model.elevenLabsVoiceID)
+                        .font(.system(.body, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                } else {
+                    Picker("Voice", selection: $model.elevenLabsVoiceID) {
+                        if !model.elevenLabsVoiceID.isEmpty,
+                           !model.elevenLabsVoices.contains(where: {
+                               $0.id == model.elevenLabsVoiceID
+                           })
+                        {
+                            Text("Saved voice · \(model.elevenLabsVoiceID)")
+                                .tag(model.elevenLabsVoiceID)
+                        }
+                        ForEach(model.elevenLabsVoices) { voice in
+                            Text(voice.name).tag(voice.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Button {
+                    Task { await model.loadElevenLabsVoices() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(
+                    model.isLoadingElevenLabsVoices
+                        || model.elevenLabsAPIKey.trimmingCharacters(
+                            in: .whitespacesAndNewlines).isEmpty)
+
+                Button {
+                    Task { await model.previewElevenLabsVoice() }
+                } label: {
+                    Label(
+                        model.isPreviewingElevenLabsVoice ? "Playing…" : "Test voice",
+                        systemImage: model.isPreviewingElevenLabsVoice
+                            ? "waveform"
+                            : "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    model.isPreviewingElevenLabsVoice
+                        || model.elevenLabsAPIKey.trimmingCharacters(
+                            in: .whitespacesAndNewlines).isEmpty
+                        || model.elevenLabsVoiceID.trimmingCharacters(
+                            in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if let voice = model.elevenLabsVoices.first(where: {
+                $0.id == model.elevenLabsVoiceID
+            }) {
+                Text([voice.category?.capitalized, voice.description]
+                    .compactMap { $0 }
+                    .joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error = model.elevenLabsVoiceError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else if let status = model.elevenLabsVoiceStatus {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -473,6 +575,16 @@ struct SettingsView: View {
     private var nextAccent: WakeProfileAccent {
         let accents = WakeProfileAccent.allCases
         return accents[model.wakeProfiles.count % accents.count]
+    }
+}
+
+private struct ElevenLabsVoiceCatalogQuery: Hashable {
+    let provider: String
+    let apiKey: String
+
+    init(provider: AgentSpeechProvider, apiKey: String) {
+        self.provider = provider.rawValue
+        self.apiKey = apiKey
     }
 }
 

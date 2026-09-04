@@ -115,20 +115,25 @@ The failed process is discarded and a later trigger starts a fresh connection.
 
 ## An agent is waiting for permission
 
-With **Ask**, choose one of the exact options supplied by the provider in the
-panel. The app does not invent a broader approval. **Allow once** selects a
-one-shot approval when offered; **Reject** returns a rejection or cancelled
-outcome. Cancelling the run also cancels every pending permission request.
+With **Ask every time**, choose one of the exact options supplied by the provider
+in the panel or say `allow`, `allow all`, `deny`, or `deny all`. Spoken choices
+apply to the oldest visible request and collapse it immediately. Longer phrases
+remain agent follow-ups. Automatic permission levels select ACP's scoped option
+kinds and use the documented safer fallback when a provider omits that scope.
+Cancelling the run also cancels every pending permission request.
 
 ## Conversation speech or sounds do not play
 
 Confirm **Read replies aloud** and **Working pulse** are enabled in Settings and
 that **Save Settings** succeeded. The macOS provider uses the configured locale's
 system voice and obeys the current output volume. For ElevenLabs, confirm the API
-key and Voice ID are valid and that the Mac can reach `api.elevenlabs.io`; the key
-is read from macOS Keychain. A failed ElevenLabs request falls back to the macOS
-voice rather than dropping the spoken chunk. The working pulse waits 1.6 seconds
-before its first audible cue and pauses while narration is active.
+key and selected Voice ID are valid and that the Mac can reach
+`api.elevenlabs.io`; use **Refresh** to reload the account catalog and **Test
+voice** to verify synthesis. If catalog loading fails, paste a known Voice ID in
+the fallback field. The key is read from macOS Keychain. A failed ElevenLabs
+request falls back to the macOS voice rather than dropping the spoken chunk. The
+working pulse waits 1.6 seconds before its first audible cue and pauses while
+narration is active.
 
 Narration begins when a complete sentence arrives or output pauses for 350
 milliseconds. It does not wait for the whole agent process to finish. If several

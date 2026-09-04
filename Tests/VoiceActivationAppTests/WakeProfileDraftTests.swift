@@ -36,7 +36,8 @@ struct WakeProfileDraftTests {
             executablePath: "/Applications/Agent/bin/acp",
             arguments: ["--flag", "two words", ""],
             workingDirectory: "/Users/test/Project With Spaces",
-            permissionPolicy: .reject)
+            permissionPolicy: .rejectAlways,
+            systemPrompt: "Answer like a terse staff engineer.")
         let profile = try WakeProfile(
             id: id,
             wakePhrase: "darling",
@@ -48,6 +49,20 @@ struct WakeProfileDraftTests {
         let roundTripped = try WakeProfileDraft(profile: profile).validatedProfile()
 
         #expect(roundTripped == profile)
+    }
+
+    @Test func validatedProfile_WhenAgentPromptIsEdited_PreservesPromptAndPermissionDefault() throws {
+        var draft = AgentHarnessDraft.empty(workingDirectory: "/Users/test/project")
+        draft.displayName = "Codex"
+        draft.executablePath = "/usr/bin/agent"
+        draft.permissionPolicy = .allowAlways
+        draft.systemPrompt = "Use Markdown and explain risks first."
+
+        let configuration = try draft.validatedConfiguration()
+
+        #expect(configuration.permissionPolicy == .allowAlways)
+        #expect(configuration.systemPrompt == "Use Markdown and explain risks first.")
+        #expect(AgentHarnessDraft(configuration: configuration) == draft)
     }
 
     @Test func targetKind_WhenSwitchedTwice_PreservesBothUnsavedConfigurations() throws {

@@ -1,8 +1,9 @@
 # Voice Activation
 
-A small macOS menu-bar app that listens for configurable wake phrases or a
-push-to-talk shortcut, transcribes speech, and either runs a direct command or
-sends the request to a local coding agent through Agent Client Protocol (ACP).
+A native macOS menu-bar voice launcher for configurable wake phrases,
+push-to-talk commands, and live conversations with local coding agents through
+Agent Client Protocol (ACP). It transcribes speech, runs direct commands, streams
+Markdown agent output, and keeps the conversation controllable by voice.
 
 It is intentionally focused: native speech recognition, colored wake profiles,
 push-to-talk, direct argument execution, and streamed local-agent runs without
@@ -96,15 +97,16 @@ custom ACP v1 executable. A fresh Agent target selects the first installed
 provider it can find. The executable field resolves command names from the
 app's inherited `PATH` and common Homebrew, local, ChatGPT, and NVM locations;
 **Detect** retries discovery, while the folder button selects an executable
-directly. Select an absolute working folder, choose a permission policy, and
-save.
+directly. Select an absolute working folder, choose a default permission policy,
+add an optional profile-specific system prompt, and save.
 
 The app keeps the foreground application focused while a floating panel streams
 an ordered Markdown timeline. Tool work starts as a compact animated row and
 collapses to an expandable result row when it finishes—even when a provider
 omits a final tool status; permission prompts disappear as soon as a choice is
-made. New output follows the bottom of the panel until you deliberately scroll
-upward.
+made. Say `allow`, `allow all`, `deny`, or `deny all` to answer the oldest
+visible permission request without touching the panel. New output follows the
+bottom of the panel until you deliberately scroll upward.
 
 The microphone stays live after the first response. Speak another request—or
 use the profile's push-to-talk binding—to continue in the same ACP session and
@@ -115,11 +117,14 @@ Up to 16 follow-ups may wait behind active work; the panel reports when that
 bounded queue is full instead of growing memory without limit.
 
 Settings can read replies aloud as they stream, using either the matching macOS
-system voice or an ElevenLabs voice. Complete sentences are queued immediately;
-an unfinished sentence is queued after a short output pause, so narration starts
-before the agent turn ends without overlapping itself. The working pulse pauses
-while speech plays. Voice cancellation says “Stopped” when reply speech is
-enabled, and tests inject silent audio players, so CI never emits speaker sounds.
+system voice or an ElevenLabs voice loaded from the account catalog. The
+selected voice can be previewed before saving, with manual Voice ID entry as a
+fallback when the catalog is unavailable. Complete sentences are queued
+immediately; an unfinished sentence is queued after a short output pause, so
+narration starts before the agent turn ends without overlapping itself. The
+working pulse pauses while speech plays. Voice cancellation says “Stopped” when
+reply speech is enabled, and tests inject silent audio players, so CI never emits
+speaker sounds.
 Closing the completed panel keeps its bounded output available from **Open** in
 the menu. **Delete** is available both there and in the conversation panel; it
 hides the panel and releases that retained output from memory.
