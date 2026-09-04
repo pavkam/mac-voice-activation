@@ -50,6 +50,7 @@ final class AgentRunPanelPresenter {
 
     private let display: any AgentRunPanelDisplaying
     private let pasteboard: any AgentRunPasteboardWriting
+    private let diagnostics: any VoiceActivationDiagnosticRecording
     private var snapshot: AgentRunSnapshot?
     private var cancelledRunID: UUID?
     private var endedRunID: UUID?
@@ -58,10 +59,12 @@ final class AgentRunPanelPresenter {
 
     init(
         display: any AgentRunPanelDisplaying,
-        pasteboard: any AgentRunPasteboardWriting = SystemAgentRunPasteboardWriter())
-    {
+        pasteboard: any AgentRunPasteboardWriting = SystemAgentRunPasteboardWriter(),
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.display = display
         self.pasteboard = pasteboard
+        self.diagnostics = diagnostics
         display.onAction = { [weak self] action in
             self?.handle(action)
         }
@@ -74,16 +77,35 @@ final class AgentRunPanelPresenter {
         isMinimized = false
         resolvedPermissions = []
         display.begin(snapshot, from: handoff)
+        diagnostics.record(
+            category: .ui,
+            event: "agent_panel.began",
+            fields: Self.snapshotFields(snapshot).merging([
+                "has_overlay_handoff": String(handoff != nil)
+            ]) { _, new in new })
     }
 
     func update(_ snapshot: AgentRunSnapshot) {
-        guard self.snapshot?.runID == snapshot.runID else { return }
+        guard self.snapshot?.runID == snapshot.runID else {
+            diagnostics.record(
+                category: .ui,
+                event: "agent_panel.update_ignored",
+                fields: [
+                    "run_id": snapshot.runID.uuidString,
+                    "reason": "stale_run",
+                ])
+            return
+        }
         if snapshot.phase == .running, self.snapshot?.phase != .running {
             cancelledRunID = nil
         }
         resolvedPermissions.formIntersection(snapshot.permissions.lazy.map(\.key))
         self.snapshot = snapshot
         display.update(snapshot)
+        diagnostics.record(
+            category: .ui,
+            event: "agent_panel.updated",
+            fields: Self.snapshotFields(snapshot))
     }
 
     func show(runID: UUID) {
@@ -106,54 +128,175 @@ final class AgentRunPanelPresenter {
     }
 
     private func handle(_ action: AgentRunPanelAction) {
-        guard let snapshot else { return }
+        diagnostics.record(
+            category: .ui,
+            event: "agent_panel.action_received",
+            fields: action.diagnosticFields)
+        guard let snapshot else {
+            recordIgnored(action, reason: "no_snapshot")
+            return
+        }
         switch action {
-        case let .cancel(runID):
+        case .cancel(let runID):
             guard snapshot.runID == runID,
-                  snapshot.phase == .running,
-                  cancelledRunID != runID
-            else { return }
+                snapshot.phase == .running,
+                cancelledRunID != runID
+            else {
+                recordIgnored(action, reason: "run_not_cancellable")
+                return
+            }
             cancelledRunID = runID
             display.hide(runID: runID)
             onCancel?(runID)
-        case let .endConversation(runID):
+            recordApplied(action)
+        case .endConversation(let runID):
             guard snapshot.runID == runID,
-                  !snapshot.phase.isTerminal,
-                  endedRunID != runID
-            else { return }
+                !snapshot.phase.isTerminal,
+                endedRunID != runID
+            else {
+                recordIgnored(action, reason: "conversation_not_active")
+                return
+            }
             endedRunID = runID
             onEndConversation?(runID)
-        case let .permission(runID, key, optionID):
+            recordApplied(action)
+        case .permission(let runID, let key, let optionID):
             guard snapshot.runID == runID,
-                  snapshot.phase == .running,
-                  !resolvedPermissions.contains(key),
-                  snapshot.permissions.contains(where: {
-                      $0.key == key && !$0.isResolving
-                  })
-            else { return }
+                snapshot.phase == .running,
+                !resolvedPermissions.contains(key),
+                snapshot.permissions.contains(where: {
+                    $0.key == key && !$0.isResolving
+                })
+            else {
+                recordIgnored(action, reason: "permission_not_resolvable")
+                return
+            }
             resolvedPermissions.insert(key)
             onPermission?(runID, key, optionID)
-        case let .copy(runID):
-            guard snapshot.runID == runID, snapshot.phase.isTerminal else { return }
+            recordApplied(action)
+        case .copy(let runID):
+            guard snapshot.runID == runID, snapshot.phase.isTerminal else {
+                recordIgnored(action, reason: "output_not_copyable")
+                return
+            }
             pasteboard.write(snapshot.copyText)
-        case let .close(runID):
-            guard snapshot.runID == runID, snapshot.phase.isTerminal else { return }
+            recordApplied(
+                action,
+                fields: [
+                    "copied_character_count": String(snapshot.copyText.count)
+                ])
+        case .close(let runID):
+            guard snapshot.runID == runID, snapshot.phase.isTerminal else {
+                recordIgnored(action, reason: "run_not_closable")
+                return
+            }
             display.hide(runID: runID)
             onClose?(runID)
-        case let .delete(runID):
-            guard snapshot.runID == runID, snapshot.phase.isTerminal else { return }
+            recordApplied(action)
+        case .delete(let runID):
+            guard snapshot.runID == runID, snapshot.phase.isTerminal else {
+                recordIgnored(action, reason: "run_not_deletable")
+                return
+            }
             self.snapshot = nil
             isMinimized = false
             display.hide(runID: runID)
             onDelete?(runID)
-        case let .minimize(runID):
-            guard snapshot.runID == runID, !isMinimized else { return }
+            recordApplied(action)
+        case .minimize(let runID):
+            guard snapshot.runID == runID, !isMinimized else {
+                recordIgnored(action, reason: "already_minimized_or_stale")
+                return
+            }
             isMinimized = true
             display.minimize(runID: runID)
-        case let .restore(runID):
-            guard snapshot.runID == runID, isMinimized else { return }
+            recordApplied(action)
+        case .restore(let runID):
+            guard snapshot.runID == runID, isMinimized else {
+                recordIgnored(action, reason: "not_minimized_or_stale")
+                return
+            }
             isMinimized = false
             display.restore(runID: runID)
+            recordApplied(action)
+        }
+    }
+
+    private func recordApplied(
+        _ action: AgentRunPanelAction,
+        fields: [String: String] = [:]
+    ) {
+        diagnostics.record(
+            category: .ui,
+            event: "agent_panel.action_applied",
+            fields: action.diagnosticFields.merging(fields) { _, new in new })
+    }
+
+    private func recordIgnored(_ action: AgentRunPanelAction, reason: String) {
+        diagnostics.record(
+            category: .ui,
+            event: "agent_panel.action_ignored",
+            level: .warning,
+            fields: action.diagnosticFields.merging(["reason": reason]) { _, new in new })
+    }
+
+    private static func snapshotFields(_ snapshot: AgentRunSnapshot) -> [String: String] {
+        [
+            "run_id": snapshot.runID.uuidString,
+            "phase": snapshot.phase.diagnosticName,
+            "timeline_item_count": String(snapshot.timeline.count),
+            "permission_count": String(snapshot.permissions.count),
+            "notice_count": String(snapshot.notices.count),
+            "elapsed_seconds": String(snapshot.elapsedSeconds),
+        ]
+    }
+}
+
+extension AgentRunPanelAction {
+    fileprivate var diagnosticFields: [String: String] {
+        [
+            "action": diagnosticName,
+            "run_id": runID.uuidString,
+        ]
+    }
+
+    fileprivate var diagnosticName: String {
+        switch self {
+        case .cancel: "stop_turn"
+        case .endConversation: "end_conversation"
+        case .permission: "permission"
+        case .copy: "copy"
+        case .close: "close"
+        case .delete: "delete"
+        case .minimize: "minimize"
+        case .restore: "restore"
+        }
+    }
+
+    fileprivate var runID: UUID {
+        switch self {
+        case .cancel(let runID),
+            .endConversation(let runID),
+            .copy(let runID),
+            .close(let runID),
+            .delete(let runID),
+            .minimize(let runID),
+            .restore(let runID):
+            runID
+        case .permission(let runID, _, _):
+            runID
+        }
+    }
+}
+
+extension AgentRunPhase {
+    fileprivate var diagnosticName: String {
+        switch self {
+        case .listening: "listening"
+        case .running: "running"
+        case .cancelling: "cancelling"
+        case .completed: "completed"
+        case .failed: "failed"
         }
     }
 }

@@ -3,7 +3,9 @@
 
 import Foundation
 import Testing
+
 @testable import VoiceActivationApp
+@testable import VoiceActivationCore
 
 private actor ManualActivitySleeper {
     private struct Waiter {
@@ -26,10 +28,11 @@ private actor ManualActivitySleeper {
                 if Task.isCancelled {
                     continuation.resume(throwing: CancellationError())
                 } else {
-                    waiters.append(Waiter(
-                        id: id,
-                        delay: delay,
-                        continuation: continuation))
+                    waiters.append(
+                        Waiter(
+                            id: id,
+                            delay: delay,
+                            continuation: continuation))
                 }
             }
         } onCancel: {
@@ -64,6 +67,28 @@ private final class ActivitySoundPlayerRecorder: AgentActivitySoundPlaying {
 
 @Suite(.timeLimit(.minutes(1)))
 struct AgentActivitySoundLoopTests {
+    @MainActor @Test func setWorking_WhenEnabled_RecordsImmediateAndScheduledSoundState()
+        async throws
+    {
+        let diagnostics = AppDiagnosticRecorderSpy()
+        let sleeper = ManualActivitySleeper()
+        let loop = AgentActivitySoundLoop(
+            player: ActivitySoundPlayerRecorder(),
+            initialDelay: .seconds(2),
+            interval: .seconds(5),
+            sleep: { try await sleeper.sleep(for: $0) },
+            diagnostics: diagnostics)
+
+        loop.setWorking(true)
+        try await waitUntil { await sleeper.delays == [.seconds(5)] }
+
+        let events = diagnostics.snapshot().map(\.event)
+        #expect(events.contains("activity.working_changed"))
+        #expect(events.contains("activity.sound_requested"))
+        #expect(events.contains("activity.pulse_scheduled"))
+        loop.stop()
+    }
+
     @MainActor @Test func setWorking_WhenEnabled_PlaysImmediatelyThenRepeatsOnClock()
         async throws
     {
@@ -131,8 +156,8 @@ struct AgentActivitySoundLoopTests {
     @MainActor
     private func waitUntil(
         timeout: Duration = .seconds(1),
-        condition: @escaping @MainActor () async -> Bool) async throws
-    {
+        condition: @escaping @MainActor () async -> Bool
+    ) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {

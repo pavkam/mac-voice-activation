@@ -44,17 +44,31 @@ final class AppCaptureSoundAssets: CaptureSoundAssetPlaying {
 @MainActor
 final class SystemCaptureSoundPlayer: CaptureSoundPlaying {
     private let assetPlayer: any CaptureSoundAssetPlaying
+    private let diagnostics: any VoiceActivationDiagnosticRecording
 
-    init(assetPlayer: any CaptureSoundAssetPlaying = AppCaptureSoundAssets()) {
+    init(
+        assetPlayer: any CaptureSoundAssetPlaying = AppCaptureSoundAssets(),
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.assetPlayer = assetPlayer
+        self.diagnostics = diagnostics
     }
 
     func play(_ event: CaptureSoundEvent) {
-        let names = switch event {
-        case .started: (bundled: "CaptureStart", fallback: "Pop")
-        case .ended: (bundled: "CaptureEnd", fallback: "Tink")
-        }
-        if !assetPlayer.playBundled(named: names.bundled) {
+        let names =
+            switch event {
+            case .started: (bundled: "CaptureStart", fallback: "Pop")
+            case .ended: (bundled: "CaptureEnd", fallback: "Tink")
+            }
+        let bundledStarted = assetPlayer.playBundled(named: names.bundled)
+        diagnostics.record(
+            category: .audio,
+            event: "capture_sound.output_attempted",
+            fields: [
+                "event": event == .started ? "started" : "ended",
+                "bundled_started": String(bundledStarted),
+            ])
+        if !bundledStarted {
             assetPlayer.playSystem(named: names.fallback)
         }
     }
@@ -71,8 +85,16 @@ final class CaptureSoundPresenter {
 
     func update(state: ActivationState) {
         if previousState != .capturing, state == .capturing {
+            VoiceActivationDiagnostics.shared.record(
+                category: .audio,
+                event: "capture_sound.transition_requested",
+                fields: ["transition": "started"])
             player.play(.started)
         } else if previousState == .capturing, state != .capturing {
+            VoiceActivationDiagnostics.shared.record(
+                category: .audio,
+                event: "capture_sound.transition_requested",
+                fields: ["transition": "ended"])
             player.play(.ended)
         }
         previousState = state

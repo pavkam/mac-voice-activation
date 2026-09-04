@@ -22,6 +22,13 @@ public final class VoiceActivationCoordinator {
 
     public private(set) var state: ActivationState = .disabled {
         didSet {
+            diagnostics.record(
+                category: .app,
+                event: "coordinator.state_changed",
+                fields: [
+                    "previous_state": oldValue.coordinatorDiagnosticName,
+                    "state": state.coordinatorDiagnosticName,
+                ])
             onStateChange?(state)
             if state != .capturing {
                 currentTranscript = ""
@@ -29,13 +36,35 @@ public final class VoiceActivationCoordinator {
         }
     }
     public private(set) var lastTranscript = "" {
-        didSet { onTranscriptChange?(lastTranscript) }
+        didSet {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.last_transcript_changed",
+                fields: ["character_count": String(lastTranscript.count)])
+            onTranscriptChange?(lastTranscript)
+        }
     }
     public private(set) var currentTranscript = "" {
-        didSet { onCurrentTranscriptChange?(currentTranscript) }
+        didSet {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.current_transcript_changed",
+                level: .debug,
+                fields: ["character_count": String(currentTranscript.count)])
+            onCurrentTranscriptChange?(currentTranscript)
+        }
     }
     public private(set) var activeProfile: WakeProfile? {
-        didSet { onActiveProfileChange?(activeProfile) }
+        didSet {
+            diagnostics.record(
+                category: .app,
+                event: "coordinator.active_profile_changed",
+                fields: [
+                    "has_profile": String(activeProfile != nil),
+                    "profile_id": activeProfile?.id.uuidString ?? "",
+                ])
+            onActiveProfileChange?(activeProfile)
+        }
     }
 
     public var onStateChange: ((ActivationState) -> Void)?
@@ -51,6 +80,7 @@ public final class VoiceActivationCoordinator {
     private let agentRunner: any AgentHarnessRunning
     private let configuration: () throws -> ActivationConfiguration
     private let timing: ActivationTiming
+    private let diagnostics: any VoiceActivationDiagnosticRecording
     private var passiveEnabled = false
     private var pushToTalkActive = false
     private var capturedAction: WakeProfileAction?
@@ -84,14 +114,16 @@ public final class VoiceActivationCoordinator {
         speechSession: any SpeechSessionProtocol,
         commandRunner: any CommandRunning,
         agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
-        configuration: @escaping () throws -> ActivationConfiguration)
-    {
+        configuration: @escaping () throws -> ActivationConfiguration,
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.init(
             speechSession: speechSession,
             commandRunner: commandRunner,
             agentRunner: agentRunner,
             configuration: configuration,
-            timing: .standard)
+            timing: .standard,
+            diagnostics: diagnostics)
     }
 
     init(
@@ -99,16 +131,26 @@ public final class VoiceActivationCoordinator {
         commandRunner: any CommandRunning,
         agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
         configuration: @escaping () throws -> ActivationConfiguration,
-        timing: ActivationTiming)
-    {
+        timing: ActivationTiming,
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.speechSession = speechSession
         self.commandRunner = commandRunner
         self.agentRunner = agentRunner
         self.configuration = configuration
         self.timing = timing
+        self.diagnostics = diagnostics
+        diagnostics.record(category: .app, event: "coordinator.initialized")
     }
 
     public func setPassiveEnabled(_ enabled: Bool) {
+        diagnostics.record(
+            category: .app,
+            event: "coordinator.passive_listening_requested",
+            fields: [
+                "enabled": String(enabled),
+                "conversation_active": String(isAgentConversationActive),
+            ])
         passiveEnabled = enabled
         guard !isAgentConversationActive else { return }
 
@@ -122,7 +164,18 @@ public final class VoiceActivationCoordinator {
     }
 
     public func refreshConfiguration() {
-        guard passiveEnabled, !pushToTalkActive, !isAgentConversationActive else { return }
+        guard passiveEnabled, !pushToTalkActive, !isAgentConversationActive else {
+            diagnostics.record(
+                category: .settings,
+                event: "coordinator.configuration_refresh_deferred",
+                fields: [
+                    "passive_enabled": String(passiveEnabled),
+                    "push_to_talk_active": String(pushToTalkActive),
+                    "conversation_active": String(isAgentConversationActive),
+                ])
+            return
+        }
+        diagnostics.record(category: .settings, event: "coordinator.configuration_refreshed")
         startPassiveListening()
     }
 
@@ -132,7 +185,17 @@ public final class VoiceActivationCoordinator {
     }
 
     public func pushToTalkPressed(profileID: UUID) {
-        guard !pushToTalkActive else { return }
+        diagnostics.record(
+            category: .hotKey,
+            event: "coordinator.push_to_talk_pressed",
+            fields: ["profile_id": profileID.uuidString])
+        guard !pushToTalkActive else {
+            diagnostics.record(
+                category: .hotKey,
+                event: "coordinator.push_to_talk_ignored",
+                fields: ["reason": "already_active"])
+            return
+        }
 
         do {
             let config = try configuration()
@@ -170,6 +233,11 @@ public final class VoiceActivationCoordinator {
             state = .capturing
             startSession(mode: .pushToTalk, localeID: config.localeID)
         } catch {
+            diagnostics.record(
+                category: .hotKey,
+                event: "coordinator.push_to_talk_failed",
+                level: .error,
+                fields: ["error_type": String(describing: type(of: error))])
             state = .failed(error.localizedDescription)
             pushToTalkActive = false
             resumePassiveIfNeeded()
@@ -177,8 +245,21 @@ public final class VoiceActivationCoordinator {
     }
 
     public func pushToTalkReleased() {
-        guard pushToTalkActive else { return }
+        guard pushToTalkActive else {
+            diagnostics.record(
+                category: .hotKey,
+                event: "coordinator.push_to_talk_release_ignored",
+                fields: ["reason": "not_active"])
+            return
+        }
         let transcript = capturedCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        diagnostics.record(
+            category: .hotKey,
+            event: "coordinator.push_to_talk_released",
+            fields: [
+                "character_count": String(transcript.count),
+                "continues_conversation": String(pushToTalkContinuesConversation),
+            ])
 
         if pushToTalkContinuesConversation {
             pushToTalkActive = false
@@ -211,7 +292,14 @@ public final class VoiceActivationCoordinator {
     }
 
     public func cancelCapture() {
-        guard state == .capturing else { return }
+        guard state == .capturing else {
+            diagnostics.record(
+                category: .ui,
+                event: "coordinator.capture_cancel_ignored",
+                fields: ["state": state.coordinatorDiagnosticName])
+            return
+        }
+        diagnostics.record(category: .ui, event: "coordinator.capture_cancelled")
         pushToTalkActive = false
         capturedCommand = ""
         stopActiveSession()
@@ -230,7 +318,18 @@ public final class VoiceActivationCoordinator {
             let runID = activeAgentRunID,
             executionTask != nil,
             agentCancellationTask == nil
-        else { return }
+        else {
+            diagnostics.record(
+                category: .agent,
+                event: "coordinator.agent_cancel_ignored",
+                fields: ["reason": "no_cancellable_turn"])
+            return
+        }
+
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.agent_cancel_requested",
+            fields: ["run_id": runID.uuidString])
 
         onAgentRunEvent?(.turnCancellationStarted(runID: runID))
         executionGeneration &+= 1
@@ -240,6 +339,7 @@ public final class VoiceActivationCoordinator {
     }
 
     public func endAgentConversation() {
+        diagnostics.record(category: .agent, event: "coordinator.conversation_end_requested")
         requestAgentConversationEnd(
             result: AgentRunResult(stopReason: .endTurn))
     }
@@ -271,6 +371,14 @@ public final class VoiceActivationCoordinator {
     public func setAgentSpeechOutputActive(_ active: Bool) {
         guard agentSpeechOutputActive != active else { return }
         agentSpeechOutputActive = active
+        diagnostics.record(
+            category: .audio,
+            event: "coordinator.agent_speech_output_changed",
+            fields: [
+                "active": String(active),
+                "conversation_active": String(isAgentConversationActive),
+                "push_to_talk_active": String(pushToTalkActive),
+            ])
         guard isAgentConversationActive, !pushToTalkActive else { return }
         if active {
             resetConversationCapture()
@@ -285,12 +393,26 @@ public final class VoiceActivationCoordinator {
         runID: UUID,
         turnToken: AgentTurnToken,
         requestID: ACPRequestID,
-        optionID: String?)
-    {
+        optionID: String?
+    ) {
         guard
             case .agent = executingAction,
             activeAgentRunID == runID
-        else { return }
+        else {
+            diagnostics.record(
+                category: .agent,
+                event: "coordinator.permission_resolution_ignored",
+                fields: ["run_id": runID.uuidString])
+            return
+        }
+
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.permission_resolution_requested",
+            fields: [
+                "run_id": runID.uuidString,
+                "has_option": String(optionID != nil),
+            ])
 
         let activeExecutionGeneration = executionGeneration
         Task { @MainActor [weak self, agentRunner] in
@@ -307,6 +429,7 @@ public final class VoiceActivationCoordinator {
     }
 
     public func stop() {
+        diagnostics.record(category: .app, event: "coordinator.stop_requested")
         executionGeneration &+= 1
         passiveEnabled = false
         pushToTalkActive = false
@@ -343,6 +466,9 @@ public final class VoiceActivationCoordinator {
     }
 
     private func startPassiveListening() {
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.passive_listening_starting")
         stopActiveSession()
         capturedCommand = ""
         currentTranscript = ""
@@ -354,6 +480,11 @@ public final class VoiceActivationCoordinator {
             let config = try configuration()
             let enabledProfiles = config.profiles.filter(\.isEnabled)
             guard !enabledProfiles.isEmpty else {
+                diagnostics.record(
+                    category: .speechRecognition,
+                    event: "coordinator.passive_listening_not_started",
+                    level: .warning,
+                    fields: ["reason": "no_enabled_profiles"])
                 state = .disabled
                 return
             }
@@ -363,6 +494,11 @@ public final class VoiceActivationCoordinator {
                 localeID: config.localeID,
                 contextualStrings: enabledProfiles.map(\.wakePhrase))
         } catch {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.passive_listening_failed",
+                level: .error,
+                fields: ["error_type": String(describing: type(of: error))])
             state = .failed(error.localizedDescription)
         }
     }
@@ -370,10 +506,18 @@ public final class VoiceActivationCoordinator {
     private func startSession(
         mode: SpeechSessionMode,
         localeID: String,
-        contextualStrings: [String] = [])
-    {
+        contextualStrings: [String] = []
+    ) {
         generation &+= 1
         let activeGeneration = generation
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.session_starting",
+            fields: [
+                "generation": String(activeGeneration),
+                "mode": mode.coordinatorDiagnosticName,
+                "contextual_phrase_count": String(contextualStrings.count),
+            ])
         do {
             try speechSession.start(
                 mode: mode,
@@ -387,7 +531,23 @@ public final class VoiceActivationCoordinator {
                     guard let self, self.generation == activeGeneration else { return }
                     self.handleInterruption(mode: mode)
                 })
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.session_started",
+                fields: [
+                    "generation": String(activeGeneration),
+                    "mode": mode.coordinatorDiagnosticName,
+                ])
         } catch {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.session_start_failed",
+                level: .error,
+                fields: [
+                    "generation": String(activeGeneration),
+                    "mode": mode.coordinatorDiagnosticName,
+                    "error_type": String(describing: type(of: error)),
+                ])
             state = .failed(error.localizedDescription)
             if mode == .conversation {
                 scheduleConversationRestart()
@@ -398,6 +558,11 @@ public final class VoiceActivationCoordinator {
     }
 
     private func handleInterruption(mode: SpeechSessionMode) {
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.session_interrupted",
+            level: .warning,
+            fields: ["mode": mode.coordinatorDiagnosticName])
         stopActiveSession()
         capturedCommand = ""
         currentTranscript = ""
@@ -420,6 +585,16 @@ public final class VoiceActivationCoordinator {
     }
 
     private func handle(_ update: SpeechUpdate, mode: SpeechSessionMode) {
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.recognition_update",
+            level: update.errorDescription == nil ? .debug : .error,
+            fields: [
+                "mode": mode.coordinatorDiagnosticName,
+                "character_count": String(update.transcript.count),
+                "is_final": String(update.isFinal),
+                "has_error": String(update.errorDescription != nil),
+            ])
         if let error = update.errorDescription {
             stopActiveSession()
             state = .failed(error)
@@ -478,10 +653,19 @@ public final class VoiceActivationCoordinator {
             }
         }
 
-        guard let match = WakePhraseMatcher.match(
-            in: update.transcript,
-            profiles: profiles)
+        guard
+            let match = WakePhraseMatcher.match(
+                in: update.transcript,
+                profiles: profiles)
         else {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.wake_phrase_not_matched",
+                level: .debug,
+                fields: [
+                    "is_final": String(update.isFinal),
+                    "character_count": String(update.transcript.count),
+                ])
             if wakeHandoffTask != nil {
                 cancelWakeHandoff()
                 activeProfile = nil
@@ -492,6 +676,15 @@ public final class VoiceActivationCoordinator {
             if update.isFinal { startPassiveListening() }
             return
         }
+
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.wake_phrase_matched",
+            fields: [
+                "profile_id": match.profile.id.uuidString,
+                "command_character_count": String(match.command.count),
+                "is_final": String(update.isFinal),
+            ])
 
         if capturedAction == nil {
             activeProfile = match.profile
@@ -527,6 +720,9 @@ public final class VoiceActivationCoordinator {
     }
 
     private func startCommandCapture(localeID: String) {
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.command_capture_started")
         stopActiveSession()
         currentTranscript = ""
         state = .capturing
@@ -538,6 +734,10 @@ public final class VoiceActivationCoordinator {
     private func scheduleWakeHandoff(localeID: String) {
         guard wakeHandoffTask == nil else { return }
         let activeGeneration = generation
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.wake_handoff_scheduled",
+            fields: ["generation": String(activeGeneration)])
         wakeHandoffTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.wakeHandoffDelay)
             guard
@@ -547,13 +747,23 @@ public final class VoiceActivationCoordinator {
                 self.capturedCommand.isEmpty
             else { return }
             self.wakeHandoffTask = nil
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.wake_handoff_fired",
+                fields: ["generation": String(activeGeneration)])
             self.startCommandCapture(localeID: localeID)
         }
     }
 
     private func cancelWakeHandoff() {
+        let wasScheduled = wakeHandoffTask != nil
         wakeHandoffTask?.cancel()
         wakeHandoffTask = nil
+        if wasScheduled {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.wake_handoff_cancelled")
+        }
     }
 
     private func restartCommandCapture(localeID: String) {
@@ -598,7 +808,22 @@ public final class VoiceActivationCoordinator {
             isAgentConversationActive,
             !pushToTalkActive,
             let localeID = capturedLocaleID
-        else { return }
+        else {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.conversation_listening_not_started",
+                level: .debug,
+                fields: [
+                    "conversation_active": String(isAgentConversationActive),
+                    "push_to_talk_active": String(pushToTalkActive),
+                    "has_locale": String(capturedLocaleID != nil),
+                ])
+            return
+        }
+
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.conversation_listening_started")
 
         resetConversationCapture()
         stopSpeechSession()
@@ -614,11 +839,23 @@ public final class VoiceActivationCoordinator {
     }
 
     private func handleConversationCapture(_ update: SpeechUpdate) {
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.conversation_capture_update",
+            level: .debug,
+            fields: [
+                "character_count": String(update.transcript.count),
+                "is_final": String(update.isFinal),
+                "speech_output_active": String(agentSpeechOutputActive),
+            ])
         if agentSpeechOutputActive {
             let transcript = update.transcript
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if CaptureCancellationMatcher.matches(transcript, isComplete: update.isFinal) {
                 agentSpeechOutputActive = false
+                diagnostics.record(
+                    category: .agent,
+                    event: "coordinator.voice_cancel_during_speech")
                 onAgentSpeechCancellation?()
                 cancelAgentConversationFromSpeech()
                 return
@@ -634,6 +871,10 @@ public final class VoiceActivationCoordinator {
             // Clear this before stopping playback. The synchronous speech callback
             // must not replace the recognition session that owns this utterance.
             agentSpeechOutputActive = false
+            diagnostics.record(
+                category: .audio,
+                event: "coordinator.speech_barged_in",
+                fields: ["character_count": String(transcript.count)])
             onAgentSpeechCancellation?()
         }
 
@@ -658,6 +899,10 @@ public final class VoiceActivationCoordinator {
     private func scheduleConversationInactivity() {
         let activeGeneration = conversationCaptureGeneration
         conversationInactivityTask?.cancel()
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.conversation_inactivity_scheduled",
+            fields: ["generation": String(activeGeneration)])
         conversationInactivityTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.captureInactivity)
             guard
@@ -665,6 +910,10 @@ public final class VoiceActivationCoordinator {
                 let self,
                 self.conversationCaptureGeneration == activeGeneration
             else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.conversation_inactivity_fired",
+                fields: ["generation": String(activeGeneration)])
             self.finishConversationUtterance()
         }
     }
@@ -672,6 +921,10 @@ public final class VoiceActivationCoordinator {
     private func scheduleConversationHardStop() {
         guard conversationHardStopTask == nil else { return }
         let activeGeneration = conversationCaptureGeneration
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.conversation_hard_stop_scheduled",
+            fields: ["generation": String(activeGeneration)])
         conversationHardStopTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.captureMaximum)
             guard
@@ -679,18 +932,32 @@ public final class VoiceActivationCoordinator {
                 let self,
                 self.conversationCaptureGeneration == activeGeneration
             else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.conversation_hard_stop_fired",
+                fields: ["generation": String(activeGeneration)])
             self.finishConversationUtterance()
         }
     }
 
     private func finishConversationUtterance() {
         let transcript = conversationUtterance.trimmingCharacters(in: .whitespacesAndNewlines)
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.conversation_utterance_finished",
+            fields: ["character_count": String(transcript.count)])
         startConversationListening()
         guard !transcript.isEmpty else { return }
 
         if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
+            diagnostics.record(
+                category: .agent,
+                event: "coordinator.conversation_cancel_voice_command")
             cancelAgentConversationFromSpeech()
         } else if onAgentVoiceUtterance?(transcript) == true {
+            diagnostics.record(
+                category: .agent,
+                event: "coordinator.conversation_voice_command_handled")
             return
         } else {
             submitAgentFollowUp(transcript)
@@ -707,9 +974,15 @@ public final class VoiceActivationCoordinator {
 
     private func scheduleConversationRestart() {
         conversationRestartTask?.cancel()
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.conversation_restart_scheduled")
         conversationRestartTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.passiveRestart)
             guard !Task.isCancelled, let self, self.isAgentConversationActive else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.conversation_restart_fired")
             self.startConversationListening()
         }
     }
@@ -717,6 +990,10 @@ public final class VoiceActivationCoordinator {
     private func scheduleCaptureInitialSilence() {
         guard initialSilenceTask == nil else { return }
         let activeCaptureGeneration = captureGeneration
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.capture_initial_silence_scheduled",
+            fields: ["generation": String(activeCaptureGeneration)])
         initialSilenceTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.captureInitialSilence)
             guard
@@ -724,6 +1001,10 @@ public final class VoiceActivationCoordinator {
                 let self,
                 self.captureGeneration == activeCaptureGeneration
             else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.capture_initial_silence_fired",
+                fields: ["generation": String(activeCaptureGeneration)])
             self.finishPassiveCapture()
         }
     }
@@ -736,6 +1017,10 @@ public final class VoiceActivationCoordinator {
     private func scheduleCaptureInactivity() {
         let activeCaptureGeneration = captureGeneration
         inactivityTask?.cancel()
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.capture_inactivity_scheduled",
+            fields: ["generation": String(activeCaptureGeneration)])
         inactivityTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.captureInactivity)
             guard
@@ -743,6 +1028,10 @@ public final class VoiceActivationCoordinator {
                 let self,
                 self.captureGeneration == activeCaptureGeneration
             else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.capture_inactivity_fired",
+                fields: ["generation": String(activeCaptureGeneration)])
             self.finishPassiveCapture()
         }
     }
@@ -750,6 +1039,10 @@ public final class VoiceActivationCoordinator {
     private func scheduleCaptureHardStop() {
         guard hardStopTask == nil else { return }
         let activeCaptureGeneration = captureGeneration
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.capture_hard_stop_scheduled",
+            fields: ["generation": String(activeCaptureGeneration)])
         hardStopTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.captureMaximum)
             guard
@@ -757,12 +1050,20 @@ public final class VoiceActivationCoordinator {
                 let self,
                 self.captureGeneration == activeCaptureGeneration
             else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.capture_hard_stop_fired",
+                fields: ["generation": String(activeCaptureGeneration)])
             self.finishPassiveCapture()
         }
     }
 
     private func finishPassiveCapture() {
         let transcript = capturedCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.capture_finished",
+            fields: ["character_count": String(transcript.count)])
 
         if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
             cancelCapture()
@@ -779,6 +1080,11 @@ public final class VoiceActivationCoordinator {
 
     private func execute(_ transcript: String) {
         guard let action = capturedAction, let profile = activeProfile else {
+            diagnostics.record(
+                category: .app,
+                event: "coordinator.execution_rejected",
+                level: .error,
+                fields: ["reason": "action_unavailable"])
             state = .failed(CoordinatorError.actionUnavailable.localizedDescription)
             resumePassiveAfterCooldown()
             return
@@ -790,6 +1096,16 @@ public final class VoiceActivationCoordinator {
         executionTask?.cancel()
         state = .executing
         lastTranscript = transcript
+        diagnostics.record(
+            category: .app,
+            event: "coordinator.execution_queued",
+            fields: [
+                "generation": String(activeExecutionGeneration),
+                "profile_id": profile.id.uuidString,
+                "action": action.coordinatorDiagnosticName,
+                "character_count": String(transcript.count),
+                "waits_for_cancellation": String(pendingAgentCancellation != nil),
+            ])
 
         guard let pendingAgentCancellation else {
             startExecution(
@@ -823,13 +1139,21 @@ public final class VoiceActivationCoordinator {
         action: WakeProfileAction,
         profile: WakeProfile,
         transcript: String,
-        generation: Int)
-    {
+        generation: Int
+    ) {
         guard executionGeneration == generation else { return }
         executingAction = action
+        diagnostics.record(
+            category: .app,
+            event: "coordinator.execution_started",
+            fields: [
+                "generation": String(generation),
+                "profile_id": profile.id.uuidString,
+                "action": action.coordinatorDiagnosticName,
+            ])
 
         switch action {
-        case let .command(template):
+        case .command(let template):
             activeAgentRunID = nil
             executionTask = Task { @MainActor [weak self, commandRunner] in
                 do {
@@ -845,15 +1169,25 @@ public final class VoiceActivationCoordinator {
                     self.failCommandExecution(error, generation: generation)
                 }
             }
-        case let .agent(agentConfiguration):
+        case .agent(let agentConfiguration):
             let runID = UUID()
+            diagnostics.record(
+                category: .agent,
+                event: "coordinator.agent_conversation_started",
+                fields: [
+                    "run_id": runID.uuidString,
+                    "profile_id": profile.id.uuidString,
+                    "generation": String(generation),
+                    "input_character_count": String(transcript.count),
+                ])
             activeAgentRunID = runID
             pendingAgentPrompts.removeAll()
             agentConversationEndResult = nil
-            onAgentRunEvent?(.started(
-                runID: runID,
-                profile: profile,
-                prompt: transcript))
+            onAgentRunEvent?(
+                .started(
+                    runID: runID,
+                    profile: profile,
+                    prompt: transcript))
             startConversationListening()
             startAgentTurn(
                 prompt: transcript,
@@ -865,14 +1199,39 @@ public final class VoiceActivationCoordinator {
     }
 
     private func submitAgentFollowUp(_ prompt: String) {
-        guard case .agent = executingAction, let runID = activeAgentRunID else { return }
+        guard case .agent = executingAction, let runID = activeAgentRunID else {
+            diagnostics.record(
+                category: .agent,
+                event: "coordinator.follow_up_ignored",
+                fields: ["reason": "no_active_conversation"])
+            return
+        }
         guard pendingAgentPrompts.count < Self.maximumPendingAgentPrompts else {
-            onAgentRunEvent?(.notice(
-                runID: runID,
-                message: "Follow-up queue is full. Wait for the agent before speaking again."))
+            diagnostics.record(
+                category: .agent,
+                event: "coordinator.follow_up_rejected",
+                level: .warning,
+                fields: [
+                    "run_id": runID.uuidString,
+                    "reason": "queue_full",
+                    "pending_count": String(pendingAgentPrompts.count),
+                ])
+            onAgentRunEvent?(
+                .notice(
+                    runID: runID,
+                    message: "Follow-up queue is full. Wait for the agent before speaking again."))
             return
         }
         pendingAgentPrompts.append(prompt)
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.follow_up_queued",
+            fields: [
+                "run_id": runID.uuidString,
+                "character_count": String(prompt.count),
+                "pending_count": String(pendingAgentPrompts.count),
+                "turn_active": String(executionTask != nil),
+            ])
         onAgentRunEvent?(.followUpSubmitted(runID: runID, prompt: prompt))
 
         guard agentCancellationTask == nil else { return }
@@ -892,7 +1251,7 @@ public final class VoiceActivationCoordinator {
             agentCancellationTask == nil,
             executionTask == nil,
             !pendingAgentPrompts.isEmpty,
-            case let .agent(configuration) = executingAction,
+            case .agent(let configuration) = executingAction,
             let profile = activeProfile,
             let runID = activeAgentRunID
         else { return }
@@ -902,6 +1261,15 @@ public final class VoiceActivationCoordinator {
         let generation = executionGeneration
         onAgentRunEvent?(.turnStarted(runID: runID))
         state = .executing
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.follow_up_started",
+            fields: [
+                "run_id": runID.uuidString,
+                "generation": String(generation),
+                "character_count": String(prompt.count),
+                "remaining_pending_count": String(pendingAgentPrompts.count),
+            ])
         startAgentTurn(
             prompt: prompt,
             profile: profile,
@@ -915,9 +1283,17 @@ public final class VoiceActivationCoordinator {
         profile: WakeProfile,
         configuration: AgentHarnessConfiguration,
         runID: UUID,
-        generation: Int)
-    {
+        generation: Int
+    ) {
         agentTurnHadActivity = false
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.agent_turn_started",
+            fields: [
+                "run_id": runID.uuidString,
+                "generation": String(generation),
+                "input_character_count": String(prompt.count),
+            ])
         executionTask = Task { @MainActor [weak self, agentRunner] in
             do {
                 try Task.checkCancellation()
@@ -954,6 +1330,10 @@ public final class VoiceActivationCoordinator {
 
     private func finishCommandExecution(generation: Int) {
         guard executionGeneration == generation else { return }
+        diagnostics.record(
+            category: .command,
+            event: "coordinator.command_finished",
+            fields: ["generation": String(generation)])
         executionTask = nil
         executingAction = nil
         resumePassiveAfterCooldown()
@@ -961,6 +1341,14 @@ public final class VoiceActivationCoordinator {
 
     private func failCommandExecution(_ error: any Error, generation: Int) {
         guard executionGeneration == generation else { return }
+        diagnostics.record(
+            category: .command,
+            event: "coordinator.command_failed",
+            level: .error,
+            fields: [
+                "generation": String(generation),
+                "error_type": String(describing: type(of: error)),
+            ])
         executionTask = nil
         executingAction = nil
         state = .failed(error.localizedDescription)
@@ -970,28 +1358,58 @@ public final class VoiceActivationCoordinator {
     private func publishAgentEvent(
         _ event: AgentRunEvent,
         runID: UUID,
-        generation: Int)
-    {
+        generation: Int
+    ) {
         guard
             executionGeneration == generation,
             activeAgentRunID == runID
-        else { return }
+        else {
+            diagnostics.record(
+                category: .agent,
+                event: "coordinator.agent_event_discarded",
+                level: .debug,
+                fields: [
+                    "run_id": runID.uuidString,
+                    "event_kind": event.coordinatorDiagnosticName,
+                    "event_generation": String(generation),
+                    "generation": String(executionGeneration),
+                ])
+            return
+        }
         if event.isMeaningfulAgentActivity {
             agentTurnHadActivity = true
         }
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.agent_event_published",
+            fields: [
+                "run_id": runID.uuidString,
+                "event_kind": event.coordinatorDiagnosticName,
+                "generation": String(generation),
+                "meaningful_activity": String(event.isMeaningfulAgentActivity),
+            ])
         onAgentRunEvent?(.event(runID: runID, event: event))
     }
 
     private func finishAgentExecution(
         _ result: AgentRunResult,
         runID: UUID,
-        generation: Int)
-    {
+        generation: Int
+    ) {
         guard
             executionGeneration == generation,
             activeAgentRunID == runID
         else { return }
         agentTurnHadActivity = false
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.agent_turn_finished",
+            fields: [
+                "run_id": runID.uuidString,
+                "generation": String(generation),
+                "stop_reason": result.stopReason.rawValue,
+                "pending_follow_up_count": String(pendingAgentPrompts.count),
+            ])
         onAgentRunEvent?(.turnCompleted(runID: runID, result: result))
         executionTask = nil
         if pendingAgentPrompts.isEmpty {
@@ -1004,13 +1422,23 @@ public final class VoiceActivationCoordinator {
     private func failAgentExecution(
         _ error: any Error,
         runID: UUID,
-        generation: Int)
-    {
+        generation: Int
+    ) {
         guard
             executionGeneration == generation,
             activeAgentRunID == runID
         else { return }
         let message = error.localizedDescription
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.agent_turn_failed",
+            level: .error,
+            fields: [
+                "run_id": runID.uuidString,
+                "generation": String(generation),
+                "had_activity": String(agentTurnHadActivity),
+                "error_type": String(describing: type(of: error)),
+            ])
         if agentTurnHadActivity {
             agentTurnHadActivity = false
             onAgentRunEvent?(.turnFailed(runID: runID, message: message))
@@ -1038,10 +1466,24 @@ public final class VoiceActivationCoordinator {
         guard agentCancellationTask == nil else { return }
 
         let token = UUID()
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.agent_cancellation_started",
+            fields: [
+                "run_id": runID.uuidString,
+                "cancellation_id": token.uuidString,
+            ])
         agentCancellationToken = token
         agentCancellationTask = Task { @MainActor [weak self, agentRunner] in
             await agentRunner.cancel()
             guard let self, self.agentCancellationToken == token else { return }
+            self.diagnostics.record(
+                category: .agent,
+                event: "coordinator.agent_cancellation_finished",
+                fields: [
+                    "run_id": runID.uuidString,
+                    "cancellation_id": token.uuidString,
+                ])
             self.agentCancellationTask = nil
             self.agentCancellationToken = nil
             guard self.activeAgentRunID == runID else { return }
@@ -1052,9 +1494,10 @@ public final class VoiceActivationCoordinator {
             } else if !self.pendingAgentPrompts.isEmpty {
                 self.startNextAgentPrompt()
             } else {
-                self.onAgentRunEvent?(.turnCompleted(
-                    runID: runID,
-                    result: AgentRunResult(stopReason: .cancelled)))
+                self.onAgentRunEvent?(
+                    .turnCompleted(
+                        runID: runID,
+                        result: AgentRunResult(stopReason: .cancelled)))
                 self.state = .executing
             }
         }
@@ -1062,6 +1505,13 @@ public final class VoiceActivationCoordinator {
 
     private func finishAgentConversation(runID: UUID, result: AgentRunResult) {
         guard activeAgentRunID == runID else { return }
+        diagnostics.record(
+            category: .agent,
+            event: "coordinator.agent_conversation_finished",
+            fields: [
+                "run_id": runID.uuidString,
+                "stop_reason": result.stopReason.rawValue,
+            ])
         agentSpeechOutputActive = false
         executionTask?.cancel()
         executionTask = nil
@@ -1080,6 +1530,10 @@ public final class VoiceActivationCoordinator {
     private func resumePassiveAfterCooldown() {
         let activeExecutionGeneration = executionGeneration
         restartTask?.cancel()
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.passive_resume_scheduled",
+            fields: ["generation": String(activeExecutionGeneration)])
         restartTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.executionCooldown)
             guard
@@ -1087,15 +1541,25 @@ public final class VoiceActivationCoordinator {
                 let self,
                 self.executionGeneration == activeExecutionGeneration
             else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.passive_resume_fired",
+                fields: ["generation": String(activeExecutionGeneration)])
             self.resumePassiveIfNeeded()
         }
     }
 
     private func schedulePassiveRestart() {
         restartTask?.cancel()
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.passive_restart_scheduled")
         restartTask = Task { [weak self, timing] in
             try? await Task.sleep(for: timing.passiveRestart)
             guard !Task.isCancelled, let self else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "coordinator.passive_restart_fired")
             self.resumePassiveIfNeeded()
         }
     }
@@ -1109,6 +1573,13 @@ public final class VoiceActivationCoordinator {
     }
 
     private func stopActiveSession() {
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.active_session_stopping",
+            fields: [
+                "generation": String(generation),
+                "capture_generation": String(captureGeneration),
+            ])
         captureGeneration &+= 1
         resetConversationCapture()
         conversationRestartTask?.cancel()
@@ -1125,17 +1596,71 @@ public final class VoiceActivationCoordinator {
     private func stopSpeechSession() {
         generation &+= 1
         speechSession.stop()
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "coordinator.speech_session_stopped",
+            fields: ["generation": String(generation)])
     }
 }
 
-private extension AgentRunEvent {
-    var isMeaningfulAgentActivity: Bool {
+extension ActivationState {
+    fileprivate var coordinatorDiagnosticName: String {
         switch self {
-        case let .agentMessageDelta(_, text), let .thoughtDelta(_, text):
+        case .disabled: "disabled"
+        case .listening: "listening"
+        case .capturing: "capturing"
+        case .executing: "executing"
+        case .failed: "failed"
+        }
+    }
+}
+
+extension SpeechSessionMode {
+    fileprivate var coordinatorDiagnosticName: String {
+        switch self {
+        case .passiveWake: "passive_wake"
+        case .commandCapture: "command_capture"
+        case .conversation: "conversation"
+        case .pushToTalk: "push_to_talk"
+        }
+    }
+}
+
+extension WakeProfileAction {
+    fileprivate var coordinatorDiagnosticName: String {
+        switch self {
+        case .command: "command"
+        case .agent: "agent"
+        }
+    }
+}
+
+extension AgentRunEvent {
+    fileprivate var coordinatorDiagnosticName: String {
+        switch self {
+        case .connected: "connected"
+        case .agentMessageDelta: "agent_message_delta"
+        case .thoughtDelta: "thought_delta"
+        case .toolCall: "tool_call"
+        case .toolCallUpdate: "tool_call_update"
+        case .plan: "plan"
+        case .permissionRequested: "permission_requested"
+        case .metadata: "metadata"
+        case .diagnostic: "diagnostic"
+        case .deliveryNotice: "delivery_notice"
+        case .unknown: "unknown"
+        }
+    }
+}
+
+extension AgentRunEvent {
+    fileprivate var isMeaningfulAgentActivity: Bool {
+        switch self {
+        case .agentMessageDelta(_, let text), .thoughtDelta(_, let text):
             !text.isEmpty
         case .toolCall, .toolCallUpdate, .permissionRequested, .deliveryNotice:
             true
-        case let .plan(entries):
+        case .plan(let entries):
             !entries.isEmpty
         case .connected, .metadata, .diagnostic, .unknown:
             false

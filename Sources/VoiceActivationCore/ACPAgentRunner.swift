@@ -44,8 +44,8 @@ struct ACPAgentRunnerTestingHooks: Sendable {
 
     init(
         beforeCancelledExitWaitReturns: @escaping @Sendable () async -> Void = {},
-        beforeSuccessIsPublished: @escaping @Sendable () async -> Void = {})
-    {
+        beforeSuccessIsPublished: @escaping @Sendable () async -> Void = {}
+    ) {
         self.beforeCancelledExitWaitReturns = beforeCancelledExitWaitReturns
         self.beforeSuccessIsPublished = beforeSuccessIsPublished
     }
@@ -75,6 +75,7 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     private let drainClock: any ACPAgentRunnerClock
     private let settleClock: any ACPAgentRunnerClock
     private let testingHooks: ACPAgentRunnerTestingHooks
+    private let diagnostics: any VoiceActivationDiagnosticRecording
     private var records: [UUID: ACPAgentConnectionRecord] = [:]
     private var activeTurn: ACPAgentActiveTurn?
     private var isShutDown = false
@@ -85,14 +86,16 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         transportFactory: any ACPTransportCreating = ACPProcessTransportFactory(),
         clock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
         drainClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
-        settleClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock())
-    {
+        settleClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.transportFactory = transportFactory
         self.clock = clock
         startupClock = ContinuousACPAgentRunnerClock()
         self.drainClock = drainClock
         self.settleClock = settleClock
         testingHooks = ACPAgentRunnerTestingHooks()
+        self.diagnostics = diagnostics
     }
 
     init(
@@ -101,31 +104,52 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         startupClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
         drainClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
         settleClock: any ACPAgentRunnerClock = ContinuousACPAgentRunnerClock(),
-        testingHooks: ACPAgentRunnerTestingHooks)
-    {
+        testingHooks: ACPAgentRunnerTestingHooks,
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.transportFactory = transportFactory
         self.clock = clock
         self.startupClock = startupClock
         self.drainClock = drainClock
         self.settleClock = settleClock
         self.testingHooks = testingHooks
+        self.diagnostics = diagnostics
     }
 
     public func run(
         profileID: UUID,
         configuration: AgentHarnessConfiguration,
         prompt: String,
-        onEvent: @escaping @Sendable (AgentRunEvent) async -> Void) async throws
+        onEvent: @escaping @Sendable (AgentRunEvent) async -> Void
+    ) async throws
         -> AgentRunResult
     {
         guard !isShutDown else {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.run_rejected",
+                fields: ["reason": "shut_down"])
             throw ACPAgentRunnerError.shutDown
         }
         guard activeTurn == nil else {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.run_rejected",
+                fields: ["reason": "turn_already_active"])
             throw ACPAgentRunnerError.turnAlreadyActive
         }
 
         let token = UUID()
+        let startedAtUptime = DispatchTime.now().uptimeNanoseconds
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.run_started",
+            fields: [
+                "turn_id": token.uuidString,
+                "profile_id": profileID.uuidString,
+                "input_character_count": String(prompt.count),
+                "cached_session_count": String(records.count),
+            ])
         let completion = ACPAgentRunCompletionLatch()
         let delivery = AgentRunEventDelivery(handler: onEvent)
         activeTurn = ACPAgentActiveTurn(
@@ -153,20 +177,28 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                         turnToken: token)
                 } catch let error as ACPAgentRunnerError {
                     guard error == .startupTimedOut,
-                          !didAttemptStartupRecovery,
-                          ownsActiveTurn(token),
-                          !isActiveTurnCancelling(token)
+                        !didAttemptStartupRecovery,
+                        ownsActiveTurn(token),
+                        !isActiveTurnCancelling(token)
                     else {
                         throw error
                     }
                     didAttemptStartupRecovery = true
                     shouldPublishStartupRecoveryNotice = true
+                    diagnostics.record(
+                        category: .agent,
+                        event: "acp_runner.startup_recovery_started",
+                        level: .warning,
+                        fields: [
+                            "turn_id": token.uuidString,
+                            "profile_id": profileID.uuidString,
+                        ])
                     continue
                 }
                 runRecord = record
                 guard ownsActiveTurn(token),
-                      !isActiveTurnCancelling(token),
-                      activeTurn?.deliveryOverflowed == false
+                    !isActiveTurnCancelling(token),
+                    activeTurn?.deliveryOverflowed == false
                 else {
                     if activeTurn?.token == token, activeTurn?.deliveryOverflowed == true {
                         throw ACPAgentRunnerError.eventDeliveryOverflow
@@ -206,14 +238,23 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                     }
                 } catch let error as ACPClientError {
                     guard !didAttemptSessionRecovery,
-                          error.isSessionUnavailable,
-                          ownsActiveTurn(token),
-                          !isActiveTurnCancelling(token)
+                        error.isSessionUnavailable,
+                        ownsActiveTurn(token),
+                        !isActiveTurnCancelling(token)
                     else {
                         throw error
                     }
 
                     didAttemptSessionRecovery = true
+                    diagnostics.record(
+                        category: .agent,
+                        event: "acp_runner.session_recovery_started",
+                        level: .warning,
+                        fields: [
+                            "turn_id": token.uuidString,
+                            "profile_id": profileID.uuidString,
+                            "record_id": recordID.uuidString,
+                        ])
                     await discardRecord(
                         profileID: profileID,
                         recordID: recordID,
@@ -252,11 +293,23 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                 }
                 clearActiveTurn(token: token)
                 await completion.resolve(.success(result))
+                diagnostics.record(
+                    category: .agent,
+                    event: "acp_runner.run_finished",
+                    fields: [
+                        "turn_id": token.uuidString,
+                        "profile_id": profileID.uuidString,
+                        "stop_reason": result.stopReason.rawValue,
+                        "duration_ms": String(
+                            Self.elapsedMilliseconds(
+                                since: startedAtUptime)),
+                    ])
                 return result
             }
         } catch {
-            let reportedError: any Error = activeTurn?.token == token
-                && activeTurn?.deliveryOverflowed == true
+            let reportedError: any Error =
+                activeTurn?.token == token
+                    && activeTurn?.deliveryOverflowed == true
                 ? ACPAgentRunnerError.eventDeliveryOverflow
                 : error
             if let runRecord, runRecord.exitStatus != nil {
@@ -271,6 +324,16 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                     fallbackRecord: runRecord)
             }
             clearActiveTurn(token: token)
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.run_failed",
+                level: reportedError is CancellationError ? .info : .error,
+                fields: [
+                    "turn_id": token.uuidString,
+                    "profile_id": profileID.uuidString,
+                    "duration_ms": String(Self.elapsedMilliseconds(since: startedAtUptime)),
+                    "error_type": String(describing: type(of: reportedError)),
+                ])
             throw reportedError
         }
     }
@@ -278,11 +341,19 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     public func resolvePermission(
         turnToken: AgentTurnToken,
         requestID: ACPRequestID,
-        optionID: String?) async
-    {
+        optionID: String?
+    ) async {
         guard let connection = activeTurn?.connection else {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.permission_ignored",
+                fields: ["reason": "no_connection"])
             return
         }
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.permission_resolving",
+            fields: ["has_option": String(optionID != nil)])
         await connection.resolvePermission(
             turnToken: turnToken,
             requestID: requestID,
@@ -291,8 +362,20 @@ public actor ACPAgentRunner: AgentHarnessRunning {
 
     public func cancel() async {
         guard var turn = activeTurn, !turn.isCancelling else {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.cancel_ignored",
+                fields: ["reason": "no_turn_or_already_cancelling"])
             return
         }
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.cancel_started",
+            fields: [
+                "turn_id": turn.token.uuidString,
+                "profile_id": turn.profileID.uuidString,
+                "has_connection": String(turn.connection != nil),
+            ])
         turn.isCancelling = true
         activeTurn = turn
 
@@ -311,12 +394,24 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             outcome = .completion(completed)
         }
 
-        if case let .completion(.success(result)) = outcome,
-           result.stopReason == .cancelled
+        if case .completion(.success(let result)) = outcome,
+            result.stopReason == .cancelled
         {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.cancel_finished",
+                fields: [
+                    "turn_id": token.uuidString,
+                    "outcome": "cooperative",
+                ])
             return
         }
 
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.cancel_forcing_eviction",
+            level: .warning,
+            fields: ["turn_id": token.uuidString])
         await forceEvictActiveRecord(
             turnToken: token,
             profileID: profileID,
@@ -324,6 +419,10 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 
     public func reset(profileIDs: Set<UUID>) async {
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.reset_started",
+            fields: ["profile_count": String(profileIDs.count)])
         var removed: [ACPAgentConnectionRecord] = []
         var discardedDelivery: AgentRunEventDelivery?
         if let turn = activeTurn, profileIDs.contains(turn.profileID) {
@@ -343,12 +442,21 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         for record in removed {
             await dispose(record)
         }
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.reset_finished",
+            fields: ["disposed_session_count": String(removed.count)])
     }
 
     public func shutdown() async {
         guard !isShutDown else {
+            diagnostics.record(category: .agent, event: "acp_runner.shutdown_ignored")
             return
         }
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.shutdown_started",
+            fields: ["cached_session_count": String(records.count)])
         isShutDown = true
 
         if let turn = activeTurn {
@@ -367,28 +475,56 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         for record in cachedRecords {
             await dispose(record)
         }
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.shutdown_finished",
+            fields: ["disposed_session_count": String(cachedRecords.count)])
     }
 
     private func connectionRecord(
         profileID: UUID,
         configuration: AgentHarnessConfiguration,
-        turnToken: UUID) async throws -> ACPAgentConnectionRecord
-    {
+        turnToken: UUID
+    ) async throws -> ACPAgentConnectionRecord {
         if let cached = records[profileID],
-           cached.configuration == configuration,
-           cached.connection != nil,
-           cached.exitStatus == nil
+            cached.configuration == configuration,
+            cached.connection != nil,
+            cached.exitStatus == nil
         {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.session_cache_hit",
+                fields: [
+                    "turn_id": turnToken.uuidString,
+                    "profile_id": profileID.uuidString,
+                    "record_id": cached.id.uuidString,
+                ])
             markAccessed(cached)
             updateActiveTurnRecord(token: turnToken, record: cached)
             return cached
         }
 
         if let replaced = records.removeValue(forKey: profileID) {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.session_replacing",
+                fields: [
+                    "profile_id": profileID.uuidString,
+                    "record_id": replaced.id.uuidString,
+                ])
             await dispose(replaced)
             try ensureActiveTurn(token: turnToken)
         }
 
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.transport_creating",
+            fields: [
+                "turn_id": turnToken.uuidString,
+                "profile_id": profileID.uuidString,
+                "provider": configuration.preset.rawValue,
+                "executable_path": configuration.executablePath,
+            ])
         let transport = try await transportFactory.makeTransport(configuration: configuration)
         guard ownsActiveTurn(turnToken) else {
             await transport.terminate()
@@ -403,6 +539,14 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             accessOrdinal: nextAccessOrdinal(),
             beforeCancelledExitWaitReturns: testingHooks.beforeCancelledExitWaitReturns)
         records[profileID] = record
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.transport_created",
+            fields: [
+                "turn_id": turnToken.uuidString,
+                "profile_id": profileID.uuidString,
+                "record_id": record.id.uuidString,
+            ])
         updateActiveTurnRecord(token: turnToken, record: record)
         await startObservers(for: record)
 
@@ -412,20 +556,39 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                 transport: transport,
                 configuration: configuration)
             guard records[profileID]?.id == record.id,
-                  ownsActiveTurn(turnToken),
-                  !isActiveTurnCancelling(turnToken)
+                ownsActiveTurn(turnToken),
+                !isActiveTurnCancelling(turnToken)
             else {
                 await transport.terminate()
                 await connection.close()
                 throw ACPAgentRunnerError.cancelled
             }
             record.connection = connection
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.connection_ready",
+                fields: [
+                    "turn_id": turnToken.uuidString,
+                    "profile_id": profileID.uuidString,
+                    "record_id": record.id.uuidString,
+                    "cached_session_count": String(records.count),
+                ])
             updateActiveTurn(token: turnToken, record: record, connection: connection)
             try await evictLeastRecentlyUsedSessionIfNeeded(
                 preservingRecordID: record.id,
                 turnToken: turnToken)
             return record
         } catch {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.connection_failed",
+                level: error is CancellationError ? .info : .error,
+                fields: [
+                    "turn_id": turnToken.uuidString,
+                    "profile_id": profileID.uuidString,
+                    "record_id": record.id.uuidString,
+                    "error_type": String(describing: type(of: error)),
+                ])
             if records[profileID]?.id == record.id {
                 records.removeValue(forKey: profileID)
             }
@@ -437,8 +600,14 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     private func connect(
         record: ACPAgentConnectionRecord,
         transport: any ACPTransport,
-        configuration: AgentHarnessConfiguration) async throws -> ACPClientConnection
-    {
+        configuration: AgentHarnessConfiguration
+    ) async throws -> ACPClientConnection {
+        let startedAtUptime = DispatchTime.now().uptimeNanoseconds
+        let connectionDiagnostics = diagnostics
+        diagnostics.record(
+            category: .acp,
+            event: "acp_runner.handshake_started",
+            fields: ["record_id": record.id.uuidString])
         let outcome = await withTaskGroup(of: ACPAgentConnectionStartupOutcome.self) { group in
             group.addTask { [startupClock] in
                 await startupClock.sleep(for: Self.connectionStartupTimeout)
@@ -446,9 +615,11 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             }
             group.addTask {
                 do {
-                    return .connected(try await ACPClientConnection.connect(
-                        transport: transport,
-                        configuration: configuration))
+                    return .connected(
+                        try await ACPClientConnection.connect(
+                            transport: transport,
+                            configuration: configuration,
+                            diagnostics: connectionDiagnostics))
                 } catch {
                     return .failed(error)
                 }
@@ -468,35 +639,78 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         }
 
         switch outcome {
-        case let .connected(connection):
+        case .connected(let connection):
+            diagnostics.record(
+                category: .acp,
+                event: "acp_runner.handshake_finished",
+                fields: [
+                    "record_id": record.id.uuidString,
+                    "outcome": "connected",
+                    "duration_ms": String(Self.elapsedMilliseconds(since: startedAtUptime)),
+                ])
             return connection
-        case let .failed(error):
+        case .failed(let error):
+            diagnostics.record(
+                category: .acp,
+                event: "acp_runner.handshake_finished",
+                level: .error,
+                fields: [
+                    "record_id": record.id.uuidString,
+                    "outcome": "failed",
+                    "duration_ms": String(Self.elapsedMilliseconds(since: startedAtUptime)),
+                    "error_type": String(describing: type(of: error)),
+                ])
             throw error
         case .cancelled:
+            diagnostics.record(
+                category: .acp,
+                event: "acp_runner.handshake_finished",
+                fields: [
+                    "record_id": record.id.uuidString,
+                    "outcome": "cancelled",
+                    "duration_ms": String(Self.elapsedMilliseconds(since: startedAtUptime)),
+                ])
             throw CancellationError()
         case .timedOut:
+            diagnostics.record(
+                category: .acp,
+                event: "acp_runner.handshake_finished",
+                level: .error,
+                fields: [
+                    "record_id": record.id.uuidString,
+                    "outcome": "timed_out",
+                    "duration_ms": String(Self.elapsedMilliseconds(since: startedAtUptime)),
+                ])
             throw ACPAgentRunnerError.startupTimedOut
         }
     }
 
     private func evictLeastRecentlyUsedSessionIfNeeded(
         preservingRecordID: UUID,
-        turnToken: UUID) async throws
-    {
+        turnToken: UUID
+    ) async throws {
         guard records.count > Self.maximumCachedSessions,
-              let candidate = records.values
-              .filter({ $0.id != preservingRecordID })
-              .min(by: { left, right in
-                  if left.accessOrdinal == right.accessOrdinal {
-                      return left.id.uuidString < right.id.uuidString
-                  }
-                  return left.accessOrdinal < right.accessOrdinal
-              })
+            let candidate = records.values
+                .filter({ $0.id != preservingRecordID })
+                .min(by: { left, right in
+                    if left.accessOrdinal == right.accessOrdinal {
+                        return left.id.uuidString < right.id.uuidString
+                    }
+                    return left.accessOrdinal < right.accessOrdinal
+                })
         else {
             return
         }
 
         records.removeValue(forKey: candidate.profileID)
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.session_evicted",
+            fields: [
+                "profile_id": candidate.profileID.uuidString,
+                "record_id": candidate.id.uuidString,
+                "cached_session_count": String(records.count),
+            ])
         recordSessionEviction(profileID: candidate.profileID)
         await dispose(candidate)
         try ensureActiveTurn(token: turnToken)
@@ -534,6 +748,13 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 
     private func startObservers(for record: ACPAgentConnectionRecord) async {
+        diagnostics.record(
+            category: .acp,
+            event: "acp_runner.process_observers_started",
+            fields: [
+                "profile_id": record.profileID.uuidString,
+                "record_id": record.id.uuidString,
+            ])
         let diagnostics = await record.transport.diagnostics()
         let transport = record.transport
         let profileID = record.profileID
@@ -555,10 +776,11 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         let diagnosticsTask = record.diagnosticsTask
         record.exitTask = Task { [weak self] in
             let status = await transport.waitForExit()
-            guard await self?.markProcessExited(
-                status: status,
-                profileID: profileID,
-                recordID: recordID) == true
+            guard
+                await self?.markProcessExited(
+                    status: status,
+                    profileID: profileID,
+                    recordID: recordID) == true
             else {
                 return
             }
@@ -579,6 +801,16 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         guard let record = records[profileID], record.id == recordID else {
             return
         }
+        diagnostics.record(
+            category: .acp,
+            event: "acp_runner.standard_error_received",
+            level: .debug,
+            fields: [
+                "profile_id": profileID.uuidString,
+                "record_id": recordID.uuidString,
+                "byte_count": String(data.count),
+                "retained_byte_count_before": String(record.standardError.count),
+            ])
         record.standardError.append(data)
         if record.standardError.count > Self.maximumStandardErrorBytes {
             record.standardError.removeFirst(
@@ -590,12 +822,20 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             remainder: &record.diagnosticRemainder)
 
         guard !decoded.isEmpty,
-              let turn = activeTurn,
-              turn.profileID == profileID,
-              turn.recordID == recordID
+            let turn = activeTurn,
+            turn.profileID == profileID,
+            turn.recordID == recordID
         else {
             return
         }
+        diagnostics.record(
+            category: .acp,
+            event: "acp_runner.diagnostic_event_forwarded",
+            fields: [
+                "profile_id": profileID.uuidString,
+                "record_id": recordID.uuidString,
+                "character_count": String(decoded.count),
+            ])
         admit(
             .diagnostic(decoded),
             turnToken: turn.token,
@@ -608,13 +848,21 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             return
         }
         guard !record.diagnosticRemainder.isEmpty else {
+            diagnostics.record(
+                category: .acp,
+                event: "acp_runner.standard_error_finished",
+                fields: [
+                    "profile_id": profileID.uuidString,
+                    "record_id": recordID.uuidString,
+                    "remainder_byte_count": "0",
+                ])
             return
         }
         let decoded = String(decoding: record.diagnosticRemainder, as: UTF8.self)
         record.diagnosticRemainder.removeAll(keepingCapacity: true)
         guard let turn = activeTurn,
-              turn.profileID == profileID,
-              turn.recordID == recordID
+            turn.profileID == profileID,
+            turn.recordID == recordID
         else {
             return
         }
@@ -630,6 +878,15 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             return false
         }
         record.exitStatus = status
+        diagnostics.record(
+            category: .acp,
+            event: "acp_runner.process_exited",
+            level: status == 0 ? .info : .error,
+            fields: [
+                "profile_id": profileID.uuidString,
+                "record_id": recordID.uuidString,
+                "termination_status": String(status),
+            ])
         await record.exitObservation.resolve()
 
         return true
@@ -647,11 +904,11 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             return
         }
         if !record.suppressesExitDiagnostic,
-           let status = record.exitStatus,
-           status != 0,
-           let turn = activeTurn,
-           turn.profileID == profileID,
-           turn.recordID == recordID
+            let status = record.exitStatus,
+            status != 0,
+            let turn = activeTurn,
+            turn.profileID == profileID,
+            turn.recordID == recordID
         {
             admit(
                 .diagnostic("Agent process exited with status \(status)."),
@@ -660,6 +917,15 @@ public actor ACPAgentRunner: AgentHarnessRunning {
                 recordID: recordID)
         }
         records.removeValue(forKey: profileID)
+        diagnostics.record(
+            category: .acp,
+            event: "acp_runner.process_drained",
+            fields: [
+                "profile_id": profileID.uuidString,
+                "record_id": recordID.uuidString,
+                "termination_status": String(record.exitStatus ?? -1),
+                "retained_standard_error_bytes": String(record.standardError.count),
+            ])
     }
 
     private func raceDrain(transport: any ACPTransport) async -> ACPAgentDrainRace {
@@ -679,8 +945,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 
     private func processExitWasObservedDuringPromptSettlement(
-        record: ACPAgentConnectionRecord) async -> Bool
-    {
+        record: ACPAgentConnectionRecord
+    ) async -> Bool {
         let exitObservation = record.exitObservation
         let result = await withTaskGroup(of: ACPAgentPromptSettleRace.self) { group in
             group.addTask {
@@ -724,16 +990,35 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         event: AgentRunEvent,
         turnToken: UUID,
         profileID: UUID,
-        recordID: UUID)
-    {
+        recordID: UUID
+    ) {
         guard let turn = activeTurn,
-              turn.token == turnToken,
-              turn.profileID == profileID,
-              turn.recordID == recordID,
-              records[profileID]?.id == recordID
+            turn.token == turnToken,
+            turn.profileID == profileID,
+            turn.recordID == recordID,
+            records[profileID]?.id == recordID
         else {
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.event_discarded",
+                level: .debug,
+                fields: [
+                    "turn_id": turnToken.uuidString,
+                    "profile_id": profileID.uuidString,
+                    "record_id": recordID.uuidString,
+                    "event_kind": event.runnerDiagnosticName,
+                ])
             return
         }
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.event_received",
+            fields: [
+                "turn_id": turnToken.uuidString,
+                "profile_id": profileID.uuidString,
+                "record_id": recordID.uuidString,
+                "event_kind": event.runnerDiagnosticName,
+            ])
         admit(
             event,
             turnToken: turnToken,
@@ -745,9 +1030,10 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         guard var turn = activeTurn, turn.token == turnToken else {
             throw ACPAgentRunnerError.cancelled
         }
-        switch turn.delivery.send(.metadata(
-            kind: AgentRunMetadataKind.sessionRecovered,
-            summary: summary))
+        switch turn.delivery.send(
+            .metadata(
+                kind: AgentRunMetadataKind.sessionRecovered,
+                summary: summary))
         {
         case .accepted, .ignored, .stopped:
             return
@@ -762,18 +1048,37 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         _ event: AgentRunEvent,
         turnToken: UUID,
         profileID: UUID,
-        recordID: UUID)
-    {
+        recordID: UUID
+    ) {
         guard let turn = activeTurn,
-              turn.token == turnToken,
-              turn.profileID == profileID,
-              turn.recordID == recordID,
-              records[profileID]?.id == recordID
+            turn.token == turnToken,
+            turn.profileID == profileID,
+            turn.recordID == recordID,
+            records[profileID]?.id == recordID
         else {
             return
         }
         switch turn.delivery.send(event) {
-        case .accepted, .ignored, .stopped:
+        case .accepted:
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.event_admitted",
+                level: .debug,
+                fields: [
+                    "turn_id": turnToken.uuidString,
+                    "event_kind": event.runnerDiagnosticName,
+                ])
+            return
+        case .ignored, .stopped:
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.event_not_admitted",
+                level: .debug,
+                fields: [
+                    "turn_id": turnToken.uuidString,
+                    "event_kind": event.runnerDiagnosticName,
+                    "reason": "ignored_or_stopped",
+                ])
             return
         case .capacityExceeded, .invalid:
             guard !turn.deliveryOverflowed else {
@@ -782,6 +1087,14 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             var failedTurn = turn
             failedTurn.deliveryOverflowed = true
             activeTurn = failedTurn
+            diagnostics.record(
+                category: .agent,
+                event: "acp_runner.event_delivery_overflowed",
+                level: .error,
+                fields: [
+                    "turn_id": turnToken.uuidString,
+                    "event_kind": event.runnerDiagnosticName,
+                ])
             Task {
                 await self.failOverflowedDelivery(turnToken: turnToken)
             }
@@ -790,8 +1103,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
 
     private func failOverflowedDelivery(turnToken: UUID) async {
         guard let turn = activeTurn,
-              turn.token == turnToken,
-              let connection = turn.connection
+            turn.token == turnToken,
+            let connection = turn.connection
         else {
             return
         }
@@ -803,8 +1116,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 
     private func raceCancellation(
-        completion: ACPAgentRunCompletionLatch) async -> ACPAgentCancellationRace
-    {
+        completion: ACPAgentRunCompletionLatch
+    ) async -> ACPAgentCancellationRace {
         await withTaskGroup(of: ACPAgentCancellationRace.self) { group in
             group.addTask {
                 .completion(await completion.wait())
@@ -822,16 +1135,24 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     private func forceEvictActiveRecord(
         turnToken: UUID,
         profileID: UUID,
-        capturedRecordID: UUID?) async
-    {
+        capturedRecordID: UUID?
+    ) async {
         guard let turn = activeTurn, turn.token == turnToken else {
             return
         }
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.active_session_force_eviction_started",
+            level: .warning,
+            fields: [
+                "turn_id": turnToken.uuidString,
+                "profile_id": profileID.uuidString,
+            ])
         activeTurn = nil
         let recordID = capturedRecordID ?? turn.recordID
         guard let recordID,
-              let record = records[profileID],
-              record.id == recordID
+            let record = records[profileID],
+            record.id == recordID
         else {
             await turn.delivery.finish(.discard)
             return
@@ -853,8 +1174,15 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     private func discardRecord(
         profileID: UUID,
         recordID: UUID,
-        fallbackRecord: ACPAgentConnectionRecord) async
-    {
+        fallbackRecord: ACPAgentConnectionRecord
+    ) async {
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.session_discarding",
+            fields: [
+                "profile_id": profileID.uuidString,
+                "record_id": recordID.uuidString,
+            ])
         if records[profileID]?.id == recordID {
             records.removeValue(forKey: profileID)
             await dispose(fallbackRecord)
@@ -864,6 +1192,13 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     }
 
     private func dispose(_ record: ACPAgentConnectionRecord) async {
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.session_disposal_started",
+            fields: [
+                "profile_id": record.profileID.uuidString,
+                "record_id": record.id.uuidString,
+            ])
         await record.transport.terminate()
         await record.transport.closeReadStreams()
         _ = await record.transport.waitForExit()
@@ -873,12 +1208,20 @@ public actor ACPAgentRunner: AgentHarnessRunning {
         if let connection = record.connection {
             await connection.close()
         }
+        diagnostics.record(
+            category: .agent,
+            event: "acp_runner.session_disposal_finished",
+            fields: [
+                "profile_id": record.profileID.uuidString,
+                "record_id": record.id.uuidString,
+                "termination_status": String(record.exitStatus ?? -1),
+            ])
     }
 
     private func updateActiveTurnRecord(
         token: UUID,
-        record: ACPAgentConnectionRecord)
-    {
+        record: ACPAgentConnectionRecord
+    ) {
         guard var turn = activeTurn, turn.token == token else {
             return
         }
@@ -889,8 +1232,8 @@ public actor ACPAgentRunner: AgentHarnessRunning {
     private func updateActiveTurn(
         token: UUID,
         record: ACPAgentConnectionRecord,
-        connection: ACPClientConnection)
-    {
+        connection: ACPClientConnection
+    ) {
         guard var turn = activeTurn, turn.token == token else {
             return
         }
@@ -930,10 +1273,34 @@ public actor ACPAgentRunner: AgentHarnessRunning {
             activeTurn = nil
         }
     }
+
+    nonisolated private static func elapsedMilliseconds(since start: UInt64) -> UInt64 {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now >= start else { return 0 }
+        return (now - start) / 1_000_000
+    }
 }
 
-private extension ACPClientError {
-    var isSessionUnavailable: Bool {
+extension AgentRunEvent {
+    fileprivate var runnerDiagnosticName: String {
+        switch self {
+        case .connected: "connected"
+        case .agentMessageDelta: "agent_message_delta"
+        case .thoughtDelta: "thought_delta"
+        case .toolCall: "tool_call"
+        case .toolCallUpdate: "tool_call_update"
+        case .plan: "plan"
+        case .permissionRequested: "permission_requested"
+        case .metadata: "metadata"
+        case .diagnostic: "diagnostic"
+        case .deliveryNotice: "delivery_notice"
+        case .unknown: "unknown"
+        }
+    }
+}
+
+extension ACPClientError {
+    fileprivate var isSessionUnavailable: Bool {
         if case .sessionUnavailable = self {
             return true
         }
@@ -962,8 +1329,8 @@ private final class ACPAgentConnectionRecord {
         configuration: AgentHarnessConfiguration,
         transport: any ACPTransport,
         accessOrdinal: UInt64,
-        beforeCancelledExitWaitReturns: @escaping @Sendable () async -> Void)
-    {
+        beforeCancelledExitWaitReturns: @escaping @Sendable () async -> Void
+    ) {
         self.id = id
         self.profileID = profileID
         self.configuration = configuration
@@ -1020,9 +1387,7 @@ private enum ACPAgentProcessExitWaitResult: Sendable {
 
 private actor ACPAgentProcessExitLatch {
     private var wasResolved = false
-    private var waiters: [
-        UUID: CheckedContinuation<ACPAgentProcessExitWaitResult, Never>
-    ] = [:]
+    private var waiters: [UUID: CheckedContinuation<ACPAgentProcessExitWaitResult, Never>] = [:]
     private let beforeCancelledWaitReturns: @Sendable () async -> Void
 
     init(beforeCancelledWaitReturns: @escaping @Sendable () async -> Void) {

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 import Testing
+
 @testable import VoiceActivationApp
 
 struct AgentSpeechCredentialBootstrapTests {
-    @MainActor @Test func importIfRequested_WhenFlagIsAbsent_DoesNotReadOrStore() throws {
+    @MainActor @Test func importIfRequested_WhenFlagIsAbsent_DoesNotReadOrStore() async throws {
         let store = SilentAgentSpeechCredentialStore()
         var readCount = 0
 
@@ -19,10 +20,10 @@ struct AgentSpeechCredentialBootstrapTests {
 
         #expect(!imported)
         #expect(readCount == 0)
-        #expect(try store.loadElevenLabsAPIKey() == nil)
+        #expect(try await store.loadElevenLabsAPIKey() == nil)
     }
 
-    @MainActor @Test func importIfRequested_WhenStdinContainsKey_StoresTrimmedValue() throws {
+    @MainActor @Test func importIfRequested_WhenStdinContainsKey_StoresTrimmedValue() async throws {
         let store = SilentAgentSpeechCredentialStore()
 
         let imported = try AgentSpeechCredentialBootstrap.importIfRequested(
@@ -31,7 +32,7 @@ struct AgentSpeechCredentialBootstrapTests {
             store: store)
 
         #expect(imported)
-        #expect(try store.loadElevenLabsAPIKey() == "secret")
+        #expect(try await store.loadElevenLabsAPIKey() == "secret")
     }
 
     @MainActor @Test func importIfRequested_WhenStdinIsEmpty_RejectsIt() {

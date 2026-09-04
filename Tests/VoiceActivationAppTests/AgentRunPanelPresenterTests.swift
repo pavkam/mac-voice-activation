@@ -4,6 +4,7 @@
 import AppKit
 import SwiftUI
 import Testing
+
 @testable import VoiceActivationApp
 @testable import VoiceActivationCore
 
@@ -44,6 +45,33 @@ private final class AgentRunPanelDragWindowSpy: NSWindow {
 }
 
 struct AgentRunPanelPresenterTests {
+    @MainActor @Test func actions_WhenInvoked_RecordAcceptedAndIgnoredButtonEvents() {
+        let display = AgentRunPanelDisplaySpy()
+        let diagnostics = AppDiagnosticRecorderSpy()
+        let presenter = AgentRunPanelPresenter(
+            display: display,
+            pasteboard: AgentRunPasteboardSpy(),
+            diagnostics: diagnostics)
+        let runID = UUID()
+        presenter.begin(runningSnapshot(runID: runID), from: nil)
+
+        display.onAction?(.minimize(runID: runID))
+        display.onAction?(.minimize(runID: runID))
+
+        let actionEntries = diagnostics.snapshot().filter {
+            $0.event.hasPrefix("agent_panel.action_")
+        }
+        #expect(
+            actionEntries.map(\.event) == [
+                "agent_panel.action_received",
+                "agent_panel.action_applied",
+                "agent_panel.action_received",
+                "agent_panel.action_ignored",
+            ])
+        #expect(actionEntries.allSatisfy { $0.fields["action"] == "minimize" })
+        #expect(actionEntries.allSatisfy { $0.fields["run_id"] == runID.uuidString })
+    }
+
     @MainActor @Test func actions_WhenRepeatedOrStale_AreRunScopedAndExactlyOnce() throws {
         let display = AgentRunPanelDisplaySpy()
         let pasteboard = AgentRunPasteboardSpy()
@@ -127,7 +155,7 @@ struct AgentRunPanelPresenterTests {
             key: key,
             toolTitle: "Edit file",
             options: [
-                AgentPermissionOption(id: "once", label: "Allow once", kind: .allowOnce),
+                AgentPermissionOption(id: "once", label: "Allow once", kind: .allowOnce)
             ],
             isResolving: false)
         var resolutions: [AgentPermissionKey] = []
@@ -163,11 +191,12 @@ struct AgentRunPanelPresenterTests {
             voiceInput: "",
             output: "Finished",
             timeline: [
-                .message(AgentMessagePresentation(
-                    id: UUID(),
-                    messageID: "final",
-                    kind: .response,
-                    text: "Finished")),
+                .message(
+                    AgentMessagePresentation(
+                        id: UUID(),
+                        messageID: "final",
+                        kind: .response,
+                        text: "Finished"))
             ],
             diagnostics: "",
             plan: [],
@@ -275,7 +304,8 @@ struct AgentRunPanelPresenterTests {
         #expect(!panel.canBecomeMain)
     }
 
-    @MainActor @Test func panel_WhenHostingSwiftUIControls_DoesNotInterceptTheirClicksForDragging() {
+    @MainActor @Test func panel_WhenHostingSwiftUIControls_DoesNotInterceptTheirClicksForDragging()
+    {
         let controller = AgentRunPanelController()
         let panel = controller.panelForTesting
 
@@ -292,16 +322,17 @@ struct AgentRunPanelPresenterTests {
         let dragSurface = AgentRunPanelDragView(
             frame: NSRect(x: 0, y: 0, width: 240, height: 80))
         window.contentView = dragSurface
-        let event = try #require(NSEvent.mouseEvent(
-            with: .leftMouseDown,
-            location: NSPoint(x: 20, y: 20),
-            modifierFlags: [],
-            timestamp: 0,
-            windowNumber: window.windowNumber,
-            context: nil,
-            eventNumber: 1,
-            clickCount: 1,
-            pressure: 1))
+        let event = try #require(
+            NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: NSPoint(x: 20, y: 20),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1))
 
         #expect(dragSurface.acceptsFirstMouse(for: event))
         dragSurface.mouseDown(with: event)
@@ -449,8 +480,8 @@ struct AgentRunPanelPresenterTests {
     private func thinkingSnapshot(
         runID: UUID,
         thinkingID: UUID,
-        isSettled: Bool) -> AgentRunSnapshot
-    {
+        isSettled: Bool
+    ) -> AgentRunSnapshot {
         let tool = AgentToolPresentation(
             id: "tool-1",
             title: "Read Package.swift",
@@ -484,8 +515,8 @@ struct AgentRunPanelPresenterTests {
     @MainActor
     private func replacingPhase(
         _ phase: AgentRunPhase,
-        in snapshot: AgentRunSnapshot) -> AgentRunSnapshot
-    {
+        in snapshot: AgentRunSnapshot
+    ) -> AgentRunSnapshot {
         AgentRunSnapshot(
             runID: snapshot.runID,
             profileID: snapshot.profileID,
@@ -509,8 +540,8 @@ struct AgentRunPanelPresenterTests {
     @MainActor
     private func replacingPermissions(
         _ permissions: [AgentPermissionPresentation],
-        in snapshot: AgentRunSnapshot) -> AgentRunSnapshot
-    {
+        in snapshot: AgentRunSnapshot
+    ) -> AgentRunSnapshot {
         AgentRunSnapshot(
             runID: snapshot.runID,
             profileID: snapshot.profileID,

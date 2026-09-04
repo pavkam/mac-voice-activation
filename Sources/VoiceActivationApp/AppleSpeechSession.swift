@@ -14,7 +14,7 @@ final class AppleSpeechSession: SpeechSessionProtocol {
 
         var errorDescription: String? {
             switch self {
-            case let .recognizerUnavailable(locale):
+            case .recognizerUnavailable(let locale):
                 "Speech recognition is unavailable for \(locale)."
             case .noAudioInput:
                 "No usable microphone input is available."
@@ -26,21 +26,46 @@ final class AppleSpeechSession: SpeechSessionProtocol {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let configurationMonitor = AudioEngineConfigurationMonitor()
+    private let diagnostics: any VoiceActivationDiagnosticRecording
     private var hasInputTap = false
     private var generation = 0
+
+    init(
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
+        self.diagnostics = diagnostics
+    }
 
     func start(
         mode: SpeechSessionMode,
         localeID: String,
         contextualStrings: [String],
         onUpdate: @escaping (SpeechUpdate) -> Void,
-        onInterruption: @escaping () -> Void) throws
-    {
+        onInterruption: @escaping () -> Void
+    ) throws {
         stop()
         generation &+= 1
         let activeGeneration = generation
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "recognition.start_requested",
+            fields: [
+                "generation": String(activeGeneration),
+                "mode": mode.recognitionDiagnosticName,
+                "locale": localeID,
+                "contextual_phrase_count": String(contextualStrings.count),
+            ])
         let locale = Locale(identifier: localeID)
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "recognition.start_failed",
+                level: .error,
+                fields: [
+                    "generation": String(activeGeneration),
+                    "mode": mode.recognitionDiagnosticName,
+                    "reason": "recognizer_unavailable",
+                ])
             throw SessionError.recognizerUnavailable(localeID)
         }
 
@@ -56,6 +81,17 @@ final class AppleSpeechSession: SpeechSessionProtocol {
         SpeechVoiceProcessingPolicy.configure(input, mode: mode)
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "recognition.start_failed",
+                level: .error,
+                fields: [
+                    "generation": String(activeGeneration),
+                    "mode": mode.recognitionDiagnosticName,
+                    "reason": "no_audio_input",
+                    "channel_count": String(format.channelCount),
+                    "sample_rate": String(format.sampleRate),
+                ])
             throw SessionError.noAudioInput
         }
 
@@ -70,6 +106,14 @@ final class AppleSpeechSession: SpeechSessionProtocol {
         audioEngine = engine
         configurationMonitor.start(observing: engine) { [weak self] in
             guard let self, self.generation == activeGeneration else { return }
+            self.diagnostics.record(
+                category: .speechRecognition,
+                event: "recognition.audio_configuration_changed",
+                level: .warning,
+                fields: [
+                    "generation": String(activeGeneration),
+                    "mode": mode.recognitionDiagnosticName,
+                ])
             onInterruption()
         }
 
@@ -77,25 +121,61 @@ final class AppleSpeechSession: SpeechSessionProtocol {
             let transcript = result?.bestTranscription.formattedString ?? ""
             let isFinal = result?.isFinal ?? false
             let errorDescription = error?.localizedDescription
+            self?.diagnostics.record(
+                category: .speechRecognition,
+                event: "recognition.update_received",
+                level: error == nil ? .debug : .error,
+                fields: [
+                    "generation": String(activeGeneration),
+                    "mode": mode.recognitionDiagnosticName,
+                    "character_count": String(transcript.count),
+                    "is_final": String(isFinal),
+                    "has_error": String(error != nil),
+                    "error_type": error.map { String(describing: type(of: $0)) } ?? "",
+                ])
             Task { @MainActor [weak self] in
                 guard let self, self.generation == activeGeneration else { return }
-                onUpdate(SpeechUpdate(
-                    transcript: transcript,
-                    isFinal: isFinal,
-                    errorDescription: errorDescription))
+                onUpdate(
+                    SpeechUpdate(
+                        transcript: transcript,
+                        isFinal: isFinal,
+                        errorDescription: errorDescription))
             }
         }
 
         do {
             engine.prepare()
             try engine.start()
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "recognition.started",
+                fields: [
+                    "generation": String(activeGeneration),
+                    "mode": mode.recognitionDiagnosticName,
+                    "channel_count": String(format.channelCount),
+                    "sample_rate": String(format.sampleRate),
+                    "on_device_supported": String(recognizer.supportsOnDeviceRecognition),
+                ])
         } catch {
+            diagnostics.record(
+                category: .speechRecognition,
+                event: "recognition.start_failed",
+                level: .error,
+                fields: [
+                    "generation": String(activeGeneration),
+                    "mode": mode.recognitionDiagnosticName,
+                    "reason": "audio_engine_start",
+                    "error_type": String(describing: type(of: error)),
+                ])
             stop()
             throw error
         }
     }
 
     func stop() {
+        let previousGeneration = generation
+        let hadAudioEngine = audioEngine != nil
+        let hadRecognitionTask = recognitionTask != nil
         generation &+= 1
         configurationMonitor.stop()
         recognitionTask?.cancel()
@@ -108,5 +188,25 @@ final class AppleSpeechSession: SpeechSessionProtocol {
         hasInputTap = false
         audioEngine?.stop()
         audioEngine = nil
+        diagnostics.record(
+            category: .speechRecognition,
+            event: "recognition.stopped",
+            fields: [
+                "previous_generation": String(previousGeneration),
+                "generation": String(generation),
+                "had_audio_engine": String(hadAudioEngine),
+                "had_recognition_task": String(hadRecognitionTask),
+            ])
+    }
+}
+
+extension SpeechSessionMode {
+    fileprivate var recognitionDiagnosticName: String {
+        switch self {
+        case .passiveWake: "passive_wake"
+        case .commandCapture: "command_capture"
+        case .conversation: "conversation"
+        case .pushToTalk: "push_to_talk"
+        }
     }
 }

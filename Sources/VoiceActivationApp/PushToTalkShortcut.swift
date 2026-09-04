@@ -24,9 +24,9 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
 
         var errorDescription: String? {
             switch self {
-            case let .eventHandler(status):
+            case .eventHandler(let status):
                 "Could not prepare the push-to-talk shortcut (error \(status))."
-            case let .hotKey(status):
+            case .hotKey(let status):
                 "That shortcut is unavailable. Choose another combination (error \(status))."
             case .duplicateHotKey:
                 "Push-to-talk shortcuts must be unique."
@@ -70,34 +70,52 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
             unregisterHotKey: { UnregisterEventHotKey($0) })
     }
 
-    private static let signature: OSType = 0x56414354
+    private static let signature: OSType = 0x5641_4354
 
     private var eventHandler: EventHandlerRef?
-    private var hotKeys: [(
-        hotKey: PushToTalkHotKey,
-        reference: EventHotKeyRef,
-        identifier: UInt32,
-    )] = []
+    private var hotKeys:
+        [(
+            hotKey: PushToTalkHotKey,
+            reference: EventHotKeyRef,
+            identifier: UInt32,
+        )] = []
     private var profileIDs: [UInt32: UUID] = [:]
     private var onPressed: ((UUID) -> Void)?
     private var onReleased: ((UUID) -> Void)?
     private var nextIdentifier: UInt32 = 1
     private let registrationBackend: RegistrationBackend
+    private let diagnostics: any VoiceActivationDiagnosticRecording
 
-    init(registrationBackend: RegistrationBackend = .live) {
+    init(
+        registrationBackend: RegistrationBackend = .live,
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.registrationBackend = registrationBackend
+        self.diagnostics = diagnostics
     }
 
     func start(
         profiles: [WakeProfile],
         onPressed: @escaping (UUID) -> Void,
-        onReleased: @escaping (UUID) -> Void) throws
-    {
+        onReleased: @escaping (UUID) -> Void
+    ) throws {
         let bindings = profiles.compactMap { profile in
             profile.pushToTalkHotKey.map { (profile.id, $0) }
         }
+        diagnostics.record(
+            category: .hotKey,
+            event: "hot_key.registration_started",
+            fields: [
+                "profile_count": String(profiles.count),
+                "binding_count": String(bindings.count),
+            ])
         let identities = bindings.map { PhysicalHotKeyIdentity($0.1) }
         guard Set(identities).count == identities.count else {
+            diagnostics.record(
+                category: .hotKey,
+                event: "hot_key.registration_failed",
+                level: .error,
+                fields: ["reason": "duplicate_binding"])
             throw RegistrationError.duplicateHotKey
         }
 
@@ -107,23 +125,26 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
             installedHandler = true
         }
 
-        var candidateHotKeys: [(
-            hotKey: PushToTalkHotKey,
-            reference: EventHotKeyRef,
-            identifier: UInt32,
-            profileID: UUID,
-        )] = []
+        var candidateHotKeys:
+            [(
+                hotKey: PushToTalkHotKey,
+                reference: EventHotKeyRef,
+                identifier: UInt32,
+                profileID: UUID,
+            )] = []
         var newReferences: [EventHotKeyRef] = []
         for binding in bindings {
             if let existing = hotKeys.first(where: {
                 $0.hotKey.keyCode == binding.1.keyCode
                     && $0.hotKey.modifiers == binding.1.modifiers
             }) {
-                candidateHotKeys.append((
-                    hotKey: binding.1,
-                    reference: existing.reference,
-                    identifier: existing.identifier,
-                    profileID: binding.0))
+                candidateHotKeys.append(
+                    (
+                        hotKey: binding.1,
+                        reference: existing.reference,
+                        identifier: existing.identifier,
+                        profileID: binding.0
+                    ))
                 continue
             }
 
@@ -141,14 +162,24 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
                     registrationBackend.removeEventHandler(eventHandler)
                     self.eventHandler = nil
                 }
+                diagnostics.record(
+                    category: .hotKey,
+                    event: "hot_key.registration_failed",
+                    level: .error,
+                    fields: [
+                        "reason": "backend_error",
+                        "error_type": String(describing: type(of: error)),
+                    ])
                 throw error
             }
             newReferences.append(registeredHotKey)
-            candidateHotKeys.append((
-                hotKey: binding.1,
-                reference: registeredHotKey,
-                identifier: identifierValue,
-                profileID: binding.0))
+            candidateHotKeys.append(
+                (
+                    hotKey: binding.1,
+                    reference: registeredHotKey,
+                    identifier: identifierValue,
+                    profileID: binding.0
+                ))
         }
 
         let retainedIdentifiers = Set(candidateHotKeys.map(\.identifier))
@@ -158,9 +189,10 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
         hotKeys = candidateHotKeys.map {
             (hotKey: $0.hotKey, reference: $0.reference, identifier: $0.identifier)
         }
-        profileIDs = Dictionary(uniqueKeysWithValues: candidateHotKeys.map {
-            ($0.identifier, $0.profileID)
-        })
+        profileIDs = Dictionary(
+            uniqueKeysWithValues: candidateHotKeys.map {
+                ($0.identifier, $0.profileID)
+            })
         self.onPressed = bindings.isEmpty ? nil : onPressed
         self.onReleased = bindings.isEmpty ? nil : onReleased
 
@@ -168,9 +200,18 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
             registrationBackend.removeEventHandler(eventHandler)
             self.eventHandler = nil
         }
+        diagnostics.record(
+            category: .hotKey,
+            event: "hot_key.registration_finished",
+            fields: [
+                "binding_count": String(bindings.count),
+                "registered_count": String(hotKeys.count),
+                "has_event_handler": String(eventHandler != nil),
+            ])
     }
 
     func stop() {
+        let unregisteredCount = hotKeys.count
         for hotKey in hotKeys {
             registrationBackend.unregisterHotKey(hotKey.reference)
         }
@@ -182,6 +223,10 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
         eventHandler = nil
         onPressed = nil
         onReleased = nil
+        diagnostics.record(
+            category: .hotKey,
+            event: "hot_key.registration_stopped",
+            fields: ["unregistered_count": String(unregisteredCount)])
     }
 
     private func installLiveEventHandler() throws -> EventHandlerRef {
@@ -218,8 +263,16 @@ final class PushToTalkShortcut: PushToTalkShortcutManaging {
                 let kind = GetEventKind(event)
                 MainActor.assumeIsolated {
                     if kind == UInt32(kEventHotKeyPressed) {
+                        shortcut.diagnostics.record(
+                            category: .hotKey,
+                            event: "hot_key.pressed",
+                            fields: ["profile_id": profileID.uuidString])
                         shortcut.onPressed?(profileID)
                     } else if kind == UInt32(kEventHotKeyReleased) {
+                        shortcut.diagnostics.record(
+                            category: .hotKey,
+                            event: "hot_key.released",
+                            fields: ["profile_id": profileID.uuidString])
                         shortcut.onReleased?(profileID)
                     }
                 }

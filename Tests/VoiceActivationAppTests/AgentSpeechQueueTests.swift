@@ -3,10 +3,43 @@
 
 import Foundation
 import Testing
+
 @testable import VoiceActivationApp
+@testable import VoiceActivationCore
 
 private enum ControlledSpeechError: Error {
     case failed
+}
+
+private final class DiagnosticRecorderSpy: VoiceActivationDiagnosticRecording,
+    @unchecked Sendable
+{
+    struct Entry: Sendable {
+        let event: String
+        let fields: [String: String]
+    }
+
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+
+    func record(
+        category: VoiceActivationDiagnosticCategory,
+        event: String,
+        level: VoiceActivationDiagnosticLevel,
+        fields: [String: String]
+    ) {
+        lock.lock()
+        entries.append(Entry(event: event, fields: fields))
+        lock.unlock()
+    }
+
+    func flush() {}
+
+    func snapshot() -> [Entry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries
+    }
 }
 
 private actor ControlledSpeechSynthesizer: ElevenLabsSpeechSynthesizing {
@@ -47,8 +80,8 @@ private final class ControlledAudioPlayer: AgentAudioDataPlaying {
 
     func play(
         _ data: Data,
-        completion: @escaping @MainActor (Bool) -> Void) -> Bool
-    {
+        completion: @escaping @MainActor (Bool) -> Void
+    ) -> Bool {
         payloads.append(data)
         guard acceptsPlayback else { return false }
         self.completion = completion
@@ -77,8 +110,8 @@ private final class ControlledSystemSpeechPlayer: AgentSystemSpeechPlaying {
     func play(
         text: String,
         localeID: String,
-        completion: @escaping @MainActor () -> Void) -> Bool
-    {
+        completion: @escaping @MainActor () -> Void
+    ) -> Bool {
         texts.append(text)
         localeIDs.append(localeID)
         self.completion = completion
@@ -138,6 +171,36 @@ struct AgentSpeechQueueTests {
     }
 
     @MainActor @Test
+    func playback_WhenCloudSpeechRuns_RecordsTheSynthesisAndPlaybackTimeline() async throws {
+        let diagnostics = DiagnosticRecorderSpy()
+        let synthesizer = ControlledSpeechSynthesizer()
+        let audioPlayer = ControlledAudioPlayer()
+        let queue = AgentSpeechQueue(
+            synthesizer: synthesizer,
+            audioPlayer: audioPlayer,
+            systemSpeechPlayer: ControlledSystemSpeechPlayer(),
+            diagnostics: diagnostics)
+
+        queue.enqueue(request("Trace me."))
+        try await waitUntil { await synthesizer.requestedTexts == ["Trace me."] }
+        await synthesizer.succeed("Trace me.")
+        try await waitUntil { audioPlayer.payloads == [Data("Trace me.".utf8)] }
+        audioPlayer.finish()
+
+        let entries = diagnostics.snapshot()
+        let events = entries.map(\.event)
+        #expect(events.contains("speech.queue_enqueued"))
+        #expect(events.contains("speech.synthesis_started"))
+        #expect(events.contains("speech.synthesis_finished"))
+        #expect(events.contains("speech.playback_starting"))
+        #expect(events.contains("speech.playback_started"))
+        #expect(events.contains("speech.playback_finished"))
+        let correlatedRequestIDs = Set(entries.compactMap { $0.fields["request_id"] })
+        #expect(correlatedRequestIDs == ["1"])
+        queue.stop()
+    }
+
+    @MainActor @Test
     func enqueue_WhenFirstSynthesisIsSuspended_StartsSecondSynthesisIndependently()
         async throws
     {
@@ -184,9 +247,10 @@ struct AgentSpeechQueueTests {
 
         audioPlayer.finish()
         try await waitUntil { audioPlayer.payloads.count == 2 }
-        #expect(audioPlayer.payloads == [
-            Data("First.".utf8), Data("Second.".utf8),
-        ])
+        #expect(
+            audioPlayer.payloads == [
+                Data("First.".utf8), Data("Second.".utf8),
+            ])
         audioPlayer.finish()
         queue.stop()
     }
@@ -359,8 +423,8 @@ struct AgentSpeechQueueTests {
     @MainActor
     private func waitUntil(
         timeout: Duration = .seconds(1),
-        condition: @escaping @MainActor () async -> Bool) async throws
-    {
+        condition: @escaping @MainActor () async -> Bool
+    ) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {

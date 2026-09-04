@@ -5,6 +5,46 @@ SPDX-License-Identifier: MIT
 
 # Troubleshooting
 
+## Inspect the diagnostic log
+
+Voice Activation writes a structured runtime trace to:
+
+```text
+~/Library/Logs/VoiceActivation/voice-activation.jsonl
+```
+
+The trace covers app and settings lifecycle, menu and conversation-panel
+actions, hotkeys, speech recognition, commands, ACP processes and messages,
+agent state, audio scheduling and playback, and ElevenLabs requests. Entries
+carry a session ID, sequence number, monotonic timing, process ID, category,
+event name, severity, and bounded fields. Prompts, transcripts, API keys,
+authorization values, raw ACP content, and audio are never written. Sensitive
+field names are redacted again at the file boundary.
+
+Follow the current run:
+
+```bash
+tail -f ~/Library/Logs/VoiceActivation/voice-activation.jsonl | jq .
+```
+
+Show errors and warnings:
+
+```bash
+jq 'select(.level == "error" or .level == "warning")' \
+  ~/Library/Logs/VoiceActivation/voice-activation.jsonl
+```
+
+Trace one agent run after copying its `run_id` from any matching entry:
+
+```bash
+jq 'select(.fields.run_id == "RUN-ID")' \
+  ~/Library/Logs/VoiceActivation/voice-activation.jsonl
+```
+
+The active file rotates at 5 MiB. The previous three files remain beside it as
+`voice-activation.jsonl.1` through `.3`, so a noisy recognition session cannot
+grow without bound.
+
 ## The menu-bar icon is missing
 
 - Voice Activation has no Dock icon; inspect the right side of the menu bar.

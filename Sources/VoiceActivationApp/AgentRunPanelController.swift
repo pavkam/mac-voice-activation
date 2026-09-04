@@ -3,6 +3,7 @@
 
 import AppKit
 import SwiftUI
+import VoiceActivationCore
 
 @MainActor
 final class AgentRunPanel: NSPanel {
@@ -44,10 +45,18 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
     }
 
     func begin(_ snapshot: AgentRunSnapshot, from handoff: RecordingOverlayHandoff?) {
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "agent_panel.window_beginning",
+            fields: [
+                "run_id": snapshot.runID.uuidString,
+                "has_handoff": String(handoff != nil),
+            ])
         currentRunID = snapshot.runID
         placement.reset()
         model.begin(snapshot)
-        let visibleFrame = handoff?.visibleScreenFrame ?? NSScreen.main?.visibleFrame
+        let visibleFrame =
+            handoff?.visibleScreenFrame ?? NSScreen.main?.visibleFrame
             ?? NSRect(origin: .zero, size: AgentRunPanelLayout.expandedSize)
         let targetFrame = AgentRunPanelLayout.expandedFrame(in: visibleFrame)
         panel.setFrame(handoff?.sourceFrame ?? targetFrame, display: true)
@@ -63,11 +72,19 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
     func show(runID: UUID) {
         guard currentRunID == runID else { return }
         panel.orderFrontRegardless()
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "agent_panel.window_shown",
+            fields: ["run_id": runID.uuidString])
     }
 
     func hide(runID: UUID) {
         guard currentRunID == runID else { return }
         panel.orderOut(nil)
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "agent_panel.window_hidden",
+            fields: ["run_id": runID.uuidString])
     }
 
     func minimize(runID: UUID) {
@@ -77,6 +94,10 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
             model.setMinimized(true)
         }
         animate(to: targetFrame)
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "agent_panel.window_minimized",
+            fields: ["run_id": runID.uuidString])
     }
 
     func restore(runID: UUID) {
@@ -90,6 +111,10 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
             model.setMinimized(false)
         }
         animate(to: targetFrame)
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "agent_panel.window_restored",
+            fields: ["run_id": runID.uuidString])
     }
 
     private var visibleFrame: NSRect {
@@ -98,6 +123,14 @@ final class AgentRunPanelController: AgentRunPanelDisplaying {
     }
 
     private func animate(to frame: NSRect) {
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "agent_panel.window_animation_started",
+            level: .debug,
+            fields: [
+                "target_width": String(describing: frame.width),
+                "target_height": String(describing: frame.height),
+            ])
         NSAnimationContext.runAnimationGroup { context in
             context.duration = AgentRunPanelLayout.transitionDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)

@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+
 @testable import VoiceActivationApp
 
 @MainActor
@@ -69,5 +70,25 @@ struct LaunchAtLoginSettingTests {
         #expect(service.requestedValues == [true])
         #expect(!setting.isEnabled)
         #expect(setting.errorMessage == "macOS rejected the login item.")
+    }
+
+    @MainActor
+    @Test
+    func setEnabled_WhenRegistrationCompletes_RecordsRequestAndObservedResult() {
+        let service = FakeLaunchAtLoginService(isEnabled: false)
+        let diagnostics = AppDiagnosticRecorderSpy()
+        let setting = LaunchAtLoginSetting(service: service, diagnostics: diagnostics)
+
+        setting.setEnabled(true)
+
+        let entries = diagnostics.snapshot()
+        #expect(
+            entries.map(\.event) == [
+                "launch_at_login.initialized",
+                "launch_at_login.change_requested",
+                "launch_at_login.change_finished",
+            ])
+        #expect(entries.last?.fields["requested_enabled"] == "true")
+        #expect(entries.last?.fields["observed_enabled"] == "true")
     }
 }

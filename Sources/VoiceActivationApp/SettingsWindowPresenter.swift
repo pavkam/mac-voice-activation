@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import VoiceActivationCore
 
 @MainActor
 struct SettingsWindowPresenter {
@@ -17,6 +18,9 @@ struct SettingsWindowPresenter {
     }
 
     func open(_ openWindow: () -> Void) {
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "settings.window_open_requested")
         activateApplication()
         openWindow()
     }

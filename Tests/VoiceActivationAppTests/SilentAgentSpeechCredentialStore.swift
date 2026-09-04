@@ -11,7 +11,7 @@ final class SilentAgentSpeechCredentialStore: AgentSpeechCredentialStoring {
         self.apiKey = apiKey
     }
 
-    func loadElevenLabsAPIKey() throws -> String? {
+    func loadElevenLabsAPIKey() async throws -> String? {
         apiKey
     }
 

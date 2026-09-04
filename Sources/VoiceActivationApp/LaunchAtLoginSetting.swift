@@ -3,6 +3,7 @@
 
 import Observation
 import ServiceManagement
+import VoiceActivationCore
 
 @MainActor
 protocol LaunchAtLoginServicing {
@@ -40,13 +41,26 @@ final class LaunchAtLoginSetting {
     private(set) var errorMessage: String?
 
     @ObservationIgnored private let service: any LaunchAtLoginServicing
+    @ObservationIgnored private let diagnostics: any VoiceActivationDiagnosticRecording
 
-    init(service: any LaunchAtLoginServicing = SystemLaunchAtLoginService()) {
+    init(
+        service: any LaunchAtLoginServicing = SystemLaunchAtLoginService(),
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.service = service
+        self.diagnostics = diagnostics
         isEnabled = service.isEnabled
+        diagnostics.record(
+            category: .settings,
+            event: "launch_at_login.initialized",
+            fields: ["observed_enabled": String(isEnabled)])
     }
 
     func setEnabled(_ enabled: Bool) {
+        diagnostics.record(
+            category: .settings,
+            event: "launch_at_login.change_requested",
+            fields: ["requested_enabled": String(enabled)])
         do {
             try service.setEnabled(enabled)
             errorMessage = nil
@@ -54,5 +68,14 @@ final class LaunchAtLoginSetting {
             errorMessage = error.localizedDescription
         }
         isEnabled = service.isEnabled
+        diagnostics.record(
+            category: .settings,
+            event: "launch_at_login.change_finished",
+            level: errorMessage == nil ? .info : .error,
+            fields: [
+                "requested_enabled": String(enabled),
+                "observed_enabled": String(isEnabled),
+                "succeeded": String(errorMessage == nil),
+            ])
     }
 }

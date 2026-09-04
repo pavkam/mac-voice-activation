@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+
 @testable import VoiceActivationApp
 @testable import VoiceActivationCore
 
@@ -18,8 +19,8 @@ private final class ShortcutSpy: PushToTalkShortcutManaging {
     func start(
         profiles: [WakeProfile],
         onPressed: @escaping (UUID) -> Void,
-        onReleased: @escaping (UUID) -> Void) throws
-    {
+        onReleased: @escaping (UUID) -> Void
+    ) throws {
         startedProfiles.append(profiles)
         if failNextStart {
             failNextStart = false
@@ -90,8 +91,8 @@ private final class AppModelSpeechSessionSpy: SpeechSessionProtocol {
         localeID: String,
         contextualStrings: [String],
         onUpdate: @escaping (SpeechUpdate) -> Void,
-        onInterruption: @escaping () -> Void) throws
-    {
+        onInterruption: @escaping () -> Void
+    ) throws {
         startCount += 1
         self.mode = mode
         self.onUpdate = onUpdate
@@ -103,10 +104,11 @@ private final class AppModelSpeechSessionSpy: SpeechSessionProtocol {
     }
 
     func emit(_ transcript: String, isFinal: Bool = false) {
-        onUpdate?(SpeechUpdate(
-            transcript: transcript,
-            isFinal: isFinal,
-            errorDescription: nil))
+        onUpdate?(
+            SpeechUpdate(
+                transcript: transcript,
+                isFinal: isFinal,
+                errorDescription: nil))
     }
 }
 
@@ -133,10 +135,11 @@ private actor AppModelAgentRunnerSpy: AgentHarnessRunning {
         prompt: String,
         onEvent: @escaping @Sendable (AgentRunEvent) async -> Void
     ) async throws -> AgentRunResult {
-        invocations.append(Invocation(
-            profileID: profileID,
-            configuration: configuration,
-            prompt: prompt))
+        invocations.append(
+            Invocation(
+                profileID: profileID,
+                configuration: configuration,
+                prompt: prompt))
         for event in events {
             await onEvent(event)
         }
@@ -146,7 +149,8 @@ private actor AppModelAgentRunnerSpy: AgentHarnessRunning {
     func resolvePermission(
         turnToken: AgentTurnToken,
         requestID: ACPRequestID,
-        optionID: String?) async {}
+        optionID: String?
+    ) async {}
 
     func cancel() async {}
 
@@ -187,40 +191,43 @@ private actor AppModelPermissionAgentRunnerSpy: AgentHarnessRunning {
         prompt: String,
         onEvent: @escaping @Sendable (AgentRunEvent) async -> Void
     ) async throws -> AgentRunResult {
-        await onEvent(.permissionRequested(AgentPermissionRequest(
-            turnToken: turnToken,
-            requestID: requestID,
-            toolCall: AgentToolCallUpdate(
-                id: "tool-1",
-                title: "Edit settings",
-                kind: .edit,
-                status: .pending),
-            options: [
-                AgentPermissionOption(
-                    id: "allow-once",
-                    label: "Allow once",
-                    kind: .allowOnce),
-                AgentPermissionOption(
-                    id: "allow-always",
-                    label: "Allow always",
-                    kind: .allowAlways),
-                AgentPermissionOption(
-                    id: "deny-once",
-                    label: "Deny",
-                    kind: .rejectOnce),
-            ])))
+        await onEvent(
+            .permissionRequested(
+                AgentPermissionRequest(
+                    turnToken: turnToken,
+                    requestID: requestID,
+                    toolCall: AgentToolCallUpdate(
+                        id: "tool-1",
+                        title: "Edit settings",
+                        kind: .edit,
+                        status: .pending),
+                    options: [
+                        AgentPermissionOption(
+                            id: "allow-once",
+                            label: "Allow once",
+                            kind: .allowOnce),
+                        AgentPermissionOption(
+                            id: "allow-always",
+                            label: "Allow always",
+                            kind: .allowAlways),
+                        AgentPermissionOption(
+                            id: "deny-once",
+                            label: "Deny",
+                            kind: .rejectOnce),
+                    ])))
         return await withCheckedContinuation { continuation = $0 }
     }
 
     func resolvePermission(
         turnToken: AgentTurnToken,
         requestID: ACPRequestID,
-        optionID: String?) async
-    {
-        resolutions.append(Resolution(
-            turnToken: turnToken,
-            requestID: requestID,
-            optionID: optionID))
+        optionID: String?
+    ) async {
+        resolutions.append(
+            Resolution(
+                turnToken: turnToken,
+                requestID: requestID,
+                optionID: optionID))
         continuation?.resume(returning: AgentRunResult(stopReason: .endTurn))
         continuation = nil
     }
@@ -263,14 +270,16 @@ private final class AppModelAgentConversationAudioSpy: AgentConversationAudioPla
 @MainActor
 private final class AgentSpeechCredentialStoreSpy: AgentSpeechCredentialStoring {
     private(set) var apiKey: String?
+    private(set) var loadCount = 0
     private(set) var savedKeys: [String?] = []
 
     init(apiKey: String? = nil) {
         self.apiKey = apiKey
     }
 
-    func loadElevenLabsAPIKey() throws -> String? {
-        apiKey
+    func loadElevenLabsAPIKey() async throws -> String? {
+        loadCount += 1
+        return apiKey
     }
 
     func saveElevenLabsAPIKey(_ apiKey: String?) throws {
@@ -331,7 +340,9 @@ private final class PermissionRequestGate {
 }
 
 struct AppModelTests {
-    @MainActor @Test func togglePassiveListening_WhenProfilesDiffer_PausesWithoutChangingProfiles() throws {
+    @MainActor @Test func togglePassiveListening_WhenProfilesDiffer_PausesWithoutChangingProfiles()
+        throws
+    {
         let computer = try WakeProfile(
             wakePhrase: "computer",
             urlTemplate: "https://one.example/?q={urlText}",
@@ -390,7 +401,9 @@ struct AppModelTests {
         #expect(model.activeWakeProfiles.map(\.isEnabled) == [true, false])
     }
 
-    @MainActor @Test func start_WhenPassiveListeningIsEnabled_WiresAndStartsDependencies() async throws {
+    @MainActor @Test func start_WhenPassiveListeningIsEnabled_WiresAndStartsDependencies()
+        async throws
+    {
         let suite = "VoiceActivationStartupTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
@@ -440,7 +453,9 @@ struct AppModelTests {
         #expect(shortcut.startedProfiles.count == 1)
     }
 
-    @MainActor @Test func passiveListening_WhenDisabledDuringPermissionRequest_StaysOff() async throws {
+    @MainActor @Test func passiveListening_WhenDisabledDuringPermissionRequest_StaysOff()
+        async throws
+    {
         let suite = "VoiceActivationPermissionRaceTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
@@ -471,7 +486,9 @@ struct AppModelTests {
         #expect(speech.startCount == 0)
     }
 
-    @MainActor @Test func passiveListening_WhenDisabledBeforePermissionDenial_DoesNotShowFailure() async throws {
+    @MainActor @Test func passiveListening_WhenDisabledBeforePermissionDenial_DoesNotShowFailure()
+        async throws
+    {
         let suite = "VoiceActivationLatePermissionDenialTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
@@ -498,7 +515,9 @@ struct AppModelTests {
         #expect(model.state == .disabled)
     }
 
-    @MainActor @Test func passiveListening_WhenSettingDoesNotChange_DoesNotRequestPermissions() async throws {
+    @MainActor @Test func passiveListening_WhenSettingDoesNotChange_DoesNotRequestPermissions()
+        async throws
+    {
         let suite = "VoiceActivationIdempotentToggleTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
@@ -669,8 +688,8 @@ struct AppModelTests {
     @MainActor
     private func waitUntil(
         timeout: Duration = .seconds(5),
-        condition: @escaping @MainActor () async -> Bool) async
-    {
+        condition: @escaping @MainActor () async -> Bool
+    ) async {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while !(await condition()), clock.now < deadline {
@@ -758,16 +777,20 @@ struct AppModelTests {
         let saved = await fixture.model.saveSettings()
 
         #expect(saved)
-        #expect(fixture.preferences.wakeProfiles.map(\.wakePhrase) == [
-            "search", "ask assistant",
-        ])
+        #expect(
+            fixture.preferences.wakeProfiles.map(\.wakePhrase) == [
+                "search", "ask assistant",
+            ])
         #expect(fixture.model.activeWakeProfiles.map(\.accent) == [.cyan, .purple])
-        #expect(fixture.shortcut.startedProfiles.last?.map(\.pushToTalkHotKey) == [
-            searchHotKey, assistantHotKey,
-        ])
+        #expect(
+            fixture.shortcut.startedProfiles.last?.map(\.pushToTalkHotKey) == [
+                searchHotKey, assistantHotKey,
+            ])
     }
 
-    @MainActor @Test func saveSettings_WhenPhrasesMatchAfterNormalization_RejectsProfiles() async throws {
+    @MainActor @Test func saveSettings_WhenPhrasesMatchAfterNormalization_RejectsProfiles()
+        async throws
+    {
         let fixture = try Fixture()
         fixture.model.wakeProfiles = [
             WakeProfileDraft(
@@ -787,7 +810,9 @@ struct AppModelTests {
         #expect(fixture.shortcut.startedProfiles.isEmpty)
     }
 
-    @MainActor @Test func setWakeProfileEnabled_WhenOneProfileChanges_PersistsOnlyThatProfile() throws {
+    @MainActor @Test func setWakeProfileEnabled_WhenOneProfileChanges_PersistsOnlyThatProfile()
+        throws
+    {
         let computer = try WakeProfile(
             wakePhrase: "computer",
             urlTemplate: "https://search.example/?q={urlText}",
@@ -805,7 +830,9 @@ struct AppModelTests {
         #expect(fixture.preferences.wakeProfiles.map(\.isEnabled) == [true, false])
     }
 
-    @MainActor @Test func saveSettings_WhenAgentExecutableIsMissing_PreservesActiveProfilesAndHotKeys() async throws {
+    @MainActor @Test
+    func saveSettings_WhenAgentExecutableIsMissing_PreservesActiveProfilesAndHotKeys() async throws
+    {
         let runner = AppModelAgentRunnerSpy()
         let profile = try makeAgentProfile(
             executablePath: "/missing/agent",
@@ -832,7 +859,9 @@ struct AppModelTests {
         #expect(await runner.recordedResets().isEmpty)
     }
 
-    @MainActor @Test func saveSettings_WhenWorkingDirectoryIsNotDirectory_PreservesActiveProfiles() async throws {
+    @MainActor @Test func saveSettings_WhenWorkingDirectoryIsNotDirectory_PreservesActiveProfiles()
+        async throws
+    {
         let runner = AppModelAgentRunnerSpy()
         let profile = try makeAgentProfile(workingDirectory: "/Users/test/not-a-directory")
         let fixture = try Fixture(
@@ -851,7 +880,9 @@ struct AppModelTests {
         #expect(await runner.recordedResets().isEmpty)
     }
 
-    @MainActor @Test func saveSettings_WhenCommandExecutableIsMissing_PreservesActiveProfiles() async throws {
+    @MainActor @Test func saveSettings_WhenCommandExecutableIsMissing_PreservesActiveProfiles()
+        async throws
+    {
         let runner = AppModelAgentRunnerSpy()
         let fixture = try Fixture(
             agentRunner: runner,
@@ -867,7 +898,9 @@ struct AppModelTests {
         #expect(await runner.recordedResets().isEmpty)
     }
 
-    @MainActor @Test func saveSettings_WhenShortcutReplacementFails_RestoresExactPreviousRegistrations() async throws {
+    @MainActor @Test
+    func saveSettings_WhenShortcutReplacementFails_RestoresExactPreviousRegistrations() async throws
+    {
         let oldHotKey = try PushToTalkHotKey(
             keyCode: 40,
             modifiers: [.command, .shift],
@@ -876,11 +909,13 @@ struct AppModelTests {
             keyCode: 45,
             modifiers: [.control, .option],
             keyLabel: "N")
-        let oldProfiles = [try WakeProfile(
-            wakePhrase: "computer",
-            urlTemplate: "https://example.com/?q={urlText}",
-            accent: .blue,
-            pushToTalkHotKey: oldHotKey)]
+        let oldProfiles = [
+            try WakeProfile(
+                wakePhrase: "computer",
+                urlTemplate: "https://example.com/?q={urlText}",
+                accent: .blue,
+                pushToTalkHotKey: oldHotKey)
+        ]
         let runner = AppModelAgentRunnerSpy()
         let fixture = try Fixture(profiles: oldProfiles, agentRunner: runner)
         await fixture.model.start()
@@ -899,7 +934,9 @@ struct AppModelTests {
         #expect(await runner.recordedResets().isEmpty)
     }
 
-    @MainActor @Test func saveSettings_WhenAgentProfilesChange_ResetsOnlyAffectedCachedProfiles() async throws {
+    @MainActor @Test func saveSettings_WhenAgentProfilesChange_ResetsOnlyAffectedCachedProfiles()
+        async throws
+    {
         let changed = try makeAgentProfile(
             id: UUID(),
             displayName: "Changed",
@@ -956,14 +993,19 @@ struct AppModelTests {
         let saved = await fixture.model.saveSettings()
 
         #expect(saved)
-        #expect(await runner.recordedResets() == [[
-            changed.id,
-            removed.id,
-            convertedToCommand.id,
-        ]])
+        #expect(
+            await runner.recordedResets() == [
+                [
+                    changed.id,
+                    removed.id,
+                    convertedToCommand.id,
+                ]
+            ])
     }
 
-    @MainActor @Test func coordinator_WhenAgentRunnerIsInjected_UsesSameInstanceAsSettingsReset() async throws {
+    @MainActor @Test func coordinator_WhenAgentRunnerIsInjected_UsesSameInstanceAsSettingsReset()
+        async throws
+    {
         let profile = try makeAgentProfile(pushToTalkHotKey: .defaultValue)
         let runner = AppModelAgentRunnerSpy()
         let fixture = try Fixture(
@@ -1069,16 +1111,19 @@ struct AppModelTests {
         let fixture = try Fixture(profiles: [profile], agentRunPanel: panel)
         let runID = UUID()
 
-        fixture.model.handleAgentRunLifecycleEvent(.started(
-            runID: runID,
-            profile: profile,
-            prompt: "Explain the change"))
-        fixture.model.handleAgentRunLifecycleEvent(.event(
-            runID: runID,
-            event: .agentMessageDelta(messageID: nil, text: "Done")))
-        fixture.model.handleAgentRunLifecycleEvent(.completed(
-            runID: runID,
-            result: AgentRunResult(stopReason: .endTurn)))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .started(
+                runID: runID,
+                profile: profile,
+                prompt: "Explain the change"))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .event(
+                runID: runID,
+                event: .agentMessageDelta(messageID: nil, text: "Done")))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .completed(
+                runID: runID,
+                result: AgentRunResult(stopReason: .endTurn)))
         fixture.model.showAgentRun()
 
         #expect(panel.began.count == 1)
@@ -1094,18 +1139,21 @@ struct AppModelTests {
         let panel = AppModelAgentPanelSpy()
         let fixture = try Fixture(profiles: [profile], agentRunPanel: panel)
         let runID = UUID()
-        fixture.model.handleAgentRunLifecycleEvent(.started(
-            runID: runID,
-            profile: profile,
-            prompt: "Explain the change"))
-        fixture.model.handleAgentRunLifecycleEvent(.completed(
-            runID: runID,
-            result: AgentRunResult(stopReason: .endTurn)))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .started(
+                runID: runID,
+                profile: profile,
+                prompt: "Explain the change"))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .completed(
+                runID: runID,
+                result: AgentRunResult(stopReason: .endTurn)))
 
         fixture.model.deleteAgentRun()
-        fixture.model.handleAgentRunLifecycleEvent(.event(
-            runID: runID,
-            event: .agentMessageDelta(messageID: "late", text: "Do not restore")))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .event(
+                runID: runID,
+                event: .agentMessageDelta(messageID: "late", text: "Do not restore")))
 
         #expect(fixture.model.agentRunSnapshot == nil)
         #expect(panel.hidden == [runID])
@@ -1115,14 +1163,16 @@ struct AppModelTests {
         let profile = try makeAgentProfile(displayName: "Codex")
         let fixture = try Fixture(profiles: [profile])
         let runID = UUID()
-        fixture.model.handleAgentRunLifecycleEvent(.started(
-            runID: runID,
-            profile: profile,
-            prompt: "Current"))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .started(
+                runID: runID,
+                profile: profile,
+                prompt: "Current"))
 
-        fixture.model.handleAgentRunLifecycleEvent(.event(
-            runID: UUID(),
-            event: .agentMessageDelta(messageID: nil, text: "stale")))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .event(
+                runID: UUID(),
+                event: .agentMessageDelta(messageID: nil, text: "stale")))
 
         #expect(fixture.model.agentRunSnapshot?.output == "")
     }
@@ -1131,19 +1181,22 @@ struct AppModelTests {
         let profile = try makeAgentProfile(displayName: "Codex")
         let fixture = try Fixture(profiles: [profile])
         let runID = UUID()
-        fixture.model.handleAgentRunLifecycleEvent(.started(
-            runID: runID,
-            profile: profile,
-            prompt: "Current"))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .started(
+                runID: runID,
+                profile: profile,
+                prompt: "Current"))
 
-        fixture.model.handleAgentRunLifecycleEvent(.notice(
-            runID: runID,
-            message: "Wait for the agent."))
+        fixture.model.handleAgentRunLifecycleEvent(
+            .notice(
+                runID: runID,
+                message: "Wait for the agent."))
 
         #expect(fixture.model.agentRunSnapshot?.notices == ["Wait for the agent."])
     }
 
-    @MainActor @Test func agentConversation_WhenSpeechIsPartial_ShowsLiveFollowUpText() async throws {
+    @MainActor @Test func agentConversation_WhenSpeechIsPartial_ShowsLiveFollowUpText() async throws
+    {
         let profile = try makeAgentProfile(displayName: "Codex")
         let fixture = try Fixture(profiles: [profile])
         await fixture.model.start()
@@ -1158,10 +1211,13 @@ struct AppModelTests {
         #expect(fixture.model.agentRunSnapshot?.voiceInput == "also check the tests")
     }
 
-    @MainActor @Test func agentConversation_WhenAgentReplies_ReadsRenderedReplyWithoutUsingTestAudio() async throws {
+    @MainActor @Test
+    func agentConversation_WhenAgentReplies_ReadsRenderedReplyWithoutUsingTestAudio()
+        async throws
+    {
         let profile = try makeAgentProfile(displayName: "Codex")
         let runner = AppModelAgentRunnerSpy(events: [
-            .agentMessageDelta(messageID: "answer", text: "**All done**"),
+            .agentMessageDelta(messageID: "answer", text: "**All done**")
         ])
         let audio = AppModelAgentConversationAudioSpy()
         let fixture = try Fixture(
@@ -1178,7 +1234,9 @@ struct AppModelTests {
         #expect(fixture.model.agentRunSnapshot?.phase == .listening)
     }
 
-    @MainActor @Test func saveSettings_WhenConversationAudioChanges_PersistsOnlyOnSave() async throws {
+    @MainActor @Test func saveSettings_WhenConversationAudioChanges_PersistsOnlyOnSave()
+        async throws
+    {
         let credentials = AgentSpeechCredentialStoreSpy(apiKey: "saved-key")
         let fixture = try Fixture(agentSpeechCredentialStore: credentials)
         fixture.model.readsAgentRepliesAloud = false
@@ -1198,6 +1256,19 @@ struct AppModelTests {
         #expect(fixture.preferences.agentSpeechProvider == .elevenLabs)
         #expect(fixture.preferences.elevenLabsVoiceID == "voice-123")
         #expect(credentials.apiKey == "new-key")
+    }
+
+    @MainActor @Test
+    func initialization_WhenCredentialExists_DefersReadingItUntilRuntimeStarts() async throws {
+        let credentials = AgentSpeechCredentialStoreSpy(apiKey: "saved-key")
+        let fixture = try Fixture(agentSpeechCredentialStore: credentials)
+
+        #expect(credentials.loadCount == 0)
+        #expect(fixture.model.elevenLabsAPIKey.isEmpty)
+
+        await fixture.model.start()
+        await waitUntil { credentials.loadCount == 1 }
+        await waitUntil { fixture.model.elevenLabsAPIKey == "saved-key" }
     }
 
     @MainActor @Test func loadElevenLabsVoices_WhenAPIKeyIsValid_SelectsFirstVoice() async throws {
@@ -1227,7 +1298,9 @@ struct AppModelTests {
         #expect(!fixture.model.isLoadingElevenLabsVoices)
     }
 
-    @MainActor @Test func previewElevenLabsVoice_WhenVoiceIsSelected_UsesDraftCredentials() async throws {
+    @MainActor @Test func previewElevenLabsVoice_WhenVoiceIsSelected_UsesDraftCredentials()
+        async throws
+    {
         let preview = AppModelElevenLabsVoicePreviewSpy()
         let fixture = try Fixture(elevenLabsVoicePreview: preview)
         fixture.model.agentSpeechProvider = .elevenLabs
@@ -1242,7 +1315,9 @@ struct AppModelTests {
         #expect(!fixture.model.isPreviewingElevenLabsVoice)
     }
 
-    @MainActor @Test func agentPermission_WhenUserSaysAllowAll_ResolvesAndCollapsesPrompt() async throws {
+    @MainActor @Test func agentPermission_WhenUserSaysAllowAll_ResolvesAndCollapsesPrompt()
+        async throws
+    {
         let profile = try makeAgentProfile(displayName: "Codex")
         let runner = AppModelPermissionAgentRunnerSpy()
         let fixture = try Fixture(profiles: [profile], agentRunner: runner)
@@ -1304,8 +1379,8 @@ struct AppModelTests {
                 var isDirectory: ObjCBool = false
                 return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
                     && isDirectory.boolValue
-            }) throws
-        {
+            }
+        ) throws {
             let suite = "VoiceActivationAppModelTests.\(UUID().uuidString)"
             let defaults = try #require(UserDefaults(suiteName: suite))
             defaults.removePersistentDomain(forName: suite)
@@ -1338,8 +1413,8 @@ struct AppModelTests {
         displayName: String = "Custom agent",
         executablePath: String = "/agents/custom",
         workingDirectory: String = "/Users/test/project",
-        pushToTalkHotKey: PushToTalkHotKey? = nil) throws -> WakeProfile
-    {
+        pushToTalkHotKey: PushToTalkHotKey? = nil
+    ) throws -> WakeProfile {
         let configuration = try AgentHarnessConfiguration(
             preset: .custom,
             displayName: displayName,

@@ -45,6 +45,16 @@ final class RecordingOverlayController: RecordingOverlayDisplaying {
             from: previousTranscript,
             to: transcript,
             panelIsVisible: panelWasVisible)
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "recording_overlay.show_requested",
+            level: .debug,
+            fields: [
+                "character_count": String(transcript.count),
+                "was_visible": String(panelWasVisible),
+                "animates": String(shouldAnimate),
+                "updates_frame": String(shouldUpdateFrame),
+            ])
 
         model.transcript = transcript
         model.accent = accent
@@ -60,27 +70,43 @@ final class RecordingOverlayController: RecordingOverlayDisplaying {
     }
 
     func hide() {
+        let wasVisible = panel.isVisible
         model.isRecording = false
         panel.orderOut(nil)
         activeVisibleFrame = nil
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "recording_overlay.hidden",
+            fields: ["was_visible": String(wasVisible)])
     }
 
     func takeAgentRunHandoff() -> RecordingOverlayHandoff? {
-        guard panel.isVisible, let visibleFrame = activeVisibleFrame else { return nil }
+        guard panel.isVisible, let visibleFrame = activeVisibleFrame else {
+            VoiceActivationDiagnostics.shared.record(
+                category: .ui,
+                event: "recording_overlay.handoff_unavailable",
+                level: .debug,
+                fields: ["visible": String(panel.isVisible)])
+            return nil
+        }
         let handoff = RecordingOverlayHandoff(
             visibleScreenFrame: visibleFrame,
             sourceFrame: panel.frame)
         model.isRecording = false
         panel.orderOut(nil)
         activeVisibleFrame = nil
+        VoiceActivationDiagnostics.shared.record(
+            category: .ui,
+            event: "recording_overlay.handoff_created")
         return handoff
     }
 
     private func activeScreenVisibleFrame() -> NSRect? {
         let mouseLocation = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first {
-            NSMouseInRect(mouseLocation, $0.frame, false)
-        } ?? NSScreen.main
+        let screen =
+            NSScreen.screens.first {
+                NSMouseInRect(mouseLocation, $0.frame, false)
+            } ?? NSScreen.main
         return screen?.visibleFrame
     }
 

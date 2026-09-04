@@ -62,8 +62,8 @@ enum AgentThinkingDetail: Equatable, Identifiable, Sendable {
 
     var id: AgentThinkingDetailID {
         switch self {
-        case let .thought(message): .thought(message.id)
-        case let .tool(tool): .tool(tool.id)
+        case .thought(let message): .thought(message.id)
+        case .tool(let tool): .tool(tool.id)
         }
     }
 }
@@ -78,7 +78,7 @@ struct AgentThinkingPresentation: Equatable, Identifiable, Sendable {
 
     var hasFailedTool: Bool {
         details.contains { detail in
-            guard case let .tool(tool) = detail else { return false }
+            guard case .tool(let tool) = detail else { return false }
             return tool.status == .failed
         }
     }
@@ -117,9 +117,9 @@ enum AgentRunTimelineItem: Equatable, Identifiable, Sendable {
     var id: AgentRunTimelineItemID {
         switch self {
         case .omitted: .omitted
-        case let .message(message): .message(message.id)
-        case let .userMessage(message): .userMessage(message.id)
-        case let .thinking(thinking): .thinking(thinking.id)
+        case .message(let message): .message(message.id)
+        case .userMessage(let message): .userMessage(message.id)
+        case .thinking(let thinking): .thinking(thinking.id)
         }
     }
 }
@@ -192,6 +192,7 @@ final class AgentRunPresentation {
     }
 
     private let startsElapsedTimer: Bool
+    private let diagnosticsRecorder: any VoiceActivationDiagnosticRecording
     private let clock = ContinuousClock()
     private var runID: UUID?
     private var profileID: UUID?
@@ -222,17 +223,29 @@ final class AgentRunPresentation {
     private var trailingPublicationTask: Task<Void, Never>?
     private var elapsedTask: Task<Void, Never>?
 
-    init(startsElapsedTimer: Bool = true) {
+    init(
+        startsElapsedTimer: Bool = true,
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
         self.startsElapsedTimer = startsElapsedTimer
+        diagnosticsRecorder = diagnostics
     }
 
     func start(runID: UUID, profile: WakeProfile, prompt: String) {
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.started",
+            fields: [
+                "run_id": runID.uuidString,
+                "profile_id": profile.id.uuidString,
+                "input_character_count": String(prompt.count),
+            ])
         cancelTimers()
         self.runID = runID
         profileID = profile.id
         accent = profile.accent
         self.prompt = prompt
-        if case let .agent(configuration) = profile.action {
+        if case .agent(let configuration) = profile.action {
             providerName = configuration.displayName
         } else {
             providerName = "Agent"
@@ -262,7 +275,26 @@ final class AgentRunPresentation {
     }
 
     func receive(runID: UUID, event: AgentRunEvent) {
-        guard self.runID == runID, phase?.isTerminal == false else { return }
+        guard self.runID == runID, phase?.isTerminal == false else {
+            diagnosticsRecorder.record(
+                category: .ui,
+                event: "agent_presentation.event_ignored",
+                level: .debug,
+                fields: [
+                    "run_id": runID.uuidString,
+                    "event_kind": event.presentationDiagnosticName,
+                ])
+            return
+        }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.event_received",
+            level: event.isTokenDelta ? .debug : .info,
+            fields: [
+                "run_id": runID.uuidString,
+                "event_kind": event.presentationDiagnosticName,
+                "delta_character_count": String(event.presentationCharacterCount),
+            ])
         if event.isTokenDelta {
             apply(event)
             publishTokenUpdate(runID: runID)
@@ -276,6 +308,13 @@ final class AgentRunPresentation {
 
     func submitFollowUp(runID: UUID, prompt: String) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.follow_up_added",
+            fields: [
+                "run_id": runID.uuidString,
+                "input_character_count": String(prompt.count),
+            ])
         flushPendingPublication()
         settleActiveThinkingGroup()
         timeline.append(.userMessage(AgentUserMessagePresentation(id: UUID(), text: prompt)))
@@ -286,6 +325,13 @@ final class AgentRunPresentation {
 
     func receiveNotice(runID: UUID, message: String) {
         guard self.runID == runID, phase?.isTerminal == false, !message.isEmpty else { return }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.notice_added",
+            fields: [
+                "run_id": runID.uuidString,
+                "character_count": String(message.count),
+            ])
         flushPendingPublication()
         appendNotice(message)
         publishNow()
@@ -293,6 +339,10 @@ final class AgentRunPresentation {
 
     func beginTurn(runID: UUID) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.turn_started",
+            fields: ["run_id": runID.uuidString])
         flushPendingPublication()
         phase = .running
         needsResponseSeparator = !outputBuffer.value.isEmpty
@@ -305,6 +355,10 @@ final class AgentRunPresentation {
 
     func completeTurn(runID: UUID, result _: AgentRunResult) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.turn_completed",
+            fields: ["run_id": runID.uuidString])
         flushPendingPublication()
         settleTools()
         phase = .listening
@@ -315,6 +369,14 @@ final class AgentRunPresentation {
 
     func interruptTurn(runID: UUID, message: String) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.turn_interrupted",
+            level: .error,
+            fields: [
+                "run_id": runID.uuidString,
+                "error_character_count": String(message.count),
+            ])
         flushPendingPublication()
         settleTools()
         phase = .listening
@@ -331,6 +393,14 @@ final class AgentRunPresentation {
         guard self.runID == runID, phase?.isTerminal == false, voiceInput != transcript else {
             return
         }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.voice_input_updated",
+            level: .debug,
+            fields: [
+                "run_id": runID.uuidString,
+                "input_character_count": String(transcript.count),
+            ])
         voiceInput = transcript
         publishNow()
     }
@@ -338,11 +408,15 @@ final class AgentRunPresentation {
     @discardableResult
     func beginPermissionResolution(runID: UUID, key: AgentPermissionKey) -> Bool {
         guard self.runID == runID,
-              phase == .running,
-              let index = permissions.firstIndex(where: { $0.key == key }),
-              !permissions[index].isResolving
+            phase == .running,
+            let index = permissions.firstIndex(where: { $0.key == key }),
+            !permissions[index].isResolving
         else { return false }
 
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.permission_collapsed",
+            fields: ["run_id": runID.uuidString])
         permissions.remove(at: index)
         flushPendingPublication()
         publishNow()
@@ -352,6 +426,10 @@ final class AgentRunPresentation {
     @discardableResult
     func beginCancellation(runID: UUID) -> Bool {
         guard self.runID == runID, phase == .running else { return false }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.cancellation_started",
+            fields: ["run_id": runID.uuidString])
         flushPendingPublication()
         phase = .cancelling
         publishNow()
@@ -360,6 +438,13 @@ final class AgentRunPresentation {
 
     func complete(runID: UUID, result: AgentRunResult) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.completed",
+            fields: [
+                "run_id": runID.uuidString,
+                "stop_reason": result.stopReason.rawValue,
+            ])
         flushPendingPublication()
         settleTools()
         phase = .completed(result.stopReason)
@@ -370,6 +455,14 @@ final class AgentRunPresentation {
 
     func fail(runID: UUID, message: String) {
         guard self.runID == runID, phase?.isTerminal == false else { return }
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.failed",
+            level: .error,
+            fields: [
+                "run_id": runID.uuidString,
+                "error_character_count": String(message.count),
+            ])
         flushPendingPublication()
         settleTools()
         phase = .failed(message)
@@ -393,6 +486,7 @@ final class AgentRunPresentation {
     }
 
     private func clearRetainedRun() {
+        let clearedRunID = runID
         cancelTimers()
         runID = nil
         profileID = nil
@@ -413,13 +507,17 @@ final class AgentRunPresentation {
         elapsedSeconds = 0
         evictedToolCount = 0
         ignoredToolUpdateCount = 0
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.cleared",
+            fields: ["run_id": clearedRunID?.uuidString ?? ""])
     }
 
     private func apply(_ event: AgentRunEvent) {
         switch event {
-        case let .connected(agentName, _):
+        case .connected(let agentName, _):
             providerName = agentName
-        case let .agentMessageDelta(messageID, text):
+        case .agentMessageDelta(let messageID, let text):
             if needsResponseSeparator, !text.isEmpty {
                 outputBuffer.append("\n\n")
                 needsResponseSeparator = false
@@ -427,42 +525,44 @@ final class AgentRunPresentation {
             outputBuffer.append(text)
             settleActiveThinkingGroup()
             appendResponseMessage(text, messageID: messageID)
-        case let .thoughtDelta(messageID, text):
+        case .thoughtDelta(let messageID, let text):
             appendThinkingMessage(text, messageID: messageID)
-        case let .toolCall(tool):
-            upsertTool(AgentToolPresentation(
-                id: tool.id,
-                title: tool.title,
-                kind: tool.kind,
-                status: tool.status))
-        case let .toolCallUpdate(update):
+        case .toolCall(let tool):
+            upsertTool(
+                AgentToolPresentation(
+                    id: tool.id,
+                    title: tool.title,
+                    kind: tool.kind,
+                    status: tool.status))
+        case .toolCallUpdate(let update):
             updateTool(update)
-        case let .plan(entries):
+        case .plan(let entries):
             plan = entries
-        case let .metadata(kind, summary):
+        case .metadata(let kind, let summary):
             if kind == AgentRunMetadataKind.sessionRecovered {
                 appendNotice(summary)
             } else {
                 diagnosticBuffer.append("[\(kind)] \(summary)\n")
             }
-        case let .diagnostic(message):
+        case .diagnostic(let message):
             diagnosticBuffer.append(message)
             if !message.hasSuffix("\n") {
                 diagnosticBuffer.append("\n")
             }
-        case let .permissionRequested(request):
+        case .permissionRequested(let request):
             let key = AgentPermissionKey(
                 turnToken: request.turnToken,
                 requestID: request.requestID)
             guard !permissions.contains(where: { $0.key == key }) else { return }
-            permissions.append(AgentPermissionPresentation(
-                key: key,
-                toolTitle: request.toolCall.title ?? "Agent action",
-                options: request.options,
-                isResolving: false))
-        case let .unknown(discriminator, summary):
+            permissions.append(
+                AgentPermissionPresentation(
+                    key: key,
+                    toolTitle: request.toolCall.title ?? "Agent action",
+                    options: request.options,
+                    isResolving: false))
+        case .unknown(let discriminator, let summary):
             diagnosticBuffer.append("[\(discriminator)] \(summary)\n")
-        case let .deliveryNotice(notice):
+        case .deliveryNotice(let notice):
             appendNotice(noticeDescription(notice))
         }
     }
@@ -520,9 +620,9 @@ final class AgentRunPresentation {
 
     private func appendResponseMessage(_ text: String, messageID: String?) {
         guard !text.isEmpty else { return }
-        if case var .message(message) = timeline.last,
-           message.kind == .response,
-           message.messageID == messageID
+        if case .message(var message) = timeline.last,
+            message.kind == .response,
+            message.messageID == messageID
         {
             message.text.append(text)
             timeline[timeline.index(before: timeline.endIndex)] = .message(message)
@@ -530,30 +630,34 @@ final class AgentRunPresentation {
             return
         }
 
-        timeline.append(.message(AgentMessagePresentation(
-            id: UUID(),
-            messageID: messageID,
-            kind: .response,
-            text: text)))
+        timeline.append(
+            .message(
+                AgentMessagePresentation(
+                    id: UUID(),
+                    messageID: messageID,
+                    kind: .response,
+                    text: text)))
         enforceTimelineBounds()
     }
 
     private func appendThinkingMessage(_ text: String, messageID: String?) {
         guard !text.isEmpty else { return }
         var thinking = activeThinkingGroup()
-        if case var .thought(message) = thinking.details.last,
-           message.messageID == messageID
+        if case .thought(var message) = thinking.details.last,
+            message.messageID == messageID
         {
             message.text.append(text)
             thinking.details[thinking.details.index(before: thinking.details.endIndex)] =
                 .thought(message)
             replaceActiveThinkingGroup(with: thinking)
         } else {
-            appendThinkingDetail(.thought(AgentMessagePresentation(
-                id: UUID(),
-                messageID: messageID,
-                kind: .thought,
-                text: text)))
+            appendThinkingDetail(
+                .thought(
+                    AgentMessagePresentation(
+                        id: UUID(),
+                        messageID: messageID,
+                        kind: .thought,
+                        text: text)))
         }
         enforceTimelineBounds()
     }
@@ -569,7 +673,7 @@ final class AgentRunPresentation {
     }
 
     private func activeThinkingGroup() -> AgentThinkingPresentation {
-        if case let .thinking(thinking) = timeline.last, !thinking.isSettled {
+        if case .thinking(let thinking) = timeline.last, !thinking.isSettled {
             return thinking
         }
         let thinking = AgentThinkingPresentation(id: UUID(), details: [])
@@ -585,7 +689,7 @@ final class AgentRunPresentation {
     }
 
     private func settleActiveThinkingGroup() {
-        guard case var .thinking(thinking) = timeline.last, !thinking.isSettled else { return }
+        guard case .thinking(var thinking) = timeline.last, !thinking.isSettled else { return }
         guard !thinking.details.isEmpty else {
             timeline.removeLast()
             return
@@ -596,11 +700,11 @@ final class AgentRunPresentation {
 
     private func updateTimelineTool(_ tool: AgentToolPresentation) {
         for timelineIndex in timeline.indices {
-            guard case var .thinking(thinking) = timeline[timelineIndex],
-                  let detailIndex = thinking.details.firstIndex(where: { detail in
-                      guard case let .tool(candidate) = detail else { return false }
-                      return candidate.id == tool.id
-                  })
+            guard case .thinking(var thinking) = timeline[timelineIndex],
+                let detailIndex = thinking.details.firstIndex(where: { detail in
+                    guard case .tool(let candidate) = detail else { return false }
+                    return candidate.id == tool.id
+                })
             else { continue }
             thinking.details[detailIndex] = .tool(tool)
             timeline[timelineIndex] = .thinking(thinking)
@@ -611,11 +715,11 @@ final class AgentRunPresentation {
     @discardableResult
     private func removeTimelineTool(id: String) -> Bool {
         for timelineIndex in timeline.indices {
-            guard case var .thinking(thinking) = timeline[timelineIndex],
-                  let detailIndex = thinking.details.firstIndex(where: { detail in
-                      guard case let .tool(tool) = detail else { return false }
-                      return tool.id == id
-                  })
+            guard case .thinking(var thinking) = timeline[timelineIndex],
+                let detailIndex = thinking.details.firstIndex(where: { detail in
+                    guard case .tool(let tool) = detail else { return false }
+                    return tool.id == id
+                })
             else { continue }
             thinking.details.remove(at: detailIndex)
             thinking.omittedDetailCount = saturatingIncrement(thinking.omittedDetailCount)
@@ -628,7 +732,7 @@ final class AgentRunPresentation {
     private func enforceTimelineBounds() {
         var retainedTextBytes = timelineTextByteCount
         while retainedTextBytes > Self.maximumTimelineTextBytes,
-              let index = timeline.firstIndex(where: \AgentRunTimelineItem.containsText)
+            let index = timeline.firstIndex(where: \AgentRunTimelineItem.containsText)
         {
             let originalByteCount = timeline[index].text.utf8.count
             let excessByteCount = retainedTextBytes - Self.maximumTimelineTextBytes
@@ -645,19 +749,19 @@ final class AgentRunPresentation {
         }
 
         if timelineHasOmittedActivity,
-           !timeline.contains(where: { item in
-               if case .omitted = item { return true }
-               return false
-           })
+            !timeline.contains(where: { item in
+                if case .omitted = item { return true }
+                return false
+            })
         {
             timeline.insert(.omitted, at: timeline.startIndex)
         }
 
         while timeline.count > Self.maximumTimelineItems,
-              let index = timeline.firstIndex(where: { item in
-                  if case .omitted = item { return false }
-                  return true
-              })
+            let index = timeline.firstIndex(where: { item in
+                if case .omitted = item { return false }
+                return true
+            })
         {
             timeline.remove(at: index)
             markTimelineOmitted()
@@ -674,10 +778,12 @@ final class AgentRunPresentation {
 
     private func markTimelineOmitted() {
         timelineHasOmittedActivity = true
-        guard !timeline.contains(where: { item in
-            if case .omitted = item { return true }
-            return false
-        }) else { return }
+        guard
+            !timeline.contains(where: { item in
+                if case .omitted = item { return true }
+                return false
+            })
+        else { return }
         timeline.insert(.omitted, at: timeline.startIndex)
     }
 
@@ -702,6 +808,11 @@ final class AgentRunPresentation {
             return
         }
         publicationIsPending = true
+        diagnosticsRecorder.record(
+            category: .ui,
+            event: "agent_presentation.publication_deferred",
+            level: .debug,
+            fields: ["run_id": runID.uuidString])
         guard trailingPublicationTask == nil else { return }
         let delay = now.duration(to: deadline)
         trailingPublicationTask = Task { @MainActor [weak self] in
@@ -724,6 +835,17 @@ final class AgentRunPresentation {
         publicationIsPending = false
         lastPublicationAt = clock.now
         if let snapshot {
+            diagnosticsRecorder.record(
+                category: .ui,
+                event: "agent_presentation.snapshot_ready",
+                level: .debug,
+                fields: [
+                    "run_id": snapshot.runID.uuidString,
+                    "timeline_item_count": String(snapshot.timeline.count),
+                    "output_character_count": String(snapshot.output.count),
+                    "tool_count": String(snapshot.tools.count),
+                    "permission_count": String(snapshot.permissions.count),
+                ])
             onPublication?(snapshot)
         }
     }
@@ -733,7 +855,8 @@ final class AgentRunPresentation {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self, self.runID == runID else { return }
-                self.elapsedSeconds = self.elapsedSeconds == Int.max
+                self.elapsedSeconds =
+                    self.elapsedSeconds == Int.max
                     ? Int.max
                     : self.elapsedSeconds + 1
                 self.publishNow()
@@ -756,23 +879,54 @@ final class AgentRunPresentation {
     }
 
     private func noticeDescription(_ notice: AgentRunEventDeliveryNotice) -> String {
-        let subject = switch notice.kind {
-        case .outputTruncated: "Earlier streamed output"
-        case .diagnosticTruncated: "Earlier diagnostics"
-        case .controlTruncated: "Oversized event details"
-        }
+        let subject =
+            switch notice.kind {
+            case .outputTruncated: "Earlier streamed output"
+            case .diagnosticTruncated: "Earlier diagnostics"
+            case .controlTruncated: "Oversized event details"
+            }
         return "\(subject) omitted (\(notice.discardedBytes) bytes, "
             + "\(notice.discardedEntries) entries)."
     }
 }
 
-private extension AgentRunEvent {
-    var isTokenDelta: Bool {
+extension AgentRunEvent {
+    fileprivate var isTokenDelta: Bool {
         switch self {
         case .agentMessageDelta, .thoughtDelta:
             true
         default:
             false
+        }
+    }
+
+    fileprivate var presentationDiagnosticName: String {
+        switch self {
+        case .connected: "connected"
+        case .agentMessageDelta: "agent_message_delta"
+        case .thoughtDelta: "thought_delta"
+        case .toolCall: "tool_call"
+        case .toolCallUpdate: "tool_call_update"
+        case .plan: "plan"
+        case .permissionRequested: "permission_requested"
+        case .metadata: "metadata"
+        case .diagnostic: "diagnostic"
+        case .deliveryNotice: "delivery_notice"
+        case .unknown: "unknown"
+        }
+    }
+
+    fileprivate var presentationCharacterCount: Int {
+        switch self {
+        case .agentMessageDelta(_, let text), .thoughtDelta(_, let text):
+            text.count
+        case .diagnostic(let message):
+            message.count
+        case .metadata(_, let summary), .unknown(_, let summary):
+            summary.count
+        case .connected, .toolCall, .toolCallUpdate, .plan, .permissionRequested,
+            .deliveryNotice:
+            0
         }
     }
 }
@@ -828,21 +982,21 @@ private struct AgentRunBoundedTextBuffer {
 
     private mutating func compactIfNeeded(additionalBytes: Int) {
         guard head > 0,
-              head >= 64 * 1_024 || storage.count + additionalBytes > maximumBytes * 2
+            head >= 64 * 1_024 || storage.count + additionalBytes > maximumBytes * 2
         else { return }
         storage.removeSubrange(0..<head)
         head = 0
     }
 }
 
-private extension AgentRunTimelineItem {
-    var containsText: Bool {
+extension AgentRunTimelineItem {
+    fileprivate var containsText: Bool {
         switch self {
         case .message, .userMessage:
             true
-        case let .thinking(thinking):
+        case .thinking(let thinking):
             thinking.details.contains { detail in
-                guard case let .thought(message) = detail else { return false }
+                guard case .thought(let message) = detail else { return false }
                 return !message.text.isEmpty
             }
         case .omitted:
@@ -850,15 +1004,15 @@ private extension AgentRunTimelineItem {
         }
     }
 
-    var text: String {
+    fileprivate var text: String {
         switch self {
-        case let .message(message):
+        case .message(let message):
             message.text
-        case let .userMessage(message):
+        case .userMessage(let message):
             message.text
-        case let .thinking(thinking):
+        case .thinking(let thinking):
             thinking.details.reduce(into: "") { text, detail in
-                guard case let .thought(message) = detail else { return }
+                guard case .thought(let message) = detail else { return }
                 text.append(message.text)
             }
         case .omitted:
@@ -866,23 +1020,24 @@ private extension AgentRunTimelineItem {
         }
     }
 
-    func droppingTextPrefix(
+    fileprivate func droppingTextPrefix(
         atLeast byteCount: Int,
-        using transform: (String, Int) -> String) -> AgentRunTimelineItem
-    {
+        using transform: (String, Int) -> String
+    ) -> AgentRunTimelineItem {
         switch self {
-        case var .message(message):
+        case .message(var message):
             message.text = transform(message.text, byteCount)
             return .message(message)
-        case let .userMessage(message):
-            return .userMessage(AgentUserMessagePresentation(
-                id: message.id,
-                text: transform(message.text, byteCount)))
-        case var .thinking(thinking):
+        case .userMessage(let message):
+            return .userMessage(
+                AgentUserMessagePresentation(
+                    id: message.id,
+                    text: transform(message.text, byteCount)))
+        case .thinking(var thinking):
             var remainingBytes = byteCount
             var retainedDetails: [AgentThinkingDetail] = []
             for detail in thinking.details {
-                guard case var .thought(message) = detail, remainingBytes > 0 else {
+                guard case .thought(var message) = detail, remainingBytes > 0 else {
                     retainedDetails.append(detail)
                     continue
                 }

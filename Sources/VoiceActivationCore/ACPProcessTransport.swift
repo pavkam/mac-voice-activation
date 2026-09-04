@@ -12,11 +12,11 @@ public enum ACPProcessTransportError: Error, Equatable, LocalizedError, Sendable
 
     public var errorDescription: String? {
         switch self {
-        case let .executableIsNotRunnable(path):
+        case .executableIsNotRunnable(let path):
             "The agent executable is missing or not runnable: \(path)"
         case .invalidFrame:
             "An ACP transport write must contain exactly one newline-terminated frame."
-        case let .launchFailed(message):
+        case .launchFailed(let message):
             "The agent process could not start: \(message)"
         case .transportClosed:
             "The agent process transport is closed."
@@ -35,8 +35,8 @@ struct ACPProcessTransportTestingHooks: Sendable {
 
     init(
         beforeYield: @escaping @Sendable (ACPProcessTransportReadStream) -> Void = { _ in },
-        beforeDrainWaiterRegistration: @escaping @Sendable () -> Void = {})
-    {
+        beforeDrainWaiterRegistration: @escaping @Sendable () -> Void = {}
+    ) {
         self.beforeYield = beforeYield
         self.beforeDrainWaiterRegistration = beforeDrainWaiterRegistration
     }
@@ -57,8 +57,8 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
     public convenience init(
         executableURL: URL,
         arguments: [String],
-        currentDirectoryURL: URL) throws
-    {
+        currentDirectoryURL: URL
+    ) throws {
         try self.init(
             executableURL: executableURL,
             arguments: arguments,
@@ -72,9 +72,30 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         arguments: [String],
         currentDirectoryURL: URL,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        testingHooks: ACPProcessTransportTestingHooks) throws
+        testingHooks: ACPProcessTransportTestingHooks,
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    )
+        throws
     {
+        let transportID = UUID()
+        diagnostics.record(
+            category: .acp,
+            event: "acp_transport.launch_requested",
+            fields: [
+                "transport_id": transportID.uuidString,
+                "executable_path": executableURL.path,
+                "argument_count": String(arguments.count),
+                "working_directory": currentDirectoryURL.path,
+            ])
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
+            diagnostics.record(
+                category: .acp,
+                event: "acp_transport.launch_rejected",
+                level: .error,
+                fields: [
+                    "transport_id": transportID.uuidString,
+                    "reason": "executable_not_runnable",
+                ])
             throw ACPProcessTransportError.executableIsNotRunnable(executableURL.path)
         }
 
@@ -89,7 +110,7 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         }
         let inputFlags = Darwin.fcntl(inputDescriptor, F_GETFL)
         guard inputFlags >= 0,
-              Darwin.fcntl(inputDescriptor, F_SETFL, inputFlags | O_NONBLOCK) == 0
+            Darwin.fcntl(inputDescriptor, F_SETFL, inputFlags | O_NONBLOCK) == 0
         else {
             let message = String(cString: Darwin.strerror(errno))
             throw ACPProcessTransportError.launchFailed(message)
@@ -109,21 +130,38 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
             standardInput: standardInput,
             standardOutput: standardOutput,
             standardError: standardError,
-            testingHooks: testingHooks)
+            testingHooks: testingHooks,
+            transportID: transportID,
+            diagnosticsRecorder: diagnostics)
         self.state = state
         state.installHandlers()
 
         do {
             try process.run()
+            diagnostics.record(
+                category: .acp,
+                event: "acp_transport.launched",
+                fields: [
+                    "transport_id": transportID.uuidString,
+                    "process_id": String(process.processIdentifier),
+                ])
         } catch {
             state.finishFailedLaunch()
+            diagnostics.record(
+                category: .acp,
+                event: "acp_transport.launch_failed",
+                level: .error,
+                fields: [
+                    "transport_id": transportID.uuidString,
+                    "error_type": String(describing: type(of: error)),
+                ])
             throw ACPProcessTransportError.launchFailed(error.localizedDescription)
         }
     }
 
     private static func processEnvironment(
-        for configuration: AgentHarnessConfiguration) throws -> [String: String]
-    {
+        for configuration: AgentHarnessConfiguration
+    ) throws -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         guard configuration.preset == .codex, !configuration.systemPrompt.isEmpty else {
             return environment
@@ -132,11 +170,12 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         var codexConfiguration: [String: Any] = [:]
         if let existingValue = environment["CODEX_CONFIG"], !existingValue.isEmpty {
             guard let data = existingValue.data(using: .utf8),
-                  let existingObject = try? JSONSerialization.jsonObject(with: data),
-                  let existingConfiguration = existingObject as? [String: Any]
+                let existingObject = try? JSONSerialization.jsonObject(with: data),
+                let existingConfiguration = existingObject as? [String: Any]
             else {
                 throw ACPProcessTransportError.launchFailed(
-                    "CODEX_CONFIG must contain a JSON object before a Codex system prompt can be applied.")
+                    "CODEX_CONFIG must contain a JSON object before a Codex system prompt can be applied."
+                )
             }
             codexConfiguration = existingConfiguration
         }
@@ -160,15 +199,17 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
 
     private static func environment(
         _ inheritedEnvironment: [String: String],
-        includingExecutableDirectoryFor executableURL: URL) -> [String: String]
-    {
+        includingExecutableDirectoryFor executableURL: URL
+    ) -> [String: String] {
         var environment = inheritedEnvironment
         let executableDirectory = executableURL.deletingLastPathComponent().path
         let inheritedPath = environment["PATH"] ?? ""
         let pathDirectories = inheritedPath.split(
             separator: ":",
-            omittingEmptySubsequences: true).map(String.init)
-        environment["PATH"] = ([executableDirectory]
+            omittingEmptySubsequences: true
+        ).map(String.init)
+        environment["PATH"] =
+            ([executableDirectory]
             + pathDirectories.filter { $0 != executableDirectory })
             .joined(separator: ":")
         return environment
@@ -184,6 +225,11 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
 
     public func send(_ data: Data) async throws {
         guard data.last == 0x0A, !data.dropLast().contains(0x0A) else {
+            VoiceActivationDiagnostics.shared.record(
+                category: .acp,
+                event: "acp_transport.frame_rejected",
+                level: .warning,
+                fields: ["byte_count": String(data.count)])
             throw ACPProcessTransportError.invalidFrame
         }
         try state.send(data)
@@ -228,6 +274,8 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     private let outputContinuation: AsyncThrowingStream<Data, any Error>.Continuation
     private let diagnosticContinuation: AsyncStream<Data>.Continuation
     private let testingHooks: ACPProcessTransportTestingHooks
+    private let transportID: UUID
+    private let diagnosticsRecorder: any VoiceActivationDiagnosticRecording
     private let stateLock = NSLock()
     private let sendLock = NSLock()
     private let outputReadLock = NSLock()
@@ -255,10 +303,14 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         standardInput: Pipe,
         standardOutput: Pipe,
         standardError: Pipe,
-        testingHooks: ACPProcessTransportTestingHooks)
-    {
+        testingHooks: ACPProcessTransportTestingHooks,
+        transportID: UUID,
+        diagnosticsRecorder: any VoiceActivationDiagnosticRecording
+    ) {
         self.process = process
         self.testingHooks = testingHooks
+        self.transportID = transportID
+        self.diagnosticsRecorder = diagnosticsRecorder
         inputHandle = standardInput.fileHandleForWriting
         outputHandle = standardOutput.fileHandleForReading
         diagnosticHandle = standardError.fileHandleForReading
@@ -279,6 +331,10 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     }
 
     func installHandlers() {
+        diagnosticsRecorder.record(
+            category: .acp,
+            event: "acp_transport.handlers_installed",
+            fields: ["transport_id": transportID.uuidString])
         outputHandle.readabilityHandler = { [weak self] handle in
             self?.readOutput(from: handle)
         }
@@ -291,6 +347,10 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     }
 
     func finishFailedLaunch() {
+        diagnosticsRecorder.record(
+            category: .acp,
+            event: "acp_transport.failed_launch_cleanup",
+            fields: ["transport_id": transportID.uuidString])
         process.terminationHandler = nil
         finishExit(status: Self.failedLaunchStatus)
         closeHandlesAfterExit()
@@ -305,6 +365,15 @@ private final class ACPProcessTransportState: @unchecked Sendable {
             terminationWasRequested || exitStatus != nil || inputWasClosed
         }
         guard !isClosed else {
+            diagnosticsRecorder.record(
+                category: .acp,
+                event: "acp_transport.send_rejected",
+                level: .warning,
+                fields: [
+                    "transport_id": transportID.uuidString,
+                    "reason": "closed",
+                    "byte_count": String(data.count),
+                ])
             throw ACPProcessTransportError.transportClosed
         }
 
@@ -323,8 +392,24 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         }
         guard didWriteCompleteFrame else {
             closeInputWhileSendLocked()
+            diagnosticsRecorder.record(
+                category: .acp,
+                event: "acp_transport.send_failed",
+                level: .error,
+                fields: [
+                    "transport_id": transportID.uuidString,
+                    "byte_count": String(data.count),
+                ])
             throw ACPProcessTransportError.transportClosed
         }
+        diagnosticsRecorder.record(
+            category: .acp,
+            event: "acp_transport.frame_sent",
+            level: .debug,
+            fields: [
+                "transport_id": transportID.uuidString,
+                "byte_count": String(data.count),
+            ])
     }
 
     func waitForExit() async -> Int32 {
@@ -344,12 +429,17 @@ private final class ACPProcessTransportState: @unchecked Sendable {
 
     func waitForDrain() async {
         let id = UUID()
+        diagnosticsRecorder.record(
+            category: .acp,
+            event: "acp_transport.drain_wait_started",
+            level: .debug,
+            fields: ["transport_id": transportID.uuidString])
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 testingHooks.beforeDrainWaiterRegistration()
                 let shouldResume = stateLock.withLock { () -> Bool in
                     guard !Task.isCancelled,
-                          !(outputWasFinished && diagnosticsWereFinished)
+                        !(outputWasFinished && diagnosticsWereFinished)
                     else {
                         return true
                     }
@@ -366,6 +456,10 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     }
 
     func closeReadStreams() {
+        diagnosticsRecorder.record(
+            category: .acp,
+            event: "acp_transport.read_streams_closing",
+            fields: ["transport_id": transportID.uuidString])
         outputReadLock.withLock {
             outputHandle.readabilityHandler = nil
             try? outputHandle.close()
@@ -387,11 +481,24 @@ private final class ACPProcessTransportState: @unchecked Sendable {
             return true
         }
         guard shouldTerminate else {
+            diagnosticsRecorder.record(
+                category: .acp,
+                event: "acp_transport.terminate_ignored",
+                level: .debug,
+                fields: ["transport_id": transportID.uuidString])
             return
         }
 
         let processID = process.processIdentifier
         let wasRunning = process.isRunning
+        diagnosticsRecorder.record(
+            category: .acp,
+            event: "acp_transport.terminate_requested",
+            fields: [
+                "transport_id": transportID.uuidString,
+                "process_id": String(processID),
+                "was_running": String(wasRunning),
+            ])
         if wasRunning {
             process.terminate()
             let forcedTerminationID = UUID()
@@ -424,8 +531,8 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     private func forceTerminationIfNeeded(
         id: UUID,
         process expectedProcess: Process,
-        processID: Int32)
-    {
+        processID: Int32
+    ) {
         let needsTermination = stateLock.withLock {
             terminationWasRequested
                 && exitStatus == nil
@@ -440,16 +547,33 @@ private final class ACPProcessTransportState: @unchecked Sendable {
             exitStatus == nil && forcedTerminationID == id
         }
         guard identityIsCurrent,
-              process === expectedProcess,
-              expectedProcess.processIdentifier == processID,
-              expectedProcess.isRunning
+            process === expectedProcess,
+            expectedProcess.processIdentifier == processID,
+            expectedProcess.isRunning
         else {
             return
         }
         _ = Darwin.kill(processID, SIGKILL)
+        diagnosticsRecorder.record(
+            category: .acp,
+            event: "acp_transport.force_terminated",
+            level: .warning,
+            fields: [
+                "transport_id": transportID.uuidString,
+                "process_id": String(processID),
+            ])
     }
 
     private func processExited(status: Int32) {
+        diagnosticsRecorder.record(
+            category: .acp,
+            event: "acp_transport.process_exited",
+            level: status == 0 ? .info : .error,
+            fields: [
+                "transport_id": transportID.uuidString,
+                "process_id": String(process.processIdentifier),
+                "termination_status": String(status),
+            ])
         process.terminationHandler = nil
         finishExit(status: status)
         closeHandlesAfterExit()
@@ -543,6 +667,14 @@ private final class ACPProcessTransportState: @unchecked Sendable {
                 finishOutputWhileReadLocked()
                 return
             }
+            diagnosticsRecorder.record(
+                category: .acp,
+                event: "acp_transport.output_received",
+                level: .debug,
+                fields: [
+                    "transport_id": transportID.uuidString,
+                    "byte_count": String(data.count),
+                ])
             testingHooks.beforeYield(.output)
             outputContinuation.yield(data)
         }
@@ -557,6 +689,14 @@ private final class ACPProcessTransportState: @unchecked Sendable {
                 finishDiagnosticsWhileReadLocked()
                 return
             }
+            diagnosticsRecorder.record(
+                category: .acp,
+                event: "acp_transport.diagnostic_received",
+                level: .debug,
+                fields: [
+                    "transport_id": transportID.uuidString,
+                    "byte_count": String(data.count),
+                ])
             testingHooks.beforeYield(.diagnostic)
             diagnosticContinuation.yield(data)
         }
@@ -566,6 +706,10 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         let result = markOutputFinished()
         if result.0 {
             outputContinuation.finish()
+            diagnosticsRecorder.record(
+                category: .acp,
+                event: "acp_transport.output_finished",
+                fields: ["transport_id": transportID.uuidString])
         }
         resumeDrainWaiters(result.1)
     }
@@ -574,6 +718,10 @@ private final class ACPProcessTransportState: @unchecked Sendable {
         let result = markDiagnosticsFinished()
         if result.0 {
             diagnosticContinuation.finish()
+            diagnosticsRecorder.record(
+                category: .acp,
+                event: "acp_transport.diagnostic_finished",
+                fields: ["transport_id": transportID.uuidString])
         }
         resumeDrainWaiters(result.1)
     }
@@ -588,6 +736,16 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     }
 
     private func resumeDrainWaiters(_ waiters: [CheckedContinuation<Void, Never>]) {
+        if !waiters.isEmpty {
+            diagnosticsRecorder.record(
+                category: .acp,
+                event: "acp_transport.drain_wait_finished",
+                level: .debug,
+                fields: [
+                    "transport_id": transportID.uuidString,
+                    "waiter_count": String(waiters.count),
+                ])
+        }
         for waiter in waiters {
             waiter.resume()
         }
@@ -600,8 +758,8 @@ private final class ACPProcessTransportState: @unchecked Sendable {
     }
 }
 
-private extension NSLock {
-    func withLock<Result>(_ body: () throws -> Result) rethrows -> Result {
+extension NSLock {
+    fileprivate func withLock<Result>(_ body: () throws -> Result) rethrows -> Result {
         lock()
         defer { unlock() }
         return try body()
