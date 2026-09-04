@@ -211,6 +211,44 @@ struct ACPProcessTransportTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func launch_WhenCodexHasASystemPrompt_InjectsRealDeveloperInstructions() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = try makeExecutableFixture(
+            in: directory,
+            body: "printf '%s' \"$CODEX_CONFIG\"\n")
+        let environmentKey = "CODEX_CONFIG"
+        let previousValue = ProcessInfo.processInfo.environment[environmentKey]
+        setenv(environmentKey, #"{"model":"existing-model"}"#, 1)
+        defer {
+            if let previousValue {
+                setenv(environmentKey, previousValue, 1)
+            } else {
+                unsetenv(environmentKey)
+            }
+        }
+        let configuration = try AgentHarnessConfiguration(
+            preset: .codex,
+            displayName: "Codex",
+            executablePath: executable.path,
+            arguments: [],
+            workingDirectory: directory.path,
+            permissionPolicy: .ask,
+            systemPrompt: "Be concise and conversational.")
+        let transport = try ACPProcessTransport(configuration: configuration)
+
+        let outputData = try await collect(await transport.output())
+        #expect(await transport.waitForExit() == 0)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: outputData) as? [String: Any])
+
+        #expect(object["model"] as? String == "existing-model")
+        #expect(
+            object["developer_instructions"] as? String
+                == "Be concise and conversational.")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func terminate_WhenProcessIsSleeping_ReturnsAndUnblocksEveryExitWaiter() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -596,7 +596,7 @@ public actor ACPClientConnection {
     }
 
     private func systemInstruction() -> String {
-        guard !configuration.systemPrompt.isEmpty else {
+        guard !configuration.systemPrompt.isEmpty, configuration.preset != .codex else {
             return Self.markdownPresentationInstruction
         }
         return """

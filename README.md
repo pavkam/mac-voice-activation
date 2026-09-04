@@ -127,9 +127,10 @@ Settings can read replies aloud as they stream, using either the matching macOS
 system voice or an ElevenLabs voice loaded from the account catalog. The
 selected voice can be previewed before saving, with manual Voice ID entry as a
 fallback when the catalog is unavailable. Complete sentences are queued
-immediately; an unfinished sentence is queued after a short output pause, so
-narration starts before the agent turn ends without overlapping itself. The
-working pulse pauses while speech plays. Voice cancellation says “Stopped” when
+immediately; unfinished text is queued within 350 milliseconds even while more
+tokens keep streaming. ElevenLabs prefetches upcoming speech while preserving
+playback order. The working pulse continues during cloud synthesis and pauses
+only while speech plays. Voice cancellation says “Stopped” when
 reply speech is enabled, and tests inject silent audio players, so CI never emits
 speaker sounds.
 Closing the completed panel keeps its bounded output available from **Open** in

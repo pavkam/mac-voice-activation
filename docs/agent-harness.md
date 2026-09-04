@@ -135,10 +135,14 @@ ACP subprocess communication follows the stable protocol-owner specification:
 - A fresh `session/new` uses the profile's absolute working directory and an
   empty MCP server list.
 - Each initial request and follow-up utterance becomes one `session/prompt` in
-  the same profile session, containing a harness instruction
-  text block followed by the untouched recognized request. The instruction asks
-  for user-facing GitHub-flavored Markdown; ACP v1 has no separate system-role
-  field.
+  the same profile session, containing a harness instruction text block followed
+  by the untouched recognized request. The instruction asks for user-facing
+  GitHub-flavored Markdown.
+- For the Codex preset, the profile system prompt is merged into the adapter's
+  `CODEX_CONFIG` as `developer_instructions` before process launch, preserving
+  other valid JSON configuration. This gives it developer authority for every
+  turn without duplicating it as user text. ACP v1 has no portable system-role
+  field, so other presets retain the profile instruction in the harness block.
 - `session/update` streams until the prompt response supplies a stop reason.
 
 Follow-ups remain ordered behind an active turn. At most 16 may wait; further
@@ -290,21 +294,24 @@ cooldown.
 Settings independently enable spoken agent replies and a quiet working pulse.
 Reply speech strips Markdown formatting; fenced code is announced but not read
 character by character. Complete sentences enter a FIFO speech queue as soon as
-they stream from the agent. A 350-millisecond output pause flushes an unfinished
-sentence, and turn completion flushes only the remainder. The selected provider
+they stream from the agent. A fixed 350-millisecond deadline flushes unfinished
+text after its first buffered fragment; later deltas cannot postpone that
+deadline. Turn completion flushes only the remainder. The selected provider
 is either the locale-matching macOS voice or an ElevenLabs voice selected from
 the account's paginated voice catalog and using its
-low-latency streaming endpoint and `eleven_flash_v2_5`; a failed cloud request
-falls back to the macOS voice. ElevenLabs audio and credentials remain in memory
-and Keychain respectively, and response text is sent to ElevenLabs for synthesis.
+low-latency streaming endpoint and `eleven_flash_v2_5`; up to two synthesis
+requests run ahead while completed audio still plays in strict order. A failed
+cloud request falls back to the macOS voice. ElevenLabs audio and credentials
+remain in memory and Keychain respectively, and response text is sent to ElevenLabs for synthesis.
 A short **Test voice** preview uses the same synthesis path; manual Voice ID entry
 remains available when catalog discovery fails.
 
 The voice also acknowledges a spoken conversation cancellation with “Stopped.”
 The working pulse begins only after a 1.6-second pause and repeats every 3.2
-seconds while the agent is thinking or using tools. It stops for permission
-choices, narration, cancellation, completion, and failure, then resumes its
-delay if work continues after narration.
+seconds while the agent is thinking or using tools. Cloud synthesis does not
+silence it before audio exists. It stops for permission choices, actual
+narration, cancellation, completion, and failure, then resumes its delay if work
+continues after narration.
 
 Application shutdown cancels the active turn and terminates every cached ACP
 process. Saving changed agent configuration discards the affected cached

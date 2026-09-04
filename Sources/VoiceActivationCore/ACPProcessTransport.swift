@@ -49,7 +49,9 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         try self.init(
             executableURL: URL(fileURLWithPath: configuration.executablePath),
             arguments: configuration.arguments,
-            currentDirectoryURL: URL(fileURLWithPath: configuration.workingDirectory))
+            currentDirectoryURL: URL(fileURLWithPath: configuration.workingDirectory),
+            environment: try Self.processEnvironment(for: configuration),
+            testingHooks: ACPProcessTransportTestingHooks())
     }
 
     public convenience init(
@@ -61,6 +63,7 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
             executableURL: executableURL,
             arguments: arguments,
             currentDirectoryURL: currentDirectoryURL,
+            environment: ProcessInfo.processInfo.environment,
             testingHooks: ACPProcessTransportTestingHooks())
     }
 
@@ -68,6 +71,7 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         executableURL: URL,
         arguments: [String],
         currentDirectoryURL: URL,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
         testingHooks: ACPProcessTransportTestingHooks) throws
     {
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
@@ -93,7 +97,7 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
         process.executableURL = executableURL
         process.arguments = arguments
         process.currentDirectoryURL = currentDirectoryURL
-        process.environment = ProcessInfo.processInfo.environment
+        process.environment = environment
         process.standardInput = standardInput
         process.standardOutput = standardOutput
         process.standardError = standardError
@@ -113,6 +117,37 @@ public final class ACPProcessTransport: ACPTransport, @unchecked Sendable {
             state.finishFailedLaunch()
             throw ACPProcessTransportError.launchFailed(error.localizedDescription)
         }
+    }
+
+    private static func processEnvironment(
+        for configuration: AgentHarnessConfiguration) throws -> [String: String]
+    {
+        var environment = ProcessInfo.processInfo.environment
+        guard configuration.preset == .codex, !configuration.systemPrompt.isEmpty else {
+            return environment
+        }
+
+        var codexConfiguration: [String: Any] = [:]
+        if let existingValue = environment["CODEX_CONFIG"], !existingValue.isEmpty {
+            guard let data = existingValue.data(using: .utf8),
+                  let existingObject = try? JSONSerialization.jsonObject(with: data),
+                  let existingConfiguration = existingObject as? [String: Any]
+            else {
+                throw ACPProcessTransportError.launchFailed(
+                    "CODEX_CONFIG must contain a JSON object before a Codex system prompt can be applied.")
+            }
+            codexConfiguration = existingConfiguration
+        }
+        codexConfiguration["developer_instructions"] = configuration.systemPrompt
+        let encodedConfiguration = try JSONSerialization.data(
+            withJSONObject: codexConfiguration,
+            options: [.sortedKeys])
+        guard let encodedValue = String(data: encodedConfiguration, encoding: .utf8) else {
+            throw ACPProcessTransportError.launchFailed(
+                "The Codex system prompt could not be encoded as UTF-8.")
+        }
+        environment["CODEX_CONFIG"] = encodedValue
+        return environment
     }
 
     public func output() async -> AsyncThrowingStream<Data, any Error> {

@@ -404,8 +404,8 @@ final class AgentConversationAudioPresenter {
     }
 
     private func scheduleSpeechFlush() {
-        cancelSpeechFlush()
-        guard readsReplies(), !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        guard speechFlushTask == nil,
+              readsReplies(), !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               Self.unclosedFenceMarker(in: reply) == nil,
               let runID
         else { return }
@@ -418,6 +418,7 @@ final class AgentConversationAudioPresenter {
             }
             guard let self, self.runID == runID, self.readsReplies() else { return }
             self.speechFlushTask = nil
+            guard Self.unclosedFenceMarker(in: self.reply) == nil else { return }
             let pendingReply = self.reply
             self.reply = ""
             self.speak(pendingReply)

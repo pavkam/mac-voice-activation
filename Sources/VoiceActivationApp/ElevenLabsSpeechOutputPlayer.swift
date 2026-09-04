@@ -37,6 +37,7 @@ final class SystemAgentAudioDataPlayer: AgentAudioDataPlaying {
 @MainActor
 final class ElevenLabsSpeechOutputPlayer {
     private static let maximumPendingRequests = 64
+    private static let maximumConcurrentSynthesisRequests = 2
     private static let maximumCoalescedCharacters = 20_000
 
     var onSpeakingChange: ((Bool) -> Void)?
@@ -49,9 +50,15 @@ final class ElevenLabsSpeechOutputPlayer {
         let localeID: String
     }
 
+    private struct PendingRequest {
+        let request: Request
+        var synthesis: Task<Data, any Error>?
+    }
+
     private let synthesizer: any ElevenLabsSpeechSynthesizing
     private let audioPlayer: any AgentAudioDataPlaying
-    private var pending: [Request] = []
+    private var pending: [PendingRequest] = []
+    private var activeSynthesis: Task<Data, any Error>?
     private var worker: Task<Void, Never>?
     private var generation = 0
     private var isSpeaking = false
@@ -78,12 +85,16 @@ final class ElevenLabsSpeechOutputPlayer {
             apiKey: apiKey,
             voiceID: voiceID,
             localeID: localeID))
-        setSpeaking(true)
         startWorkerIfNeeded()
     }
 
     func stop() {
         generation += 1
+        activeSynthesis?.cancel()
+        activeSynthesis = nil
+        for request in pending {
+            request.synthesis?.cancel()
+        }
         pending.removeAll(keepingCapacity: true)
         worker?.cancel()
         worker = nil
@@ -104,25 +115,37 @@ final class ElevenLabsSpeechOutputPlayer {
               generation == activeGeneration,
               !pending.isEmpty
         {
-            let request = pending.removeFirst()
+            startPrefetching()
+            let pendingRequest = pending.removeFirst()
+            let request = pendingRequest.request
             do {
-                let data = try await synthesizer.audio(
-                    text: request.text,
-                    apiKey: request.apiKey,
-                    voiceID: request.voiceID)
+                guard let synthesis = pendingRequest.synthesis else {
+                    preconditionFailure("The next speech request must be prefetched.")
+                }
+                activeSynthesis = synthesis
+                startPrefetching()
+                let data = try await synthesis.value
+                activeSynthesis = nil
+                startPrefetching()
                 try Task.checkCancellation()
                 guard generation == activeGeneration else { return }
                 guard audioPlayer.play(data) else {
                     fallBackRemainingQueue(startingWith: request)
                     break
                 }
+                setSpeaking(true)
 
                 while audioPlayer.isPlaying {
                     try await Task.sleep(for: .milliseconds(50))
                 }
+                if pending.isEmpty {
+                    setSpeaking(false)
+                }
             } catch is CancellationError {
+                activeSynthesis = nil
                 return
             } catch {
+                activeSynthesis = nil
                 guard !Task.isCancelled, generation == activeGeneration else { return }
                 fallBackRemainingQueue(startingWith: request)
                 break
@@ -144,27 +167,59 @@ final class ElevenLabsSpeechOutputPlayer {
         guard pending.count >= Self.maximumPendingRequests,
               let previous = pending.popLast()
         else {
-            pending.append(request)
+            pending.append(PendingRequest(request: request, synthesis: nil))
+            startPrefetching()
             return
         }
 
+        previous.synthesis?.cancel()
+
         let combinedText = String(
-            "\(previous.text) \(request.text)".suffix(Self.maximumCoalescedCharacters))
-        pending.append(Request(
+            "\(previous.request.text) \(request.text)".suffix(Self.maximumCoalescedCharacters))
+        pending.append(PendingRequest(request: Request(
             text: combinedText,
             apiKey: request.apiKey,
             voiceID: request.voiceID,
-            localeID: request.localeID))
+            localeID: request.localeID), synthesis: nil))
+        startPrefetching()
+    }
+
+    private func startPrefetching() {
+        let pendingSynthesisCount = pending.reduce(into: 0) { count, request in
+            if request.synthesis != nil {
+                count += 1
+            }
+        }
+        var availableSlots = Self.maximumConcurrentSynthesisRequests
+            - pendingSynthesisCount
+            - (activeSynthesis == nil ? 0 : 1)
+        guard availableSlots > 0 else { return }
+
+        for index in pending.indices where pending[index].synthesis == nil {
+            let request = pending[index].request
+            let synthesizer = synthesizer
+            pending[index].synthesis = Task {
+                try await synthesizer.audio(
+                    text: request.text,
+                    apiKey: request.apiKey,
+                    voiceID: request.voiceID)
+            }
+            availableSlots -= 1
+            if availableSlots == 0 {
+                break
+            }
+        }
     }
 
     private func fallBackRemainingQueue(startingWith request: Request) {
         var combinedText = request.text
         for pendingRequest in pending {
             combinedText.append(" ")
-            combinedText.append(pendingRequest.text)
+            combinedText.append(pendingRequest.request.text)
             if combinedText.count > Self.maximumCoalescedCharacters {
                 combinedText = String(combinedText.suffix(Self.maximumCoalescedCharacters))
             }
+            pendingRequest.synthesis?.cancel()
         }
         pending.removeAll(keepingCapacity: true)
         onFailure?(combinedText, request.localeID)

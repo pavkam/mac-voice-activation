@@ -118,6 +118,27 @@ struct ElevenLabsSpeechOutputPlayerTests {
         #expect(speakingStates == [true, false])
     }
 
+    @MainActor @Test func speak_WhenEarlierAudioIsPlaying_PrefetchesTheNextChunk() async {
+        let synthesizer = ElevenLabsSpeechSynthesizerSpy()
+        let audioPlayer = AgentAudioDataPlayerSpy()
+        audioPlayer.isPlaying = true
+        let player = ElevenLabsSpeechOutputPlayer(
+            synthesizer: synthesizer,
+            audioPlayer: audioPlayer)
+
+        player.speak("First sentence.", apiKey: "secret", voiceID: "voice-1")
+        await waitUntil { audioPlayer.payloads.count == 1 }
+        player.speak("Second sentence.", apiKey: "secret", voiceID: "voice-1")
+        await waitUntil { await synthesizer.calls.count == 2 }
+
+        #expect(await synthesizer.calls.map(\.text) == [
+            "First sentence.", "Second sentence.",
+        ])
+        #expect(audioPlayer.payloads == [Data("First sentence.".utf8)])
+        audioPlayer.isPlaying = false
+        player.stop()
+    }
+
     @MainActor @Test func stop_WhenSynthesisIsPending_PreventsStaleAudioPlayback() async throws {
         let synthesizer = GatedElevenLabsSpeechSynthesizer()
         let audioPlayer = AgentAudioDataPlayerSpy()
@@ -135,7 +156,7 @@ struct ElevenLabsSpeechOutputPlayerTests {
 
         #expect(audioPlayer.payloads.isEmpty)
         #expect(audioPlayer.stopCount == 1)
-        #expect(speakingStates == [true, false])
+        #expect(speakingStates.isEmpty)
     }
 
     @MainActor @Test func stop_WhenCancelledRequestFailsLater_DoesNotInvokeFallback() async {
@@ -200,7 +221,7 @@ struct ElevenLabsSpeechOutputPlayerTests {
         }
 
         #expect(failedTexts == ["First. Second."])
-        #expect(await synthesizer.texts == ["First."])
+        #expect(await synthesizer.texts.first == "First.")
         #expect(audioPlayer.payloads.isEmpty)
     }
 

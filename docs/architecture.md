@@ -161,13 +161,15 @@ cannot disable it.
 
 `AgentConversationAudioPresenter` observes typed lifecycle events through an
 injected playback boundary. It collects only user-facing agent message deltas,
-converts complete Markdown sentences to speech immediately, flushes an incomplete
-sentence after a 350-millisecond quiet gap, and flushes only the remainder at turn
-completion. The FIFO output boundary selects `AVSpeechSynthesizer` or ElevenLabs,
-falls back to the system voice after a cloud failure, and cancels stale synthesis
-by generation. Permission prompts and active narration pause the delayed working
-pulse; a resolved choice or completed utterance restarts its delay when work is
-still active. Spoken conversation cancellation gets a short acknowledgement.
+converts complete Markdown sentences to speech immediately, and gives unfinished
+text a 350-millisecond maximum wait that continuous token delivery cannot reset.
+Turn completion flushes only the remainder. The FIFO output boundary selects
+`AVSpeechSynthesizer` or ElevenLabs, prefetches at most two cloud syntheses while
+preserving playback order, falls back to the system voice after a cloud failure,
+and cancels stale synthesis by generation. Permission prompts and actual
+narration pause the delayed working pulse; pending cloud synthesis does not. A
+resolved choice or completed utterance restarts its delay when work is still
+active. Spoken conversation cancellation gets a short acknowledgement.
 An injected, paginated ElevenLabs catalog boundary discovers named voices, while
 the preview boundary reuses speech synthesis without coupling Settings to
 `NSSound`. Tests inject silent catalog, synthesizer, audio-data, preview, and

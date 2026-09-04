@@ -137,7 +137,7 @@ checks common Homebrew, local, ChatGPT, and NVM locations.
 | Executable | Detected command or absolute ACP process path. |
 | Working folder | Absolute project directory supplied to `session/new`. |
 | Permission policy | Default ACP response: ask, scoped allow, or scoped deny. |
-| System prompt | Optional instructions prepended to every request. |
+| System prompt | Optional profile instructions; Codex receives them as developer instructions, while ACP providers without a system-role extension receive them before each request. |
 | Adapter arguments | Direct process arguments; no shell parsing occurs. |
 
 The Cursor preset uses `cursor-agent acp`. Codex and Claude use pinned ACP

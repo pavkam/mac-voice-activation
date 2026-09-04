@@ -291,10 +291,11 @@ struct ACPClientConnectionTests {
         await connection.close()
     }
 
-    @Test func prompt_WhenProfileHasSystemPrompt_SendsItBeforeTheSpokenRequest() async throws {
+    @Test func prompt_WhenCustomProfileHasSystemPrompt_SendsItBeforeTheSpokenRequest() async throws {
         let transport = FakeACPTransport()
         let connection = try await establishConnection(
             transport: transport,
+            preset: .custom,
             systemPrompt: "Use short answers and call out destructive actions.")
         let recorder = AgentEventRecorder()
         let promptTask = prompt(connection, text: "Inspect the project", recorder: recorder)
@@ -315,6 +316,36 @@ struct ACPClientConnectionTests {
         #expect(instruction.contains("Use short answers and call out destructive actions."))
         #expect(instruction.localizedCaseInsensitiveContains("Markdown"))
         #expect(requestText == "Inspect the project")
+
+        try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
+        _ = try await promptTask.value
+        await connection.close()
+    }
+
+    @Test func prompt_WhenCodexHasDeveloperInstructions_DoesNotDuplicateThemAsUserText()
+        async throws
+    {
+        let transport = FakeACPTransport()
+        let connection = try await establishConnection(
+            transport: transport,
+            preset: .codex,
+            systemPrompt: "Use short answers and call out destructive actions.")
+        let recorder = AgentEventRecorder()
+        let promptTask = prompt(connection, text: "Inspect the project", recorder: recorder)
+        _ = await recorder.nextEvent()
+
+        guard case let .request(_, "session/prompt", .object(parameters)) =
+            await transport.nextSentMessage(),
+            case let .array(blocks) = parameters["prompt"],
+            blocks.count == 2,
+            case let .object(instructionBlock) = blocks[0],
+            case let .string(instruction) = instructionBlock["text"]
+        else {
+            Issue.record("Expected the Markdown instruction followed by the spoken request")
+            return
+        }
+        #expect(!instruction.contains("Use short answers and call out destructive actions."))
+        #expect(instruction.localizedCaseInsensitiveContains("Markdown"))
 
         try await transport.feed(promptResponse(id: 3, stopReason: "end_turn"))
         _ = try await promptTask.value
@@ -1297,6 +1328,7 @@ struct ACPClientConnectionTests {
     private func establishConnection(
         transport: FakeACPTransport,
         policy: AgentPermissionPolicy = .ask,
+        preset: AgentHarnessPreset = .codex,
         systemPrompt: String = "") async throws -> ACPClientConnection
     {
         let connectionTask = Task {
@@ -1304,6 +1336,7 @@ struct ACPClientConnectionTests {
                 transport: transport,
                 configuration: try makeConfiguration(
                     policy: policy,
+                    preset: preset,
                     systemPrompt: systemPrompt))
         }
         _ = await transport.nextSentMessage()
@@ -1358,10 +1391,11 @@ struct ACPClientConnectionTests {
 
     private func makeConfiguration(
         policy: AgentPermissionPolicy = .ask,
+        preset: AgentHarnessPreset = .codex,
         systemPrompt: String = "") throws -> AgentHarnessConfiguration
     {
         try AgentHarnessConfiguration(
-            preset: .codex,
+            preset: preset,
             displayName: "Configured Agent",
             executablePath: "/usr/bin/agent",
             arguments: ["acp"],

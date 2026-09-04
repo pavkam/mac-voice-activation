@@ -143,12 +143,13 @@ key and selected Voice ID are valid and that the Mac can reach
 voice** to verify synthesis. If catalog loading fails, paste a known Voice ID in
 the fallback field. The key is read from macOS Keychain. A failed ElevenLabs
 request falls back to the macOS voice rather than dropping the spoken chunk. The
-working pulse waits 1.6 seconds before its first audible cue and pauses while
-narration is active.
+working pulse waits 1.6 seconds before its first audible cue, remains active
+while cloud speech is being generated, and pauses when narration actually plays.
 
-Narration begins when a complete sentence arrives or output pauses for 350
-milliseconds. It does not wait for the whole agent process to finish. If several
-chunks arrive quickly, they play in order rather than interrupting one another.
+Narration begins when a complete sentence arrives or 350 milliseconds after the
+first unfinished fragment, even if tokens keep arriving. It does not wait for
+the whole agent process to finish. ElevenLabs prepares up to two chunks in
+parallel, then plays every chunk in order rather than interrupting one another.
 
 The capture start cue plays only when capture begins; the end cue plays for
 submission, cancellation, timeout, and capture errors.

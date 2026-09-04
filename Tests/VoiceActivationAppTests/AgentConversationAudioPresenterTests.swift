@@ -71,6 +71,23 @@ private actor FailingAgentElevenLabsSpeechSynthesizer: ElevenLabsSpeechSynthesiz
     }
 }
 
+private actor SuspendedAgentElevenLabsSpeechSynthesizer: ElevenLabsSpeechSynthesizing {
+    private var continuation: CheckedContinuation<Data, Never>?
+
+    func audio(text: String, apiKey: String, voiceID: String) async throws -> Data {
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        continuation?.resume(returning: Data("audio".utf8))
+        continuation = nil
+    }
+
+    func isWaiting() -> Bool {
+        continuation != nil
+    }
+}
+
 @MainActor
 private final class AgentAudioDataPlayerSpy: AgentAudioDataPlaying {
     private(set) var payloads: [Data] = []
@@ -221,6 +238,36 @@ struct AgentConversationAudioPresenterTests {
         player.stopAll()
     }
 
+    @MainActor @Test func systemPlayer_WhenCloudSpeechIsStillGenerating_KeepsWorkingPulseAudible()
+        async
+    {
+        let cloudSynthesizer = SuspendedAgentElevenLabsSpeechSynthesizer()
+        let workingPulse = AgentWorkingPulsePlayerSpy()
+        let player = AgentConversationAudioPlayer(
+            speechConfiguration: {
+                AgentSpeechConfiguration(
+                    provider: .elevenLabs,
+                    elevenLabsAPIKey: "secret",
+                    elevenLabsVoiceID: "voice-1")
+            },
+            elevenLabsSynthesizer: cloudSynthesizer,
+            elevenLabsAudioPlayer: AgentAudioDataPlayerSpy(),
+            workingPulse: workingPulse,
+            workingPulseInitialDelay: .milliseconds(20),
+            workingPulseInterval: .seconds(10))
+
+        player.setWorking(true)
+        player.speak("Generating speech.", localeID: "en-US")
+        await waitUntil {
+            let cloudRequestIsWaiting = await cloudSynthesizer.isWaiting()
+            return workingPulse.playCount == 1 && cloudRequestIsWaiting
+        }
+
+        #expect(workingPulse.playCount == 1)
+        player.stopAll()
+        await cloudSynthesizer.release()
+    }
+
     @MainActor @Test
     func systemPlayer_WhenElevenLabsFails_FallsBackToSystemVoice() async {
         let systemSynthesizer = AgentSystemSpeechSynthesizerSpy()
@@ -325,6 +372,63 @@ struct AgentConversationAudioPresenterTests {
         }
 
         #expect(player.spoken.map(\.text) == ["A useful partial answer"])
+    }
+
+    @MainActor @Test func lifecycle_WhenOutputKeepsStreaming_StartsReadingWithoutWaitingForSilence()
+        async throws
+    {
+        let player = AgentConversationAudioSpy()
+        let presenter = AgentConversationAudioPresenter(
+            player: player,
+            readsReplies: { true },
+            playsWorkingSound: { true },
+            localeID: { "en-US" })
+        let runID = UUID()
+        presenter.handle(.started(
+            runID: runID,
+            profile: try agentProfile(),
+            prompt: "Question"))
+
+        for fragment in ["A", " useful", " answer", " keeps", " streaming", " steadily"] {
+            presenter.handle(.event(
+                runID: runID,
+                event: .agentMessageDelta(messageID: "answer", text: fragment)))
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        #expect(!player.spoken.isEmpty)
+        presenter.shutdown()
+    }
+
+    @MainActor @Test func lifecycle_WhenCodeFenceOpensBeforeFlushDeadline_DoesNotFlushTheFence()
+        async throws
+    {
+        let player = AgentConversationAudioSpy()
+        let presenter = AgentConversationAudioPresenter(
+            player: player,
+            readsReplies: { true },
+            playsWorkingSound: { false },
+            localeID: { "en-US" })
+        let runID = UUID()
+        presenter.handle(.started(
+            runID: runID,
+            profile: try agentProfile(),
+            prompt: "Question"))
+
+        presenter.handle(.event(
+            runID: runID,
+            event: .agentMessageDelta(
+                messageID: "answer",
+                text: "A short introduction")))
+        presenter.handle(.event(
+            runID: runID,
+            event: .agentMessageDelta(
+                messageID: "answer",
+                text: "\n```sh\nprivate-command")))
+        try await Task.sleep(for: .milliseconds(450))
+
+        #expect(player.spoken.map(\.text) == ["A short introduction"])
+        presenter.shutdown()
     }
 
     @MainActor @Test func lifecycle_WhenFencedCodeStreams_DoesNotReadCodeContents() throws {
@@ -592,6 +696,19 @@ struct AgentConversationAudioPresenterTests {
                 workingDirectory: "/tmp",
                 permissionPolicy: .ask)),
             accent: .purple)
+    }
+
+    @MainActor
+    private func waitUntil(
+        timeout: Duration = .seconds(1),
+        condition: @escaping @MainActor () async -> Bool) async
+    {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if await condition() { return }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
     }
 
 }
