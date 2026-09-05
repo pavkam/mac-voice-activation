@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  license-compliance:
-    name: "⚖️ License compliance"
+  repository-quality:
+    name: "⚖️ Repository quality"
     runs-on: macos-latest
     timeout-minutes: 5
 
@@ -27,8 +27,8 @@ jobs:
       - name: "📥 Checkout"
         uses: actions/checkout@v7
 
-      - name: "⚖️ Verify MIT licensing"
-        run: make check-license
+      - name: "⚖️ Verify licensing, structure, and DocC"
+        run: make check
 
   build-and-test:
     name: "🧪 Build & test"
@@ -67,7 +67,7 @@ jobs:
 
   package-app:
     name: "📦 Package app"
-    needs: [license-compliance, build-and-test, thread-sanitizer]
+    needs: [repository-quality, build-and-test, thread-sanitizer]
     runs-on: macos-latest
     timeout-minutes: 15
 

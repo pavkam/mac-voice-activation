@@ -70,8 +70,71 @@ private actor DeliveryCompletionProbe {
     }
 }
 
+private actor DeliveryPriorityRecorder {
+    private var priority: TaskPriority?
+    private var waiters: [CheckedContinuation<TaskPriority, Never>] = []
+
+    func record(_ priority: TaskPriority) {
+        self.priority = priority
+        let waiters = waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(returning: priority)
+        }
+    }
+
+    func next() async -> TaskPriority {
+        if let priority {
+            return priority
+        }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+}
+
+private final class DeliveryRetentionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var delivery: AgentRunEventDelivery?
+
+    func retain(_ delivery: AgentRunEventDelivery) {
+        lock.withLock {
+            self.delivery = delivery
+        }
+    }
+
+    func take() -> AgentRunEventDelivery? {
+        lock.withLock {
+            let delivery = self.delivery
+            self.delivery = nil
+            return delivery
+        }
+    }
+}
+
 @Suite(.serialized)
 struct AgentRunEventDeliveryTests {
+    @Test func send_WhenCreatedFromBackgroundCallback_DeliversAtUserInitiatedPriority() async {
+        let recorder = DeliveryPriorityRecorder()
+        let retention = DeliveryRetentionBox()
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .background).async {
+                let delivery = AgentRunEventDelivery { _ in
+                    await recorder.record(Task.currentPriority)
+                }
+                retention.retain(delivery)
+                _ = delivery.send(.connected(agentName: "Agent", sessionID: "session"))
+                continuation.resume()
+            }
+        }
+
+        let priority = await recorder.next()
+        #expect(priority.rawValue >= TaskPriority.userInitiated.rawValue)
+
+        await retention.take()?.finish(.discard)
+    }
+
     @Test func send_WhenHandlerIsStalled_KeepsTenThousandDeltasWithinEveryBound() async {
         let gate = DeliveryHandlerGate()
         let delivery = AgentRunEventDelivery { _ in await gate.wait() }

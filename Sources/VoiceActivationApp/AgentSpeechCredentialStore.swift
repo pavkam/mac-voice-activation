@@ -3,6 +3,7 @@
 
 import Foundation
 import Security
+import VoiceActivationCore
 
 @MainActor
 protocol AgentSpeechCredentialStoring: AnyObject {
@@ -24,15 +25,100 @@ enum AgentSpeechCredentialStoreError: Error, LocalizedError {
     }
 }
 
+final class AgentSpeechCredentialAccessQueue: @unchecked Sendable {
+    private let queueKey = DispatchSpecificKey<UInt8>()
+    private let queue: DispatchQueue
+
+    init(
+        label: String = "dev.alex.voice-activation.keychain",
+        qualityOfService: DispatchQoS = .userInitiated
+    ) {
+        queue = DispatchQueue(label: label, qos: qualityOfService)
+        queue.setSpecific(key: queueKey, value: 1)
+    }
+
+    var isExecutingOperation: Bool {
+        DispatchQueue.getSpecific(key: queueKey) != nil
+    }
+
+    func perform<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    continuation.resume(returning: try operation())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+}
+
 @MainActor
 final class KeychainAgentSpeechCredentialStore: AgentSpeechCredentialStoring {
     nonisolated static let service = "dev.alex.voice-activation"
     nonisolated static let account = "elevenlabs-api-key"
 
+    private nonisolated let accessQueue: AgentSpeechCredentialAccessQueue
+    private nonisolated let diagnostics: any VoiceActivationDiagnosticRecording
+    private nonisolated let loadOperation: @Sendable () throws -> String?
+
+    init(
+        accessQueue: AgentSpeechCredentialAccessQueue = AgentSpeechCredentialAccessQueue(),
+        loadOperation: @escaping @Sendable () throws -> String? =
+            KeychainAgentSpeechCredentialStore.loadElevenLabsAPIKeySynchronously,
+        diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
+    ) {
+        self.accessQueue = accessQueue
+        self.loadOperation = loadOperation
+        self.diagnostics = diagnostics
+    }
+
     nonisolated func loadElevenLabsAPIKey() async throws -> String? {
-        try await Task.detached(priority: .utility) {
-            try Self.loadElevenLabsAPIKeySynchronously()
-        }.value
+        let queuedAt = DispatchTime.now().uptimeNanoseconds
+        diagnostics.record(
+            category: .settings,
+            event: "credential_store.load_queued",
+            fields: ["task_priority": String(Task.currentPriority.rawValue)])
+        let diagnostics = diagnostics
+        let loadOperation = loadOperation
+        return try await accessQueue.perform {
+            let startedAt = DispatchTime.now().uptimeNanoseconds
+            diagnostics.record(
+                category: .settings,
+                event: "credential_store.load_worker_started",
+                fields: [
+                    "queue_delay_ms": String(Self.milliseconds(from: queuedAt, to: startedAt)),
+                    "uses_dedicated_queue": "true",
+                ])
+            do {
+                let value = try loadOperation()
+                let finishedAt = DispatchTime.now().uptimeNanoseconds
+                diagnostics.record(
+                    category: .settings,
+                    event: "credential_store.load_worker_finished",
+                    fields: [
+                        "has_value": String(value != nil),
+                        "operation_duration_ms": String(
+                            Self.milliseconds(from: startedAt, to: finishedAt)),
+                    ])
+                return value
+            } catch {
+                let finishedAt = DispatchTime.now().uptimeNanoseconds
+                diagnostics.record(
+                    category: .settings,
+                    event: "credential_store.load_worker_failed",
+                    level: .error,
+                    fields: [
+                        "error_type": String(describing: type(of: error)),
+                        "operation_duration_ms": String(
+                            Self.milliseconds(from: startedAt, to: finishedAt)),
+                    ])
+                throw error
+            }
+        }
     }
 
     func saveElevenLabsAPIKey(_ apiKey: String?) throws {
@@ -82,6 +168,10 @@ final class KeychainAgentSpeechCredentialStore: AgentSpeechCredentialStoring {
         }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private nonisolated static func milliseconds(from start: UInt64, to end: UInt64) -> UInt64 {
+        end >= start ? (end - start) / 1_000_000 : 0
     }
 
     private nonisolated static var baseQuery: [String: Any] {

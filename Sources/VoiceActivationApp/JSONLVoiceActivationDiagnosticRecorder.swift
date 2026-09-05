@@ -52,7 +52,7 @@ final class JSONLVoiceActivationDiagnosticRecorder: VoiceActivationDiagnosticRec
 
     private let queue = DispatchQueue(
         label: "dev.alex.voice-activation.diagnostics",
-        qos: .utility)
+        qos: .userInitiated)
     private let sessionID: String
     private let sessionStartedAtUptime: UInt64
     private let maximumFileSize: UInt64

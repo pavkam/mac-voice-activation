@@ -22,6 +22,7 @@ final class AgentActivitySoundLoop: AgentActivitySoundLooping {
     private let sleep: Sleep
     private let diagnostics: any VoiceActivationDiagnosticRecording
     private var pulseTask: Task<Void, Never>?
+    private var pulseGeneration: UInt64 = 0
     private var working = false
     private var speechSuppressed = false
 
@@ -123,6 +124,7 @@ final class AgentActivitySoundLoop: AgentActivitySoundLooping {
 
     private func silence() {
         let cancelledPulse = pulseTask != nil
+        pulseGeneration &+= 1
         pulseTask?.cancel()
         pulseTask = nil
         player.stop()
@@ -138,21 +140,44 @@ final class AgentActivitySoundLoop: AgentActivitySoundLooping {
         diagnostics.record(
             category: .audio,
             event: "activity.pulse_scheduled",
-            fields: ["delay": String(describing: delay)])
-        pulseTask = Task { @MainActor [weak self] in
+            fields: [
+                "delay": String(describing: delay),
+                "task_priority": String(Task.currentPriority.rawValue),
+            ])
+        pulseGeneration &+= 1
+        let activeGeneration = pulseGeneration
+        pulseTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try await sleep(delay)
             } catch {
                 return
             }
-            guard let self, self.working, !self.speechSuppressed else { return }
-            self.diagnostics.record(
-                category: .audio,
-                event: "activity.pulse_fired",
-                fields: [:])
-            self.player.play(.thinking)
-            self.schedulePulse(after: self.interval)
+            guard !Task.isCancelled else { return }
+            let readyAtUptime = DispatchTime.now().uptimeNanoseconds
+            MainRunLoopScheduler.shared.schedule { [weak self] in
+                guard let self,
+                    self.pulseGeneration == activeGeneration,
+                    self.working,
+                    !self.speechSuppressed
+                else { return }
+                self.pulseTask = nil
+                self.diagnostics.record(
+                    category: .audio,
+                    event: "activity.pulse_fired",
+                    fields: [
+                        "task_priority": String(Task.currentPriority.rawValue),
+                        "main_delivery_ms": String(Self.milliseconds(since: readyAtUptime)),
+                        "run_loop_mode": RunLoop.current.currentMode?.rawValue ?? "none",
+                    ])
+                self.player.play(.thinking)
+                self.schedulePulse(after: self.interval)
+            }
         }
+    }
+
+    nonisolated private static func milliseconds(since startedAt: UInt64) -> UInt64 {
+        let now = DispatchTime.now().uptimeNanoseconds
+        return now >= startedAt ? (now - startedAt) / 1_000_000 : 0
     }
 }
 

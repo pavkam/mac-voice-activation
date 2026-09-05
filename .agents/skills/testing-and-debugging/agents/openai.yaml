@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+# SPDX-License-Identifier: MIT
+
+interface:
+  display_name: "Testing & Debugging"
+  short_description: "Test and diagnose the app reliably"
+  default_prompt: "Use $testing-and-debugging to diagnose this Voice Activation failure and verify the fix."

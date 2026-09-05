@@ -3,11 +3,19 @@
 
 import Foundation
 
+/// A JSON-RPC identifier in any representation accepted by ACP.
 public enum ACPRequestID: Codable, Equatable, Hashable, Sendable {
+    /// The explicit JSON `null` identifier.
     case null
+    /// A signed 64-bit integer identifier.
     case integer(Int64)
+    /// A string identifier.
     case string(String)
 
+    /// Decodes a null, integer, or string JSON-RPC identifier.
+    ///
+    /// - Parameter decoder: The decoder containing one JSON scalar.
+    /// - Throws: ``DecodingError`` when the scalar is not a supported identifier.
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
 
@@ -24,6 +32,9 @@ public enum ACPRequestID: Codable, Equatable, Hashable, Sendable {
         }
     }
 
+    /// Encodes the identifier as its corresponding JSON scalar.
+    ///
+    /// - Parameter encoder: The destination encoder.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
 
@@ -38,11 +49,21 @@ public enum ACPRequestID: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+/// The structured error payload carried by a JSON-RPC error response.
 public struct ACPJSONRPCError: Codable, Equatable, Sendable {
+    /// The protocol-defined numeric error code.
     public let code: Int64
+    /// The human-readable remote error message.
     public let message: String
+    /// Optional structured details supplied by the remote harness.
     public let data: ACPJSONValue?
 
+    /// Creates a JSON-RPC error payload.
+    ///
+    /// - Parameters:
+    ///   - code: The protocol-defined numeric code.
+    ///   - message: The remote error message.
+    ///   - data: Optional structured error details.
     public init(code: Int64, message: String, data: ACPJSONValue? = nil) {
         self.code = code
         self.message = message
@@ -50,14 +71,22 @@ public struct ACPJSONRPCError: Codable, Equatable, Sendable {
     }
 }
 
+/// A validated JSON-RPC 2.0 message exchanged with an ACP harness.
 public enum ACPMessage: Codable, Equatable, Sendable {
+    /// A client or server request that expects a response with the same identifier.
     case request(id: ACPRequestID, method: String, params: ACPJSONValue?)
+    /// A one-way notification without a request identifier.
     case notification(method: String, params: ACPJSONValue?)
+    /// A successful response to an earlier request.
     case response(id: ACPRequestID, result: ACPJSONValue)
+    /// A failed response to an earlier request.
     case errorResponse(id: ACPRequestID, error: ACPJSONRPCError)
 
+    /// Errors raised when a JSON object is not a valid JSON-RPC 2.0 envelope.
     public enum EnvelopeError: Error, Equatable, Sendable {
+        /// The envelope does not declare JSON-RPC version 2.0.
         case unsupportedJSONRPCVersion
+        /// The envelope combines or omits members in a way JSON-RPC does not permit.
         case invalidEnvelope
     }
 
@@ -70,6 +99,10 @@ public enum ACPMessage: Codable, Equatable, Sendable {
         case error
     }
 
+    /// Decodes and validates one JSON-RPC 2.0 envelope.
+    ///
+    /// - Parameter decoder: The decoder containing the envelope object.
+    /// - Throws: ``EnvelopeError`` or a decoding error when the envelope is invalid.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         guard try container.decode(String.self, forKey: .jsonrpc) == "2.0" else {
@@ -115,6 +148,9 @@ public enum ACPMessage: Codable, Equatable, Sendable {
         }
     }
 
+    /// Encodes the message as a JSON-RPC 2.0 envelope.
+    ///
+    /// - Parameter encoder: The destination encoder.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode("2.0", forKey: .jsonrpc)

@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// An opaque identity that prevents permission responses from crossing agent turns.
 public struct AgentTurnToken: Equatable, Hashable, Sendable {
     private let rawValue: UUID
 

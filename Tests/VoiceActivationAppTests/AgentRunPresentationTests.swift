@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Foundation
 import Testing
 @testable import VoiceActivationApp
@@ -8,6 +9,25 @@ import Testing
 
 @Suite(.serialized)
 struct AgentRunPresentationTests {
+    @MainActor @Test
+    func receive_WhenAppKitTracksEvents_PublishesTrailingTextWithoutAnotherEvent() throws {
+        let presentation = AgentRunPresentation(startsElapsedTimer: false)
+        let runID = UUID()
+        var publications: [AgentRunSnapshot] = []
+        presentation.onPublication = { publications.append($0) }
+        presentation.start(runID: runID, profile: try makeAgentProfile(), prompt: "Stream")
+
+        presentation.receive(
+            runID: runID,
+            event: .agentMessageDelta(messageID: "answer", text: "Visible now"))
+        runPresentationEventTrackingLoop {
+            publications.count == 1
+        }
+
+        #expect(publications.count == 2)
+        #expect(publications.last?.output == "Visible now")
+    }
+
     @MainActor @Test func start_WhenAgentIsBooting_ShowsThinkingImmediately() throws {
         let presentation = AgentRunPresentation(startsElapsedTimer: false)
         let runID = UUID()
@@ -628,5 +648,15 @@ struct AgentRunPresentationTests {
                 workingDirectory: "/tmp",
                 permissionPolicy: .ask)),
             accent: .purple)
+    }
+}
+
+@MainActor
+private func runPresentationEventTrackingLoop(while condition: () -> Bool) {
+    let deadline = Date(timeIntervalSinceNow: 0.25)
+    while condition(), Date() < deadline {
+        _ = RunLoop.main.run(
+            mode: .eventTracking,
+            before: min(deadline, Date(timeIntervalSinceNow: 0.01)))
     }
 }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Foundation
 import Testing
 
@@ -67,6 +68,30 @@ private final class ActivitySoundPlayerRecorder: AgentActivitySoundPlaying {
 
 @Suite(.timeLimit(.minutes(1)))
 struct AgentActivitySoundLoopTests {
+    @MainActor @Test
+    func pulse_WhenAppKitTracksEvents_PlaysWithoutWaitingForDefaultMode() async throws {
+        let sleeper = ManualActivitySleeper()
+        let player = ActivitySoundPlayerRecorder()
+        let loop = AgentActivitySoundLoop(
+            player: player,
+            interval: .seconds(5),
+            sleep: { try await sleeper.sleep(for: $0) })
+        loop.setWorking(true)
+        try await waitUntil { await sleeper.delays == [.seconds(5)] }
+        Task.detached {
+            try? await Task.sleep(for: .milliseconds(10))
+            await sleeper.advance()
+        }
+
+        runActivityEventTrackingLoop {
+            player.sounds.count == 1
+        }
+        let sounds = player.sounds
+        loop.stop()
+
+        #expect(sounds == [.thinking, .thinking])
+    }
+
     @MainActor @Test func setWorking_WhenEnabled_RecordsImmediateAndScheduledSoundState()
         async throws
     {
@@ -168,4 +193,14 @@ struct AgentActivitySoundLoopTests {
     }
 
     private struct TimeoutError: Error {}
+}
+
+@MainActor
+private func runActivityEventTrackingLoop(while condition: () -> Bool) {
+    let deadline = Date(timeIntervalSinceNow: 0.25)
+    while condition(), Date() < deadline {
+        _ = RunLoop.main.run(
+            mode: .eventTracking,
+            before: min(deadline, Date(timeIntervalSinceNow: 0.01)))
+    }
 }

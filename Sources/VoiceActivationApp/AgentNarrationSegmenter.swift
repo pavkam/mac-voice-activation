@@ -27,6 +27,7 @@ final class AgentNarrationSegmenter {
     private var markdown = ""
     private var bufferStartedAtUptime: UInt64?
     private var flushTask: Task<Void, Never>?
+    private var flushGeneration: UInt64 = 0
 
     init(
         flushDelay: Duration = .milliseconds(350),
@@ -150,6 +151,7 @@ final class AgentNarrationSegmenter {
                 "character_count": String(spokenText.count),
                 "markdown_character_count": String(markdown.count),
                 "buffer_age_ms": String(ageMilliseconds),
+                "task_priority": String(Task.currentPriority.rawValue),
             ])
         onSegment?(spokenText)
     }
@@ -189,27 +191,46 @@ final class AgentNarrationSegmenter {
         else { return }
 
         let sleep = sleep
+        let flushDelay = flushDelay
+        flushGeneration &+= 1
+        let activeGeneration = flushGeneration
         diagnostics.record(
             category: .audio,
             event: "narration.flush_scheduled",
             fields: ["buffered_character_count": String(markdown.count)])
-        flushTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+        flushTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try await sleep(self.flushDelay)
+                try await sleep(flushDelay)
             } catch {
                 return
             }
             guard !Task.isCancelled else { return }
-            self.flushTask = nil
-            guard Self.unclosedFenceMarker(in: self.markdown) == nil else { return }
-            self.flushAtSemanticBoundary(reason: .timer)
+            let readyAtUptime = DispatchTime.now().uptimeNanoseconds
+            MainRunLoopScheduler.shared.schedule { [weak self] in
+                guard let self, self.flushGeneration == activeGeneration else { return }
+                self.diagnostics.record(
+                    category: .audio,
+                    event: "narration.flush_delivered",
+                    fields: [
+                        "main_delivery_ms": String(Self.milliseconds(since: readyAtUptime)),
+                        "run_loop_mode": RunLoop.current.currentMode?.rawValue ?? "none",
+                    ])
+                self.flushTask = nil
+                guard Self.unclosedFenceMarker(in: self.markdown) == nil else { return }
+                self.flushAtSemanticBoundary(reason: .timer)
+            }
         }
     }
 
     private func cancelFlush() {
+        flushGeneration &+= 1
         flushTask?.cancel()
         flushTask = nil
+    }
+
+    nonisolated private static func milliseconds(since startedAt: UInt64) -> UInt64 {
+        let now = DispatchTime.now().uptimeNanoseconds
+        return now >= startedAt ? (now - startedAt) / 1_000_000 : 0
     }
 
     private static func firstSpeechBoundary(in text: String) -> String.Index? {

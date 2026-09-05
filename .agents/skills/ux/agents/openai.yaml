@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+# SPDX-License-Identifier: MIT
+
+interface:
+  display_name: "UX"
+  short_description: "Design and test polished Voice Activation UX"
+  default_prompt: "Use $ux to design or review this Voice Activation interface change."

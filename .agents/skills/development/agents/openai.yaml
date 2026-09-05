@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+# SPDX-License-Identifier: MIT
+
+interface:
+  display_name: "Development"
+  short_description: "Build and maintain the app safely"
+  default_prompt: "Use $development to implement or review this project change."

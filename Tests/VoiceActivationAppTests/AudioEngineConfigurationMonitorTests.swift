@@ -2,11 +2,31 @@
 // SPDX-License-Identifier: MIT
 
 import AVFoundation
+import AppKit
 import Foundation
 import Testing
 @testable import VoiceActivationApp
 
 struct AudioEngineConfigurationMonitorTests {
+    @MainActor @Test
+    func configurationChange_WhenAppKitTracksEvents_NotifiesWithoutWaitingForDefaultMode() {
+        let notificationCenter = NotificationCenter()
+        let monitor = AudioEngineConfigurationMonitor(notificationCenter: notificationCenter)
+        let engine = AVAudioEngine()
+        var changeCount = 0
+        monitor.start(observing: engine) {
+            changeCount += 1
+        }
+
+        notificationCenter.post(name: .AVAudioEngineConfigurationChange, object: engine)
+        runAudioMonitorEventTrackingLoop {
+            changeCount == 0
+        }
+        monitor.stop()
+
+        #expect(changeCount == 1)
+    }
+
     @MainActor @Test func configurationChange_WhenObservedEngineChanges_NotifiesClient() async {
         let notificationCenter = NotificationCenter()
         let monitor = AudioEngineConfigurationMonitor(notificationCenter: notificationCenter)
@@ -53,5 +73,15 @@ struct AudioEngineConfigurationMonitorTests {
         await Task.yield()
 
         #expect(changeCount == 0)
+    }
+}
+
+@MainActor
+private func runAudioMonitorEventTrackingLoop(while condition: () -> Bool) {
+    let deadline = Date(timeIntervalSinceNow: 0.25)
+    while condition(), Date() < deadline {
+        _ = RunLoop.main.run(
+            mode: .eventTracking,
+            before: min(deadline, Date(timeIntervalSinceNow: 0.01)))
     }
 }

@@ -223,6 +223,7 @@ final class AgentSpeechQueue: AgentSpeechQueueing {
                             Self.milliseconds(
                                 from: enqueuedAtUptime,
                                 to: startedAtUptime)),
+                        "task_priority": String(Task.currentPriority.rawValue),
                     ])
                 do {
                     let data = try await synthesizer.audio(
@@ -241,6 +242,7 @@ final class AgentSpeechQueue: AgentSpeechQueueing {
                                     from: startedAtUptime,
                                     to: readyAtUptime)),
                             "audio_byte_count": String(data.count),
+                            "task_priority": String(Task.currentPriority.rawValue),
                         ])
                     return PreparedCloudAudio(data: data, readyAtUptime: readyAtUptime)
                 } catch {
@@ -257,18 +259,21 @@ final class AgentSpeechQueue: AgentSpeechQueueing {
                                     from: startedAtUptime,
                                     to: failedAtUptime)),
                             "error_type": String(describing: type(of: error)),
+                            "task_priority": String(Task.currentPriority.rawValue),
                         ])
                     throw error
                 }
             }
             pending[index].synthesis = synthesis
             let activeGeneration = generation
-            Task { @MainActor [weak self] in
+            Task.detached(priority: .userInitiated) { [weak self] in
                 let result = await synthesis.result
-                self?.completeSynthesis(
-                    requestID: pendingRequest.id,
-                    generation: activeGeneration,
-                    result: result)
+                await MainRunLoopScheduler.shared.perform { [weak self] in
+                    self?.completeSynthesis(
+                        requestID: requestID,
+                        generation: activeGeneration,
+                        result: result)
+                }
             }
             availableSlots -= 1
             if availableSlots == 0 {
@@ -310,6 +315,8 @@ final class AgentSpeechQueue: AgentSpeechQueueing {
                             from: preparedAudio.readyAtUptime,
                             to: receivedAtUptime)),
                     "audio_byte_count": String(preparedAudio.data.count),
+                    "task_priority": String(Task.currentPriority.rawValue),
+                    "run_loop_mode": RunLoop.current.currentMode?.rawValue ?? "none",
                 ])
         case .success, .failure:
             pending[index].preparation = .system

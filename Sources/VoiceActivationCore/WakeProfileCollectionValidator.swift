@@ -13,11 +13,16 @@ private struct PhysicalHotKeyIdentity: Hashable {
     }
 }
 
+/// Cross-profile validation failures that cannot be detected by one profile alone.
 public enum WakeProfileCollectionValidationError: Error, Equatable, LocalizedError {
+    /// The collection does not contain any profile.
     case profileRequired
+    /// Two phrases normalize to the same spoken trigger.
     case duplicateWakePhrase
+    /// Two profiles reserve the same physical global shortcut.
     case duplicatePushToTalkHotKey
 
+    /// A user-presentable explanation of the collection conflict.
     public var errorDescription: String? {
         switch self {
         case .profileRequired:
@@ -30,7 +35,12 @@ public enum WakeProfileCollectionValidationError: Error, Equatable, LocalizedErr
     }
 }
 
+/// Enforces uniqueness and minimum-content invariants across wake profiles.
 public enum WakeProfileCollectionValidator {
+    /// Validates the complete profile collection before settings are persisted.
+    ///
+    /// - Parameter profiles: The proposed saved profiles.
+    /// - Throws: ``WakeProfileCollectionValidationError`` for an empty or conflicting collection.
     public static func validate(_ profiles: [WakeProfile]) throws {
         guard !profiles.isEmpty else {
             throw WakeProfileCollectionValidationError.profileRequired

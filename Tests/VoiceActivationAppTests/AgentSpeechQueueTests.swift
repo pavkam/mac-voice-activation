@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Foundation
 import Testing
 
@@ -132,6 +133,31 @@ private final class ControlledSystemSpeechPlayer: AgentSystemSpeechPlaying {
 
 @Suite(.timeLimit(.minutes(1)))
 struct AgentSpeechQueueTests {
+    @MainActor @Test
+    func playback_WhenAppKitTracksEvents_DoesNotDelayCompletedCloudAudio() async throws {
+        let synthesizer = ControlledSpeechSynthesizer()
+        let audioPlayer = ControlledAudioPlayer()
+        let queue = AgentSpeechQueue(
+            synthesizer: synthesizer,
+            audioPlayer: audioPlayer,
+            systemSpeechPlayer: ControlledSystemSpeechPlayer())
+
+        queue.enqueue(request("Track this."))
+        try await waitUntil { await synthesizer.requestedTexts == ["Track this."] }
+        Task.detached {
+            try? await Task.sleep(for: .milliseconds(10))
+            await synthesizer.succeed("Track this.")
+        }
+
+        runSpeechEventTrackingLoop {
+            audioPlayer.payloads.isEmpty
+        }
+        let payloads = audioPlayer.payloads
+        queue.stop()
+
+        #expect(payloads == [Data("Track this.".utf8)])
+    }
+
     @MainActor @Test func enqueue_WhenSystemVoiceIsSelected_WaitsForCompletionBeforeNextSegment() {
         let systemPlayer = ControlledSystemSpeechPlayer()
         let queue = AgentSpeechQueue(
@@ -197,6 +223,13 @@ struct AgentSpeechQueueTests {
         #expect(events.contains("speech.playback_finished"))
         let correlatedRequestIDs = Set(entries.compactMap { $0.fields["request_id"] })
         #expect(correlatedRequestIDs == ["1"])
+        let synthesisPriorities = entries
+            .filter { $0.event == "speech.synthesis_started" || $0.event == "speech.synthesis_finished" }
+            .compactMap { $0.fields["task_priority"] }
+        #expect(synthesisPriorities.count == 2)
+        #expect(synthesisPriorities.allSatisfy {
+            (Int($0) ?? 0) >= TaskPriority.userInitiated.rawValue
+        })
         queue.stop()
     }
 
@@ -435,4 +468,14 @@ struct AgentSpeechQueueTests {
     }
 
     private struct TimeoutError: Error {}
+}
+
+@MainActor
+private func runSpeechEventTrackingLoop(while condition: () -> Bool) {
+    let deadline = Date(timeIntervalSinceNow: 0.25)
+    while condition(), Date() < deadline {
+        _ = RunLoop.main.run(
+            mode: .eventTracking,
+            before: min(deadline, Date(timeIntervalSinceNow: 0.01)))
+    }
 }

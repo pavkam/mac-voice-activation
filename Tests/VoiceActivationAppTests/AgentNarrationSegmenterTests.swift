@@ -1,12 +1,29 @@
 // SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
 // SPDX-License-Identifier: MIT
 
+import AppKit
+import Foundation
 import Testing
 
 @testable import VoiceActivationApp
 @testable import VoiceActivationCore
 
 struct AgentNarrationSegmenterTests {
+    @MainActor @Test
+    func timer_WhenAppKitTracksEvents_FlushesWithoutWaitingForDefaultMode() {
+        let segmenter = AgentNarrationSegmenter(flushDelay: .milliseconds(10))
+        var segments: [String] = []
+        segmenter.onSegment = { segments.append($0) }
+
+        segmenter.append(messageID: "progress", text: "Let me check")
+        runNarrationEventTrackingLoop {
+            segments.isEmpty
+        }
+        segmenter.reset()
+
+        #expect(segments == ["Let me check"])
+    }
+
     @MainActor @Test func segments_WhenEmitted_RecordBoundaryTimingWithoutResponseText() {
         let diagnostics = AppDiagnosticRecorderSpy()
         let segmenter = AgentNarrationSegmenter(
@@ -21,6 +38,7 @@ struct AgentNarrationSegmenterTests {
         }
         #expect(entry?.fields["reason"] == "semantic_boundary")
         #expect(entry?.fields["character_count"] == "17")
+        #expect(entry?.fields["task_priority"] != nil)
         #expect(entry?.fields["response_text"] == nil)
     }
 
@@ -61,5 +79,15 @@ struct AgentNarrationSegmenterTests {
         segmenter.finish()
 
         #expect(segments == ["Code block omitted.", "Found it"])
+    }
+}
+
+@MainActor
+private func runNarrationEventTrackingLoop(while condition: () -> Bool) {
+    let deadline = Date(timeIntervalSinceNow: 0.25)
+    while condition(), Date() < deadline {
+        _ = RunLoop.main.run(
+            mode: .eventTracking,
+            before: min(deadline, Date(timeIntervalSinceNow: 0.01)))
     }
 }

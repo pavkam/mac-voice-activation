@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+# SPDX-License-Identifier: MIT
+
+interface:
+  display_name: "ACP Integration"
+  short_description: "Develop and test Voice Activation ACP support"
+  default_prompt: "Use $acp-integration to review or implement this ACP integration change."

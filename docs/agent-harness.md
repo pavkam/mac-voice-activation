@@ -264,8 +264,13 @@ streamed growth cannot overwrite that decision. Programmatic scrolling and
 content growth never misclassify that state.
 
 Agent output does not drive the elapsed clock; the visible timer refreshes on
-its own schedule and freezes when the run reaches a terminal state. This keeps
-silent tool calls and long thinking pauses accurately timed.
+its own schedule while the agent is running or cancelling. It freezes as soon
+as a turn finishes and excludes time spent waiting for the user's follow-up,
+then resumes from the frozen value when the next turn starts. This keeps silent
+tool calls and long thinking pauses accurately timed without counting idle
+conversation time. Footer controls slide and fade between the active,
+cancelling, listening, and terminal action sets; reduced-motion mode uses a
+short fade instead.
 
 Completing one turn keeps the microphone and conversation open for a follow-up.
 Ending the conversation leaves the panel visible for inspection. The menu-bar

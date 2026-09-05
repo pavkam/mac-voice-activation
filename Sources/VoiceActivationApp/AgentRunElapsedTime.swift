@@ -9,7 +9,7 @@ struct AgentRunElapsedTime: Equatable, Sendable {
 
     init(phase: AgentRunPhase, elapsedSeconds: Int, startedAt: Date) {
         self.startedAt = startedAt
-        terminalSeconds = phase.isTerminal ? max(0, elapsedSeconds) : nil
+        terminalSeconds = phase.advancesElapsedTime ? nil : max(0, elapsedSeconds)
     }
 
     func formatted(at date: Date) -> String {

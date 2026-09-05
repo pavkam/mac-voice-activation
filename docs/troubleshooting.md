@@ -45,6 +45,18 @@ The active file rotates at 5 MiB. The previous three files remain beside it as
 `voice-activation.jsonl.1` through `.3`, so a noisy recognition session cannot
 grow without bound.
 
+For latency investigations, compare the `queue_delay_ms`, `duration_ms`,
+`main_delivery_ms`, `run_loop_mode`, and `task_priority` fields across
+`credential_store`, `permissions`, `acp_runner`, `agent_presentation`,
+`narration`, and `speech` events. `duration_ms` measures the provider or local
+operation; `main_delivery_ms` isolates the callback handoff into UI and audio
+state. Main delivery is explicitly supported in AppKit's modal and
+event-tracking loops, so a sustained value above a few hundred milliseconds is
+actionable rather than expected panel behavior. A started event without its
+matching finished event identifies the blocking subsystem; Keychain work is
+isolated from Swift's cooperative executor so it cannot hold up unrelated agent
+or audio tasks.
+
 ## The menu-bar icon is missing
 
 - Voice Activation has no Dock icon; inspect the right side of the menu bar.

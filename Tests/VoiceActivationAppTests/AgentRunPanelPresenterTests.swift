@@ -396,6 +396,22 @@ struct AgentRunPanelPresenterTests {
         #expect(!model.isMinimized)
     }
 
+    @MainActor @Test
+    func model_WhenFollowUpStarts_ExcludesListeningPauseFromLiveElapsedClock() {
+        var now = Date(timeIntervalSinceReferenceDate: 1_000)
+        let model = AgentRunPanelModel(now: { now })
+        let runID = UUID()
+        let listeningSnapshot = replacingElapsedSeconds(
+            7,
+            in: replacingPhase(.listening, in: runningSnapshot(runID: runID)))
+        model.begin(listeningSnapshot)
+        now = Date(timeIntervalSinceReferenceDate: 1_065)
+
+        model.update(replacingPhase(.running, in: listeningSnapshot))
+
+        #expect(model.elapsedStartedAt == Date(timeIntervalSinceReferenceDate: 1_058))
+    }
+
     @MainActor @Test func model_WhenUserScrollsAwayFromBottom_DisablesAndReenablesFollow() {
         let model = AgentRunPanelModel()
 
@@ -561,4 +577,30 @@ struct AgentRunPanelPresenterTests {
             evictedToolCount: snapshot.evictedToolCount,
             ignoredToolUpdateCount: snapshot.ignoredToolUpdateCount)
     }
+
+    @MainActor
+    private func replacingElapsedSeconds(
+        _ elapsedSeconds: Int,
+        in snapshot: AgentRunSnapshot
+    ) -> AgentRunSnapshot {
+        AgentRunSnapshot(
+            runID: snapshot.runID,
+            profileID: snapshot.profileID,
+            accent: snapshot.accent,
+            prompt: snapshot.prompt,
+            providerName: snapshot.providerName,
+            phase: snapshot.phase,
+            voiceInput: snapshot.voiceInput,
+            output: snapshot.output,
+            timeline: snapshot.timeline,
+            diagnostics: snapshot.diagnostics,
+            plan: snapshot.plan,
+            tools: snapshot.tools,
+            permissions: snapshot.permissions,
+            notices: snapshot.notices,
+            elapsedSeconds: elapsedSeconds,
+            evictedToolCount: snapshot.evictedToolCount,
+            ignoredToolUpdateCount: snapshot.ignoredToolUpdateCount)
+    }
+
 }

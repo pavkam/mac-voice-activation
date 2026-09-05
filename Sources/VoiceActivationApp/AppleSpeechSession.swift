@@ -44,6 +44,7 @@ final class AppleSpeechSession: SpeechSessionProtocol {
         onInterruption: @escaping () -> Void
     ) throws {
         stop()
+        let startedAtUptime = DispatchTime.now().uptimeNanoseconds
         generation &+= 1
         let activeGeneration = generation
         diagnostics.record(
@@ -118,6 +119,7 @@ final class AppleSpeechSession: SpeechSessionProtocol {
         }
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            let receivedAtUptime = DispatchTime.now().uptimeNanoseconds
             let transcript = result?.bestTranscription.formattedString ?? ""
             let isFinal = result?.isFinal ?? false
             let errorDescription = error?.localizedDescription
@@ -133,8 +135,23 @@ final class AppleSpeechSession: SpeechSessionProtocol {
                     "has_error": String(error != nil),
                     "error_type": error.map { String(describing: type(of: $0)) } ?? "",
                 ])
-            Task { @MainActor [weak self] in
+            MainRunLoopScheduler.shared.schedule { [weak self] in
                 guard let self, self.generation == activeGeneration else { return }
+                let deliveredAtUptime = DispatchTime.now().uptimeNanoseconds
+                self.diagnostics.record(
+                    category: .speechRecognition,
+                    event: "recognition.update_delivering",
+                    level: .debug,
+                    fields: [
+                        "generation": String(activeGeneration),
+                        "mode": mode.recognitionDiagnosticName,
+                        "task_priority": String(Task.currentPriority.rawValue),
+                        "main_delivery_ms": String(
+                            Self.milliseconds(
+                                from: receivedAtUptime,
+                                to: deliveredAtUptime)),
+                        "run_loop_mode": RunLoop.current.currentMode?.rawValue ?? "none",
+                    ])
                 onUpdate(
                     SpeechUpdate(
                         transcript: transcript,
@@ -155,6 +172,11 @@ final class AppleSpeechSession: SpeechSessionProtocol {
                     "channel_count": String(format.channelCount),
                     "sample_rate": String(format.sampleRate),
                     "on_device_supported": String(recognizer.supportsOnDeviceRecognition),
+                    "duration_ms": String(
+                        Self.milliseconds(
+                            from: startedAtUptime,
+                            to: DispatchTime.now().uptimeNanoseconds)),
+                    "task_priority": String(Task.currentPriority.rawValue),
                 ])
         } catch {
             diagnostics.record(
@@ -197,6 +219,11 @@ final class AppleSpeechSession: SpeechSessionProtocol {
                 "had_audio_engine": String(hadAudioEngine),
                 "had_recognition_task": String(hadRecognitionTask),
             ])
+    }
+
+    nonisolated private static func milliseconds(from start: UInt64, to end: UInt64) -> UInt64 {
+        guard end >= start else { return 0 }
+        return (end - start) / 1_000_000
     }
 }
 

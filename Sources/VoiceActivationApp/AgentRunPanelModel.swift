@@ -72,6 +72,11 @@ final class AgentRunPanelModel {
         }.map(\.id)
         expandedThinkingIDs.subtract(newlySettledThinkingIDs)
         expandedThinkingIDs.formIntersection(currentThinking.lazy.map(\.id))
+        if snapshot.phase.advancesElapsedTime,
+            !previousSnapshot.phase.advancesElapsedTime
+        {
+            elapsedStartedAt = now().addingTimeInterval(-TimeInterval(snapshot.elapsedSeconds))
+        }
         self.snapshot = snapshot
         resolvingPermissions = Set(snapshot.permissions.lazy.filter(\.isResolving).map(\.key))
         diagnostics.record(

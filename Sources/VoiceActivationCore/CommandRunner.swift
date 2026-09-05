@@ -3,19 +3,29 @@
 
 import Foundation
 
+/// The observable completion state of a direct command invocation.
 public struct CommandResult: Equatable, Sendable {
+    /// The process termination status, which is zero for successful results.
     public let terminationStatus: Int32
 
+    /// Creates a result for a completed child process.
+    ///
+    /// - Parameter terminationStatus: The status reported by the operating system.
     public init(terminationStatus: Int32) {
         self.terminationStatus = terminationStatus
     }
 }
 
+/// Failures that prevent a direct command from completing successfully.
 public enum CommandRunnerError: Error, Equatable, LocalizedError {
+    /// The configured executable is absent or lacks execute permission.
     case executableIsNotRunnable(String)
+    /// Foundation could not launch the child process.
     case launchFailed(String)
+    /// The child process exited with a nonzero status.
     case nonzeroExit(Int32)
 
+    /// A user-presentable explanation of the command failure.
     public var errorDescription: String? {
         switch self {
         case .executableIsNotRunnable(let path):
@@ -28,19 +38,38 @@ public enum CommandRunnerError: Error, Equatable, LocalizedError {
     }
 }
 
+/// Executes validated command templates asynchronously.
 public protocol CommandRunning: Sendable {
+    /// Runs one transcript-expanded command and waits for process termination.
+    ///
+    /// - Parameters:
+    ///   - template: The validated direct-process template.
+    ///   - transcript: The recognized text to substitute into its arguments.
+    /// - Returns: The successful zero-status result.
+    /// - Throws: ``CommandRunnerError`` when validation, launch, or execution fails.
     func run(template: CommandTemplate, transcript: String) async throws -> CommandResult
 }
 
+/// The production direct-process command executor.
 public struct CommandRunner: CommandRunning, Sendable {
     private let diagnostics: any VoiceActivationDiagnosticRecording
 
+    /// Creates a command runner with diagnostic event recording.
+    ///
+    /// - Parameter diagnostics: The privacy-safe recorder for lifecycle metadata.
     public init(
         diagnostics: any VoiceActivationDiagnosticRecording = VoiceActivationDiagnostics.shared
     ) {
         self.diagnostics = diagnostics
     }
 
+    /// Runs a command without shell expansion and discards its standard streams.
+    ///
+    /// - Parameters:
+    ///   - template: The validated executable and argument template.
+    ///   - transcript: The recognized text used to expand placeholders.
+    /// - Returns: A result after a zero-status exit.
+    /// - Throws: ``CommandRunnerError`` for an unrunnable executable, launch failure, or nonzero exit.
     public func run(template: CommandTemplate, transcript: String) async throws -> CommandResult {
         let runID = UUID().uuidString
         let startedAtUptime = DispatchTime.now().uptimeNanoseconds

@@ -3,18 +3,29 @@
 
 import Foundation
 
+/// Converts validated ACP session-update notifications into bounded app events.
 public struct ACPEventDecoder: Sendable {
+    /// The maximum retained UTF-8 size for generated metadata summaries.
     public static let maximumSummaryBytes = 256
+    /// The maximum retained UTF-8 size for opaque remote identifiers.
     public static let maximumOpaqueIdentifierBytes = AgentRunEventDelivery.maximumOpaqueIdentifierBytes
 
+    /// Errors raised when a session update does not match its declared shape.
     public enum EventError: Error, Equatable, Sendable {
+        /// A required field was missing, invalid, or outside its accepted bound.
         case malformedSessionUpdate(String)
     }
 
     private static let maximumDiscriminatorBytes = 128
 
+    /// Creates a stateless ACP event decoder.
     public init() {}
 
+    /// Decodes a `session/update` notification and ignores unrelated messages.
+    ///
+    /// - Parameter message: A validated JSON-RPC message.
+    /// - Returns: A bounded app event, or `nil` for a non-session notification.
+    /// - Throws: ``EventError`` when the declared session-update payload is malformed.
     public func event(from message: ACPMessage) throws -> AgentRunEvent? {
         guard case let .notification(method, params) = message, method == "session/update" else {
             return nil

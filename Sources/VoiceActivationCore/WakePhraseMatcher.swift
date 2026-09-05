@@ -3,9 +3,13 @@
 
 import Foundation
 
+/// Normalizes wake phrases and matches them only at the beginning of recognized speech.
 public enum WakePhraseMatcher {
+    /// A selected profile and the transcript remaining after its wake phrase.
     public struct Match: Equatable, Sendable {
+        /// The longest enabled profile whose phrase matched.
         public let profile: WakeProfile
+        /// The trimmed text that followed the matched phrase.
         public let command: String
     }
 
@@ -34,6 +38,12 @@ public enum WakePhraseMatcher {
         phrase.contains { $0.isLetter || $0.isNumber }
     }
 
+    /// Removes a leading wake phrase while respecting word boundaries.
+    ///
+    /// - Parameters:
+    ///   - transcript: The complete or partial recognized utterance.
+    ///   - wakePhrase: The configured phrase expected at the utterance start.
+    /// - Returns: The remaining command, or `nil` when the phrase does not match.
     public static func command(in transcript: String, wakePhrase: String) -> String? {
         let spoken = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let phrase = normalizedWakePhrase(wakePhrase)
@@ -57,6 +67,12 @@ public enum WakePhraseMatcher {
             .trimmingCharacters(in: leadingAndTrailing)
     }
 
+    /// Selects the longest matching enabled profile.
+    ///
+    /// - Parameters:
+    ///   - transcript: The complete or partial recognized utterance.
+    ///   - profiles: The candidate wake profiles.
+    /// - Returns: The selected profile and remaining command, or `nil` when no phrase matches.
     public static func match(in transcript: String, profiles: [WakeProfile]) -> Match? {
         profiles
             .filter(\.isEnabled)

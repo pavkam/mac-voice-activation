@@ -9,6 +9,7 @@ import VoiceActivationCore
 @main
 struct VoiceActivationApp: App {
     @State private var model: AppModel
+    @State private var launchAtLogin: LaunchAtLoginSetting
 
     @MainActor
     init() {
@@ -70,6 +71,8 @@ struct VoiceActivationApp: App {
             initialValue: AppModel(
                 agentSpeechCredentialStore: credentialStore,
                 diagnostics: diagnostics))
+        _launchAtLogin = State(
+            initialValue: LaunchAtLoginSetting(diagnostics: diagnostics))
     }
 
     var body: some Scene {
@@ -82,9 +85,10 @@ struct VoiceActivationApp: App {
                 .accessibilityLabel(presentation.title)
         }
         .menuBarExtraStyle(.window)
+        .windowStyle(.plain)
 
         Window("Voice Activation Settings", id: SettingsWindowPresenter.windowID) {
-            SettingsView(model: model)
+            SettingsView(model: model, launchAtLogin: launchAtLogin)
                 .background(SettingsWindowFrontingView())
         }
         .defaultLaunchBehavior(.suppressed)

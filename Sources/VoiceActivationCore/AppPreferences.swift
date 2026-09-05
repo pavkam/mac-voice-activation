@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// Persists user settings and performs backward-compatible profile migration.
 public final class AppPreferences {
     private enum Key {
         static let passiveEnabled = "passiveEnabled"
@@ -23,10 +24,14 @@ public final class AppPreferences {
 
     private let defaults: UserDefaults
 
+    /// Creates a preferences store over the supplied defaults domain.
+    ///
+    /// - Parameter defaults: The defaults domain used for all persisted values.
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
+    /// Whether passive wake-phrase listening should run when possible.
     public var passiveEnabled: Bool {
         get {
             defaults.object(forKey: Key.passiveEnabled) == nil
@@ -36,6 +41,7 @@ public final class AppPreferences {
         set { defaults.set(newValue, forKey: Key.passiveEnabled) }
     }
 
+    /// Whether complete streamed agent thoughts are queued for speech synthesis.
     public var readsAgentRepliesAloud: Bool {
         get {
             defaults.object(forKey: Key.readsAgentRepliesAloud) == nil
@@ -45,6 +51,7 @@ public final class AppPreferences {
         set { defaults.set(newValue, forKey: Key.readsAgentRepliesAloud) }
     }
 
+    /// Whether an unobtrusive activity loop plays while the agent is silent and working.
     public var playsAgentWorkingSound: Bool {
         get {
             defaults.object(forKey: Key.playsAgentWorkingSound) == nil
@@ -54,6 +61,7 @@ public final class AppPreferences {
         set { defaults.set(newValue, forKey: Key.playsAgentWorkingSound) }
     }
 
+    /// The text-to-speech provider selected for agent replies.
     public var agentSpeechProvider: AgentSpeechProvider {
         get {
             guard let rawValue = defaults.string(forKey: Key.agentSpeechProvider) else {
@@ -64,6 +72,7 @@ public final class AppPreferences {
         set { defaults.set(newValue.rawValue, forKey: Key.agentSpeechProvider) }
     }
 
+    /// The ElevenLabs voice identifier used for cloud speech synthesis.
     public var elevenLabsVoiceID: String {
         get {
             normalized(
@@ -77,11 +86,13 @@ public final class AppPreferences {
         }
     }
 
+    /// The legacy single-profile wake phrase retained for settings migration.
     public var wakePhrase: String {
         get { normalized(defaults.string(forKey: Key.wakePhrase), fallback: "computer") }
         set { defaults.set(normalized(newValue, fallback: "computer"), forKey: Key.wakePhrase) }
     }
 
+    /// The persisted wake profiles, with legacy shortcut migration applied once.
     public var wakeProfiles: [WakeProfile] {
         get {
             guard let data = defaults.data(forKey: Key.wakeProfiles) else {
@@ -104,16 +115,19 @@ public final class AppPreferences {
         }
     }
 
+    /// The locale identifier used by speech recognition.
     public var localeID: String {
         get { normalized(defaults.string(forKey: Key.localeID), fallback: Locale.current.identifier) }
         set { defaults.set(normalized(newValue, fallback: Locale.current.identifier), forKey: Key.localeID) }
     }
 
+    /// The legacy single-profile executable path retained for migration.
     public var executablePath: String {
         get { normalized(defaults.string(forKey: Key.executablePath), fallback: "/usr/bin/open") }
         set { defaults.set(normalized(newValue, fallback: "/usr/bin/open"), forKey: Key.executablePath) }
     }
 
+    /// The legacy global push-to-talk shortcut retained for profile migration.
     public var pushToTalkHotKey: PushToTalkHotKey {
         get {
             guard
@@ -137,6 +151,7 @@ public final class AppPreferences {
         }
     }
 
+    /// The legacy single-profile argument templates retained for migration.
     public var argumentTemplates: [String] {
         get {
             defaults.stringArray(forKey: Key.argumentTemplates)

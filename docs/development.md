@@ -14,7 +14,9 @@ Tests/VoiceActivationCoreTests/    Coordinator and command unit tests
 Tests/VoiceActivationAppTests/     macOS adapter unit tests
 scripts/build-app.sh               Application bundle assembly and signing
 scripts/check-license-headers.sh   MIT and SPDX metadata validation
-scripts/generate-app-icon.swift    Reproducible macOS icon artwork generator
+scripts/check-agent-guidance.sh    Agent instruction routing and size validation
+scripts/check-swift-structure.sh   Seven-hundred-line Swift file limit
+scripts/check-swift-documentation.swift Public DocC coverage validation
 .github/workflows/swift.yml        Build, test, and packaging CI
 LICENSE                            User-facing MIT license text
 REUSE.toml                         Metadata for non-commentable tracked files
@@ -31,6 +33,10 @@ make test          # Complete test suite
 make app           # Release app bundle with verification
 make run           # Build and launch the app bundle
 make check-license # MIT, SPDX, and app metadata validation
+make check-agent-guidance # 150-line agent-guidance and routing validation
+make check-structure # Swift source and test file size validation
+make check-documentation # Public VoiceActivationCore DocC coverage
+make check         # Complete repository metadata and structure validation
 ```
 
 For the same debug sequence used by continuous integration:
@@ -128,12 +134,31 @@ Run one suite while iterating:
 swift test --filter VoiceActivationCoordinatorTests
 ```
 
+## Swift source conventions
+
+Every Swift file under `Sources/` and `Tests/` is limited to 700 physical
+lines. Split files at responsibility boundaries before they reach that limit;
+there is no blanket exception for views. The checker has no exception list:
+SwiftUI code must also be decomposed by retained view responsibility when it
+approaches the limit.
+
+Use Swift documentation comments (`///`) for modules' public APIs and for
+internal types or members that form an architectural boundary. Document intent,
+ownership, concurrency, side effects, and failure behavior rather than restating
+the declaration. Use DocC field syntax such as `- Parameters:`, `- Returns:`,
+and `- Throws:` when the contract needs it. `make check-documentation` extracts
+the compiler's symbol graph and rejects every undocumented public Core symbol,
+including cases, properties, initializers, and methods. Private implementation
+details and obvious SwiftUI composition properties use ordinary comments only
+when the reasoning is not clear from the code.
+
 ## Continuous integration
 
 The `🎙️ Swift CI` workflow runs for pushes and pull requests targeting `main`.
 
-1. `⚖️ License compliance` verifies the MIT license, SPDX headers, binary
-   annotations, and app copyright metadata.
+1. `⚖️ Repository quality` verifies the MIT license, SPDX headers, binary
+   annotations, app copyright metadata, Swift file-size limit, and complete
+   public Core DocC coverage.
 2. `🧪 Build & test` resolves dependencies, builds the app and tests, then runs
    the complete suite.
 3. `🧵 Thread sanitizer` runs the complete suite with race instrumentation.
@@ -151,7 +176,7 @@ Before pushing:
 ```bash
 swift test
 make app
-make check-license
+make check
 git diff --check
 ```
 

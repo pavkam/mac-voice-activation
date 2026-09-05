@@ -3,6 +3,7 @@
 
 import AVFoundation
 import Foundation
+import VoiceActivationCore
 
 @MainActor
 final class AudioEngineConfigurationMonitor {
@@ -23,7 +24,7 @@ final class AudioEngineConfigurationMonitor {
             object: engine,
             queue: nil)
         { _ in
-            Task { @MainActor in
+            MainRunLoopScheduler.shared.schedule {
                 onChange()
             }
         }

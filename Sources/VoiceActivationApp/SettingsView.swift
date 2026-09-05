@@ -6,8 +6,8 @@ import VoiceActivationCore
 
 struct SettingsView: View {
     @Bindable var model: AppModel
+    @Bindable var launchAtLogin: LaunchAtLoginSetting
     @Environment(\.dismissWindow) private var dismissWindow
-    @State private var launchAtLogin = LaunchAtLoginSetting()
     @State private var saved = false
 
     var body: some View {
@@ -39,6 +39,9 @@ struct SettingsView: View {
         .onChange(of: model.agentSpeechProvider) { saved = false }
         .onChange(of: model.elevenLabsVoiceID) { saved = false }
         .onChange(of: model.elevenLabsAPIKey) { saved = false }
+        .task {
+            await launchAtLogin.refresh()
+        }
         .task(id: ElevenLabsVoiceCatalogQuery(
             provider: model.agentSpeechProvider,
             apiKey: model.elevenLabsAPIKey))
@@ -98,12 +101,20 @@ struct SettingsView: View {
 
                 Spacer()
 
+                if launchAtLogin.isBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
                 Toggle(
                     "",
                     isOn: Binding(
                         get: { launchAtLogin.isEnabled },
-                        set: { launchAtLogin.setEnabled($0) }))
+                        set: { enabled in
+                            Task { await launchAtLogin.setEnabled(enabled) }
+                        }))
                     .labelsHidden()
+                    .disabled(launchAtLogin.isBusy)
             }
 
             if let error = launchAtLogin.errorMessage {
@@ -141,7 +152,9 @@ struct SettingsView: View {
 
                     Picker("Voice provider", selection: $model.agentSpeechProvider) {
                         ForEach(AgentSpeechProvider.allCases, id: \.self) { provider in
-                            Label(provider.displayName, systemImage: provider.systemImage)
+                            AgentSpeechProviderOptionLabel(
+                                title: provider.displayName,
+                                systemImage: provider.systemImage)
                                 .tag(provider)
                         }
                     }

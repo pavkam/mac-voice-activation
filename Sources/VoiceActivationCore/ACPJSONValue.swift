@@ -3,16 +3,29 @@
 
 import Foundation
 
+/// A lossless, sendable representation of the JSON values used by ACP messages.
 public enum ACPJSONValue: Codable, Equatable, Sendable {
+    /// The JSON `null` value.
     case null
+    /// A JSON Boolean value.
     case bool(Bool)
+    /// A signed integral JSON number.
     case integer(Int64)
+    /// An unsigned integral JSON number that does not fit the signed representation.
     case unsignedInteger(UInt64)
+    /// A non-integral JSON number.
     case number(Double)
+    /// A JSON string.
     case string(String)
+    /// A JSON array whose elements preserve their concrete value kinds.
     case array([ACPJSONValue])
+    /// A JSON object keyed by strings.
     case object([String: ACPJSONValue])
 
+    /// Decodes one arbitrary JSON value without erasing integer precision.
+    ///
+    /// - Parameter decoder: The decoder containing the value.
+    /// - Throws: `DecodingError.dataCorrupted` when no JSON representation matches.
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
 
@@ -39,6 +52,10 @@ public enum ACPJSONValue: Codable, Equatable, Sendable {
         }
     }
 
+    /// Encodes the represented value using its original JSON kind.
+    ///
+    /// - Parameter encoder: The encoder that receives the value.
+    /// - Throws: Any error reported by the encoder.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
 

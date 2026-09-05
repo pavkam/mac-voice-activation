@@ -16,11 +16,13 @@ failed=0
 cd "$project_dir"
 
 while IFS= read -r -d '' path; do
+    [[ -e "$path" ]] || continue
+
     case "$path" in
-        LICENSE | LICENSES/*.txt | Package.resolved | *.icns | *.wav)
+        LICENSE | Package.resolved | *.icns | *.wav)
             continue
             ;;
-        .gitignore | Makefile | REUSE.toml | *.md | *.plist | *.sh | *.swift | *.yaml | *.yml)
+        .gitignore | Makefile | REUSE.toml | *.md | *.plist | *.py | *.sh | *.swift | *.yaml | *.yml)
             header="$(LC_ALL=C sed -n '1,12p' "$path")"
             if ! grep -Fq "$copyright_line" <<< "$header"; then
                 printf 'Missing copyright header: %s\n' "$path" >&2
@@ -45,11 +47,6 @@ elif ! grep -Fxq 'MIT License' LICENSE \
     || ! grep -Fxq 'Copyright (c) 2026 Alexandru Ciobanu (alex+git@ciobanu.org)' LICENSE
 then
     printf 'LICENSE does not contain the expected MIT grant and copyright\n' >&2
-    failed=1
-fi
-
-if [[ ! -f LICENSES/MIT.txt ]] || ! cmp -s LICENSE LICENSES/MIT.txt; then
-    printf 'LICENSES/MIT.txt must match the root MIT license\n' >&2
     failed=1
 fi
 

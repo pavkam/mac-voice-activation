@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
+# SPDX-License-Identifier: MIT
+
+interface:
+  display_name: "Voice Reading"
+  short_description: "Develop spoken agent replies safely"
+  default_prompt: "Use $voice-reading to review or implement this spoken-reply change."

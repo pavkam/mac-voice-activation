@@ -185,7 +185,7 @@ playback contract.
 make build
 make test
 make app
-make check-license
+make check
 ```
 
 ## Documentation

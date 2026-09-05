@@ -25,6 +25,16 @@ behavior from macOS UI and framework adapters.
 - `VoiceActivationAppTests` covers macOS adapter policies, audio callback
   isolation, menu status, and Settings presentation.
 
+Large stateful types are split by responsibility through same-module Swift
+extensions rather than by introducing forwarding objects. For example,
+`VoiceActivationCoordinator` keeps state ownership in its primary declaration
+while speech and execution transitions live in dedicated extension files;
+`AppModel` separates lifecycle, configuration, and agent-conversation routing;
+and the retained agent panel separates content, activity, and chrome. Helper
+types with independent synchronization or bounded-storage invariants live in
+their own files. CI enforces the 700-line physical file limit across production
+and test code.
+
 `AppModel` is the main-actor bridge between SwiftUI and
 `VoiceActivationCoordinator`. The coordinator owns exactly one active speech
 session and invalidates callbacks from retired sessions with a generation
@@ -149,8 +159,28 @@ The client accepts ACP v1 newline-delimited UTF-8 JSON-RPC, preserves integer,
 string, and null request identifiers, and converts stable updates into typed
 `AgentRunEvent` values. A two-stage bounded delivery path separates transport
 ingestion from consumer callbacks so a slow panel cannot grow memory without
-limit. Natural completion drains accepted events; forced cancellation invalidates
-the turn first and discards queued delivery.
+limit. Each delivery consumer runs at user-initiated priority rather than
+inheriting the quality of service of the speech or process callback that created
+it. Main-actor delivery then passes through `MainRunLoopScheduler`, an ordered
+bridge registered in the default, common, modal-panel, and event-tracking modes.
+This matters because AppKit may keep panels interactive inside a nested tracking
+loop while ordinary main-actor task continuations wait for the default loop.
+The bridge awaits each streamed event so the bounded ACP queues retain
+backpressure. Natural completion drains accepted events; forced cancellation
+invalidates the turn first and discards queued delivery.
+
+Initial agent launch overlaps the synchronous conversation-recognition rebuild.
+A 25-millisecond cancellation grace precedes runner entry so a stop action from
+the same input turn remains authoritative without putting the much slower audio
+setup back on the ACP startup path.
+
+Startup credential retrieval treats macOS Keychain access as blocking foreign
+work. `SecItemCopyMatching` runs on a dedicated user-initiated dispatch queue,
+never on Swift's cooperative executor, so a slow security service cannot starve
+ACP delivery, presentation timers, activity sounds, or speech synthesis. The
+diagnostic writer uses its own user-initiated serial queue as well. Permission,
+credential, ACP delivery, narration, synthesis, and main-actor handoff records
+include priority and monotonic stage timing where relevant.
 
 `AgentRunPresentation` applies only events carrying the active run identifier,
 retains bounded output, diagnostics, tools, plans, and simultaneous permission
@@ -189,7 +219,10 @@ order. Queue state is explicit: `preparing`, `starting`, `playing`, or
 `idle`. Cloud preparation therefore does not silence activity audio, while
 `starting` stops the current effect before playback begins. Native speech and
 cloud audio report completion through framework delegates instead of polling
-`isSpeaking` or `isPlaying`.
+`isSpeaking` or `isPlaying`. Recognition updates, synthesis completion,
+narration flushing, activity pulses, capture deadlines, and throttled panel
+publications all use the mode-aware main-run-loop bridge. They therefore remain
+live while a menu, floating panel, drag, or control is tracking input.
 
 `AgentActivitySoundLoop` owns only working and tool sounds. It starts
 immediately with the accepted request, repeats while speech is preparing, pauses
@@ -208,6 +241,8 @@ resource, and recovery contract.
 ## Concurrency and lifecycle
 
 - Coordinator and app-model mutation is isolated to the main actor.
+- Foreign callbacks and delayed work enter that actor through an ordered
+  run-loop-mode-aware bridge instead of assuming AppKit is in its default mode.
 - The real-time audio tap appends buffers through a sendable sink without
   crossing into main-actor state.
 - Mode changes cancel inactivity and maximum-duration tasks, stop the audio
@@ -238,8 +273,12 @@ resource, and recovery contract.
   fresh recognition session to clear captured output before the next utterance.
   Conversation capture requests best-effort input voice processing to reduce
   synthesized output echo without making unsupported hardware a capture error.
-- `LaunchAtLoginSetting` reads and changes `SMAppService.mainApp` registration;
-  macOS remains the source of truth instead of a duplicated preference.
+- One app-lifetime `LaunchAtLoginSetting` reads and changes
+  `SMAppService.mainApp` registration; macOS remains the source of truth instead
+  of a duplicated preference. Its synchronous Service Management/XPC boundary
+  runs on a dedicated serial utility queue, so constructing or updating the
+  hidden Settings scene cannot starve the main actor, live agent output, speech,
+  or activity-sound scheduling.
 - `RecordingOverlayPresenter` maps capture state to a
   `RecordingOverlayController`. Its borderless `NSPanel` joins full-screen
   spaces, does not activate the app, and follows the screen containing the
