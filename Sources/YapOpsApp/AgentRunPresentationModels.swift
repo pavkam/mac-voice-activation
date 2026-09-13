@@ -27,6 +27,41 @@ enum AgentRunPhase: Equatable, Sendable {
         }
     }
 
+    /// Whether the composer should show the microphone as live and accept a
+    /// spoken transcript for this phase.
+    ///
+    /// `.paused` is the only non-terminal phase where the microphone is
+    /// genuinely off; every other non-terminal phase — including `.running`,
+    /// since YapOps accepts a spoken follow-up while the agent is still
+    /// working — keeps it live. A terminal phase has no composer to show it
+    /// in, but this stays exhaustive rather than relying on that invariant
+    /// holding at every call site.
+    var acceptsSpokenFollowUp: Bool {
+        switch self {
+        case .listening, .running, .cancelling:
+            true
+        case .paused, .completed, .failed:
+            false
+        }
+    }
+
+    /// What the composer's microphone button does in this phase.
+    ///
+    /// There is no independent mute: the only way to silence the microphone
+    /// while a run is not already paused is to stop what it is doing, so the
+    /// label says exactly that rather than a softer "Pause listening" a mute
+    /// control would carry.
+    var microphoneActionLabel: String {
+        switch self {
+        case .listening:
+            "Stop listening"
+        case .paused:
+            "Resume listening"
+        case .running, .cancelling, .completed, .failed:
+            "Stop turn"
+        }
+    }
+
     var isTerminal: Bool {
         switch self {
         case .completed, .failed:

@@ -21,7 +21,6 @@ struct AgentRunComposer: View {
     @Environment(\.profileAccent) private var accent
 
     let snapshot: AgentRunSnapshot
-    let isListening: Bool
     let onSubmit: (String) -> Void
     let onToggleMicrophone: () -> Void
     let onStop: () -> Void
@@ -81,15 +80,15 @@ struct AgentRunComposer: View {
 
     private var microphoneButton: some View {
         Button(action: onToggleMicrophone) {
-            Image(systemName: isListening ? "mic.fill" : "mic.slash.fill")
+            Image(systemName: snapshot.phase.acceptsSpokenFollowUp ? "mic.fill" : "mic.slash.fill")
                 .font(Design.Text.glyph(Design.Glyph.row))
-                .foregroundStyle(isListening ? Color.white : Color.secondary)
+                .foregroundStyle(snapshot.phase.acceptsSpokenFollowUp ? Color.white : Color.secondary)
                 .frame(width: Design.Layout.hitTarget, height: Design.Layout.hitTarget)
                 .background(microphoneFill, in: Circle())
         }
         .buttonStyle(.plain)
-        .help(isListening ? "Pause listening" : "Resume listening")
-        .accessibilityLabel(isListening ? "Pause listening" : "Resume listening")
+        .help(snapshot.phase.microphoneActionLabel)
+        .accessibilityLabel(snapshot.phase.microphoneActionLabel)
     }
 
     @ViewBuilder
@@ -135,7 +134,7 @@ struct AgentRunComposer: View {
     /// The overlay's transcript, mirrored here while words are arriving.
     private var liveTranscript: String? {
         let voice = snapshot.voiceInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isListening, !voice.isEmpty else { return nil }
+        guard snapshot.phase.acceptsSpokenFollowUp, !voice.isEmpty else { return nil }
         return voice
     }
 
@@ -152,7 +151,7 @@ struct AgentRunComposer: View {
     }
 
     private var microphoneFill: Color {
-        isListening ? accent : Color.primary.opacity(Design.Alpha.fillQuaternary)
+        snapshot.phase.acceptsSpokenFollowUp ? accent : Color.primary.opacity(Design.Alpha.fillQuaternary)
     }
 
     private var pillBorder: Color {

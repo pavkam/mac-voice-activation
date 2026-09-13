@@ -99,7 +99,6 @@ extension AgentRunPanelView {
         } else {
             AgentRunComposer(
                 snapshot: snapshot,
-                isListening: snapshot.phase == .listening,
                 onSubmit: { text in
                     model.onAction?(.submitFollowUp(runID: snapshot.runID, text: text))
                 },
