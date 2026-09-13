@@ -211,7 +211,12 @@ extension AppModel {
                 "task_priority": String(Task.currentPriority.rawValue),
             ]) { _, new in new })
         switch event {
+        case .dismissedBySpeech(let runID):
+            pendingSpeechDismissalRunID = runID
         case .started(let runID, let profile, let prompt):
+            // A prior conversation's dismissal cannot still be pending once a
+            // new one begins under the same runID space.
+            pendingSpeechDismissalRunID = nil
             prepareAgentPresentation(runID: runID, profile: profile)
             agentRunPresentation.start(runID: runID, profile: profile, prompt: prompt)
             if interruptedAgentWork.contains(where: {
@@ -270,6 +275,10 @@ extension AppModel {
             agentRunPresentation.interruptTurn(runID: runID, message: message)
         case .completed(let runID, let result):
             agentRunPresentation.complete(runID: runID, result: result)
+            if pendingSpeechDismissalRunID == runID {
+                pendingSpeechDismissalRunID = nil
+                agentRunPanelPresenter.hide(runID: runID)
+            }
         case .failed(let runID, let message):
             agentRunPresentation.fail(runID: runID, message: message)
         }

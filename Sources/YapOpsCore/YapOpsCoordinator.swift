@@ -29,6 +29,12 @@ public enum AgentRunLifecycleEvent: Equatable, Sendable {
     case turnStarted(runID: UUID)
     /// Cancellation began and may still be waiting on the harness.
     case turnCancellationStarted(runID: UUID)
+    /// A spoken terminal phrase asked to end the conversation and close its
+    /// panel. Fires before the cancellation that follows, because ending a
+    /// live turn can be asynchronous — the presentation layer remembers this
+    /// runID and closes the panel whenever `.completed` for it actually
+    /// arrives, however long that takes.
+    case dismissedBySpeech(runID: UUID)
     /// A streaming ACP event belongs to the identified conversation.
     case event(runID: UUID, event: AgentRunEvent)
     /// Provider history restoration began for the identified conversation and caller token.
@@ -136,6 +142,10 @@ public final class YapOpsCoordinator {
     let agentRunContinuity: @MainActor @Sendable (UUID) -> AgentRunContinuityRequest
     let macContextCapturer: any MacContextCapturing
     let configuration: () throws -> ActivationConfiguration
+    /// Supplies the current spoken phrases that end a live agent conversation
+    /// and close its panel. Read fresh at each match, like `configuration`,
+    /// so an in-Settings edit takes effect on the conversation already open.
+    let terminalPhrases: () -> [String]
     let timing: ActivationTiming
     let diagnostics: any YapOpsDiagnosticRecording
     var passiveEnabled = false
@@ -210,6 +220,7 @@ public final class YapOpsCoordinator {
             AgentRunContinuityRequest = { _ in AgentRunContinuityRequest() },
         contextCapturer: any MacContextCapturing = EmptyMacContextCapturer(),
         configuration: @escaping () throws -> ActivationConfiguration,
+        terminalPhrases: @escaping () -> [String] = { AppPreferences.defaultTerminalPhrases },
         diagnostics: any YapOpsDiagnosticRecording = YapOpsDiagnostics.shared
     ) {
         self.init(
@@ -219,6 +230,7 @@ public final class YapOpsCoordinator {
             agentRunContinuity: agentRunContinuity,
             contextCapturer: contextCapturer,
             configuration: configuration,
+            terminalPhrases: terminalPhrases,
             timing: .standard,
             diagnostics: diagnostics)
     }
@@ -231,6 +243,7 @@ public final class YapOpsCoordinator {
             AgentRunContinuityRequest = { _ in AgentRunContinuityRequest() },
         contextCapturer: any MacContextCapturing = EmptyMacContextCapturer(),
         configuration: @escaping () throws -> ActivationConfiguration,
+        terminalPhrases: @escaping () -> [String] = { AppPreferences.defaultTerminalPhrases },
         timing: ActivationTiming,
         diagnostics: any YapOpsDiagnosticRecording = YapOpsDiagnostics.shared
     ) {
@@ -240,6 +253,7 @@ public final class YapOpsCoordinator {
         self.agentRunContinuity = agentRunContinuity
         self.macContextCapturer = contextCapturer
         self.configuration = configuration
+        self.terminalPhrases = terminalPhrases
         self.timing = timing
         self.diagnostics = diagnostics
         diagnostics.record(category: .app, event: "coordinator.initialized")
@@ -383,7 +397,7 @@ public final class YapOpsCoordinator {
             if !transcript.isEmpty { isConversationListeningPaused = false }
             startConversationListening()
             guard !transcript.isEmpty else { return }
-            if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
+            if ConversationTerminationMatcher.matches(transcript, phrases: terminalPhrases()) {
                 cancelAgentConversationFromSpeech()
             } else {
                 submitAgentFollowUp(transcript)
@@ -436,6 +450,9 @@ public final class YapOpsCoordinator {
     }
 
     func cancelAgentConversationFromSpeech() {
+        if let runID = activeAgentRunID {
+            onAgentRunEvent?(.dismissedBySpeech(runID: runID))
+        }
         requestAgentConversationEnd(
             result: AgentRunResult(stopReason: .cancelled))
     }

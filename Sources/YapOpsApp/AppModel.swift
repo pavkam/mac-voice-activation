@@ -37,6 +37,12 @@ final class AppModel {
     var playsAgentWorkingSound: Bool
     /// Whether saved ACP requests may include bounded focused Mac context.
     var capturesMacContext: Bool
+    /// The editable spoken phrases that end a live agent conversation.
+    var terminalPhrases: [String]
+    /// The run a spoken terminal phrase asked to close, awaiting its
+    /// `.completed` event. Ending a live turn can be asynchronous, so this
+    /// outlives the moment the phrase was heard.
+    @ObservationIgnored var pendingSpeechDismissalRunID: UUID?
     /// The last nonprompting Accessibility trust status observed by a lifecycle refresh.
     var macContextAccessStatus: MacContextAccessStatus = .notAuthorized
     /// The editable app-wide speech selection inherited by profiles.
@@ -162,6 +168,9 @@ final class AppModel {
             guard let self else { throw ModelError.unavailable }
             return try self.savedConfiguration()
         },
+        terminalPhrases: { [weak self] in
+            self?.terminalPhrases ?? AppPreferences.defaultTerminalPhrases
+        },
         diagnostics: diagnostics)
 
     /// Creates the application composition root with replaceable system adapters for tests.
@@ -264,6 +273,7 @@ final class AppModel {
         readsAgentRepliesAloud = preferences.readsAgentRepliesAloud
         playsAgentWorkingSound = preferences.playsAgentWorkingSound
         capturesMacContext = preferences.capturesMacContext
+        terminalPhrases = preferences.terminalPhrases
         self.defaultSpeechVoice = defaultSpeechVoice
         self.retainedElevenLabsVoiceID = retainedElevenLabsVoiceID
         elevenLabsAPIKey = storedElevenLabsAPIKey
@@ -434,6 +444,8 @@ extension AgentRunPhase {
 extension AgentRunLifecycleEvent {
     var appModelDiagnosticFields: [String: String] {
         switch self {
+        case .dismissedBySpeech(let runID):
+            ["kind": "dismissed_by_speech", "run_id": runID.uuidString]
         case .started(let runID, _, let prompt):
             [
                 "kind": "started", "run_id": runID.uuidString,

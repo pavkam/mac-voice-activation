@@ -256,4 +256,63 @@ extension YapOpsCoordinatorTests {
         #expect(notices == ["That follow-up is too long. Shorten it and try again."])
         await fixture.agentRunner.complete(runIndex: 0)
     }
+
+    /// A configured terminal phrase, spoken mid-conversation, ends the whole
+    /// conversation (not just the current turn) and signals the panel to
+    /// close - unlike the UI's "Stop turn" control, which only pauses.
+    @MainActor
+    @Test func agentConversation_WhenTerminalPhraseIsSpoken_EndsConversationAndSignalsDismissal()
+        async throws
+    {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        await fixture.agentRunner.enqueueMidTurnResults([.promptRequired])
+        var events: [AgentRunLifecycleEvent] = []
+        fixture.coordinator.onAgentRunEvent = { events.append($0) }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent first", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+
+        fixture.speech.emit("thank you", isFinal: true)
+
+        await waitUntil {
+            events.contains { if case .completed = $0 { true } else { false } }
+        }
+        #expect(events.contains { if case .dismissedBySpeech = $0 { true } else { false } })
+        guard case let .dismissedBySpeech(dismissedRunID)? = events.first(where: {
+            if case .dismissedBySpeech = $0 { true } else { false }
+        }) else {
+            Issue.record("expected a dismissedBySpeech event")
+            return
+        }
+        guard case let .completed(completedRunID, result)? = events.first(where: {
+            if case .completed = $0 { true } else { false }
+        }) else {
+            Issue.record("expected a completed event")
+            return
+        }
+        #expect(dismissedRunID == completedRunID)
+        #expect(result.stopReason == .cancelled)
+        #expect(await fixture.agentRunner.recordedMidTurnOffers().isEmpty)
+    }
+
+    /// A ordinary follow-up that merely contains "thanks" mid-sentence must
+    /// not be swallowed as a terminal phrase - only the whole utterance counts.
+    @MainActor
+    @Test func agentConversation_WhenPhraseIsPartOfALongerRequest_IsNotTreatedAsTerminal()
+        async throws
+    {
+        let fixture = try Fixture(profiles: [try makeAgentProfile()])
+        await fixture.agentRunner.enqueueMidTurnResults([.promptRequired])
+        var events: [AgentRunLifecycleEvent] = []
+        fixture.coordinator.onAgentRunEvent = { events.append($0) }
+        fixture.coordinator.setPassiveEnabled(true)
+        fixture.speech.emit("agent first", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedInvocations().count == 1 }
+
+        fixture.speech.emit("thanks for checking that", isFinal: true)
+        await waitUntil { await fixture.agentRunner.recordedMidTurnOffers().count == 1 }
+
+        #expect(!events.contains { if case .dismissedBySpeech = $0 { true } else { false } })
+        await fixture.agentRunner.complete(runIndex: 0)
+    }
 }

@@ -474,7 +474,7 @@ extension YapOpsCoordinator {
         startConversationListening()
         guard !transcript.isEmpty else { return }
 
-        if CaptureCancellationMatcher.matches(transcript, isComplete: true) {
+        if ConversationTerminationMatcher.matches(transcript, phrases: terminalPhrases()) {
             diagnostics.record(
                 category: .agent,
                 event: "coordinator.conversation_cancel_voice_command")

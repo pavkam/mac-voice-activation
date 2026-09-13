@@ -23,6 +23,7 @@ public final class AppPreferences {
         static let executablePath = "executablePath"
         static let argumentTemplates = "argumentTemplates"
         static let hasCompletedFirstRun = "hasCompletedFirstRun"
+        static let terminalPhrases = "terminalPhrases"
     }
 
     private let defaults: UserDefaults
@@ -198,6 +199,32 @@ public final class AppPreferences {
         }
         set { defaults.set(newValue, forKey: Key.argumentTemplates) }
     }
+
+    /// The spoken phrases that end a live agent conversation and close its panel.
+    ///
+    /// Matched against the *entire* utterance, case- and diacritic-insensitive,
+    /// so "thanks" ends things but "thanks for that" does not — the same
+    /// precision the existing "cancel"/"stop"/"dismiss" words already had.
+    /// Defaults to `Self.defaultTerminalPhrases` until the user edits the list
+    /// in Settings; an explicitly saved empty list stays empty rather than
+    /// falling back, so clearing every phrase is a real, honoured choice.
+    public var terminalPhrases: [String] {
+        get {
+            defaults.array(forKey: Key.terminalPhrases) as? [String]
+                ?? Self.defaultTerminalPhrases
+        }
+        set { defaults.set(newValue, forKey: Key.terminalPhrases) }
+    }
+
+    /// The built-in phrase list before any user edit.
+    ///
+    /// "cancel", "stop" and "dismiss" were the app's original spoken
+    /// cancellation words; the rest are natural ways of saying a conversation
+    /// is done.
+    public static let defaultTerminalPhrases = [
+        "cancel", "stop", "dismiss", "close",
+        "thanks", "thank you", "that's it", "that'll do", "great",
+    ]
 
     /// Whether the first-run flow has been shown and dismissed.
     ///

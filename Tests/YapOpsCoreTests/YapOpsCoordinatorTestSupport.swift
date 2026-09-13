@@ -19,6 +19,7 @@ extension YapOpsCoordinatorTests {
             profiles: [WakeProfile]? = nil,
             agentRunner: ControlledAgentRunner = ControlledAgentRunner(),
             contextCapturer: any MacContextCapturing = EmptyMacContextCapturer(),
+            terminalPhrases: @escaping () -> [String] = { AppPreferences.defaultTerminalPhrases },
             diagnostics: any YapOpsDiagnosticRecording = YapOpsDiagnostics.shared
         ) throws
         {
@@ -40,6 +41,7 @@ extension YapOpsCoordinatorTests {
                         localeID: "en-US",
                         commandTemplate: template)
                 },
+                terminalPhrases: terminalPhrases,
                 timing: timing,
                 diagnostics: diagnostics)
         }

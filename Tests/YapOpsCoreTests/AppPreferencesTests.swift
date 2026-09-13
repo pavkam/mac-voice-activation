@@ -44,6 +44,36 @@ struct AppPreferencesTests {
         #expect(AppPreferences(defaults: defaults).hasCompletedFirstRun)
     }
 
+    @Test func terminalPhrases_WhenDefaultsAreEmpty_ReturnsTheBuiltInList() throws {
+        let suite = "YapOpsTerminalPhrasesDefaultsTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+
+        #expect(
+            AppPreferences(defaults: defaults).terminalPhrases
+                == AppPreferences.defaultTerminalPhrases)
+    }
+
+    @Test func terminalPhrases_WhenChanged_RoundTripsThroughDefaults() throws {
+        let suite = "YapOpsTerminalPhrasesPersistenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        AppPreferences(defaults: defaults).terminalPhrases = ["cancel", "thank you"]
+
+        #expect(AppPreferences(defaults: defaults).terminalPhrases == ["cancel", "thank you"])
+    }
+
+    /// An explicitly saved empty list must stay empty, not fall back to the
+    /// built-in defaults - clearing every phrase is a real, honoured choice.
+    @Test func terminalPhrases_WhenExplicitlySavedEmpty_StaysEmpty() throws {
+        let suite = "YapOpsTerminalPhrasesEmptyTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        AppPreferences(defaults: defaults).terminalPhrases = []
+
+        #expect(AppPreferences(defaults: defaults).terminalPhrases.isEmpty)
+    }
+
     @Test func wakeProfiles_WhenStoredProfileIsCorrupt_DoesNotRewriteStoredBytes() throws {
         let suite = "YapOpsTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))

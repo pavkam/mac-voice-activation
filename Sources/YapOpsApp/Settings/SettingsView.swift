@@ -35,6 +35,7 @@ struct SettingsView: View {
         .onChange(of: model.capturesMacContext) { scheduleSave() }
         .onChange(of: model.defaultSpeechVoice) { scheduleSave() }
         .onChange(of: model.elevenLabsAPIKey) { scheduleSave() }
+        .onChange(of: model.terminalPhrases) { scheduleSave() }
         .onDisappear {
             // Closing inside the debounce window must not discard the last edit.
             Task { @MainActor in
@@ -110,6 +111,16 @@ struct SettingsView: View {
                 Label(
                     "Push to talk may use Apple’s speech service when on-device recognition is unavailable.",
                     systemImage: "lock.shield")
+            }
+
+            Section {
+                TerminalPhrasesEditor(phrases: $model.terminalPhrases)
+            } header: {
+                Label("Conversation phrases", systemImage: "text.bubble")
+            } footer: {
+                Text(
+                    "Saying one of these on its own ends the conversation and "
+                        + "closes its panel.")
             }
             SpeechSettingsContent(model: model)
         }

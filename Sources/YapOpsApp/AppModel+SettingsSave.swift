@@ -13,6 +13,7 @@ private struct AppModelSettingsSaveSnapshot {
     let readsAgentRepliesAloud: Bool
     let playsAgentWorkingSound: Bool
     let capturesMacContext: Bool
+    let terminalPhrases: [String]
     let defaultSpeechVoice: TextToSpeechVoiceSelection
     let elevenLabsVoiceID: String
     let elevenLabsAPIKey: String
@@ -158,6 +159,9 @@ extension AppModel {
             readsAgentRepliesAloud: readsAgentRepliesAloud,
             playsAgentWorkingSound: playsAgentWorkingSound,
             capturesMacContext: capturesMacContext,
+            terminalPhrases: terminalPhrases
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty },
             defaultSpeechVoice: defaultSpeechVoice,
             elevenLabsVoiceID: elevenLabsVoiceID,
             elevenLabsAPIKey: elevenLabsAPIKey)
@@ -170,6 +174,7 @@ extension AppModel {
             && readsAgentRepliesAloud == snapshot.readsAgentRepliesAloud
             && playsAgentWorkingSound == snapshot.playsAgentWorkingSound
             && capturesMacContext == snapshot.capturesMacContext
+            && terminalPhrases == snapshot.terminalPhrases
             && defaultSpeechVoice == snapshot.defaultSpeechVoice
             && elevenLabsVoiceID == snapshot.elevenLabsVoiceID
             && elevenLabsAPIKey == snapshot.elevenLabsAPIKey
@@ -190,6 +195,7 @@ extension AppModel {
         preferences.elevenLabsVoiceID = snapshot.elevenLabsVoiceID
         preferences.defaultSpeechVoice = snapshot.defaultSpeechVoice
         preferences.capturesMacContext = snapshot.capturesMacContext
+        preferences.terminalPhrases = snapshot.terminalPhrases
 
         let previousSpeechConfiguration = agentSpeechSettingsState.configuration
         agentSpeechSettingsState.update(
@@ -208,6 +214,9 @@ extension AppModel {
         }
         if elevenLabsVoiceID == snapshot.elevenLabsVoiceID {
             elevenLabsVoiceID = preferences.elevenLabsVoiceID
+        }
+        if terminalPhrases == snapshot.terminalPhrases {
+            terminalPhrases = preferences.terminalPhrases
         }
         macContextCapturer.setEnabled(snapshot.capturesMacContext)
         settingsError = nil

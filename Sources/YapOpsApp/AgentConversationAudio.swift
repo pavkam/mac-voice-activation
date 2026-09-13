@@ -329,6 +329,10 @@ final class AgentConversationAudioPresenter {
             break
         case .notice:
             break
+        case .dismissedBySpeech:
+            // No audio reaction of its own; the completion this always
+            // precedes is what stops narration and working sounds.
+            break
         case .turnStarted(let runID):
             guard self.runID == runID else { return }
             rejectsAgentSpeechUntilNextTurn = false
@@ -590,6 +594,8 @@ extension AgentActivitySound {
 extension AgentRunLifecycleEvent {
     fileprivate var audioDiagnosticFields: [String: String] {
         switch self {
+        case .dismissedBySpeech(let runID):
+            ["kind": "dismissed_by_speech", "run_id": runID.uuidString]
         case .started(let runID, _, let prompt):
             [
                 "kind": "started", "run_id": runID.uuidString,
