@@ -18,7 +18,13 @@ struct TerminalPhrasesEditor: View {
         VStack(alignment: .leading, spacing: Design.Space.row) {
             ForEach(phrases.indices, id: \.self) { index in
                 HStack(spacing: Design.Space.small) {
-                    TextField("Phrase", text: $phrases[index])
+                    // A bare TextField(_:text:) renders its title as a
+                    // persistent row label inside a Form/Section, not a
+                    // placeholder — nine rows all captioned "Phrase" the
+                    // header already named. `prompt:` is the placeholder that
+                    // actually disappears once a phrase is typed.
+                    TextField("", text: $phrases[index], prompt: Text("Phrase"))
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel("Terminal phrase \(index + 1)")
                     Button(role: .destructive) {

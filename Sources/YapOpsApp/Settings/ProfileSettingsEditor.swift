@@ -6,7 +6,6 @@ import YapOpsCore
 
 struct ProfileSettingsEditor: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
     let model: AppModel
     @Binding var profile: WakeProfileDraft
 
@@ -21,15 +20,6 @@ struct ProfileSettingsEditor: View {
             speechEditor
             Divider()
             shortcutEditor
-        }
-        .padding(15)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: Design.Radius.innerCard))
-        .overlay {
-            RoundedRectangle(cornerRadius: Design.Radius.innerCard)
-                .stroke(
-                    contrast == .increased ? Color.primary.opacity(0.5)
-                        : Color(nsColor: .separatorColor),
-                    lineWidth: 1)
         }
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: profile.targetKind)
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: speechMode)
