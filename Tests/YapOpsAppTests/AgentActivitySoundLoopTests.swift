@@ -143,7 +143,11 @@ struct AgentActivitySoundLoopTests {
         #expect(player.sounds == [.thinking])
 
         await sleeper.advance()
-        try await waitUntil { player.sounds == [.thinking, .thinking] }
+        try await waitUntil {
+            guard player.sounds == [.thinking, .thinking] else { return false }
+            return await sleeper.delays == [.seconds(5)]
+        }
+        #expect(player.sounds == [.thinking, .thinking])
         #expect(await sleeper.delays == [.seconds(5)])
     }
 
@@ -167,7 +171,12 @@ struct AgentActivitySoundLoopTests {
         #expect(player.sounds == [.thinking])
 
         await sleeper.advance()
-        try await waitUntil { player.sounds == [.thinking, .thinking] }
+        try await waitUntil {
+            guard player.sounds == [.thinking, .thinking] else { return false }
+            return await sleeper.delays == [.seconds(5)]
+        }
+        #expect(player.sounds == [.thinking, .thinking])
+        #expect(await sleeper.delays == [.seconds(5)])
     }
 
     @MainActor @Test func play_WhenToolCueArrives_RestartsPulseFromInitialDelay()
@@ -190,6 +199,10 @@ struct AgentActivitySoundLoopTests {
         #expect(player.sounds == [.thinking, .toolStarted])
     }
 
+    /// Waits for a condition that must cover every observable the test then
+    /// asserts. A pulse plays its sound before the next sleeper waiter is
+    /// registered, so waiting only for `player.sounds` and inferring the
+    /// waiter races the detached task that registers it.
     @MainActor
     private func waitUntil(
         condition: @escaping @MainActor () async -> Bool

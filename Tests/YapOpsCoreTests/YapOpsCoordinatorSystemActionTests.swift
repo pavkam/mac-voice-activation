@@ -5,7 +5,11 @@ import Foundation
 import Testing
 @testable import YapOpsCore
 
+// The time limit is a failure detector for a stuck handshake, never the
+// assertion: every wait below resumes on an explicit signal, so a loaded
+// machine makes these tests slower rather than red.
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct YapOpsCoordinatorSystemActionTests {
     typealias Fixture = YapOpsCoordinatorTests.Fixture
 
@@ -25,9 +29,8 @@ struct YapOpsCoordinatorSystemActionTests {
 
         fixture.speech.emit("mac lock", isFinal: true)
 
-        await YapOpsCoordinatorTests().waitUntil {
-            await fixture.systemActions.recordedActions() == [.lockScreen]
-        }
+        await fixture.systemActions.waitForActions()
+        #expect(await fixture.systemActions.recordedActions() == [.lockScreen])
     }
 
     @Test func execution_WhenAnotherTermIsBound_PerformsTheOtherAction() async throws {
@@ -36,9 +39,8 @@ struct YapOpsCoordinatorSystemActionTests {
 
         fixture.speech.emit("mac play", isFinal: true)
 
-        await YapOpsCoordinatorTests().waitUntil {
-            await fixture.systemActions.recordedActions() == [.playPause]
-        }
+        await fixture.systemActions.waitForActions()
+        #expect(await fixture.systemActions.recordedActions() == [.playPause])
     }
 
     // A failure is transient: the cooldown returns the coordinator to listening
@@ -52,9 +54,9 @@ struct YapOpsCoordinatorSystemActionTests {
 
         fixture.speech.emit("mac teleport", isFinal: true)
 
-        await YapOpsCoordinatorTests().waitUntil {
-            states.failureMessages().contains { $0.contains("teleport") }
-        }
+        // An unmatched term never reaches the performer, so the failure state is
+        // published synchronously by the speech handler itself.
+        #expect(states.failureMessages().contains { $0.contains("teleport") })
         #expect(await fixture.systemActions.recordedActions().isEmpty)
     }
 
@@ -81,10 +83,11 @@ struct YapOpsCoordinatorSystemActionTests {
 
         fixture.speech.emit("mac play", isFinal: true)
 
+        await fixture.systemActions.waitForActions()
+        #expect(await fixture.systemActions.recordedActions() == [.playPause])
         await YapOpsCoordinatorTests().waitUntil {
             fixture.coordinator.state == .listening
         }
-        #expect(await fixture.systemActions.recordedActions() == [.playPause])
     }
 
     @Test func execution_NeverStartsAnAgentRun() async throws {
@@ -93,24 +96,23 @@ struct YapOpsCoordinatorSystemActionTests {
 
         fixture.speech.emit("mac play", isFinal: true)
 
-        await YapOpsCoordinatorTests().waitUntil {
-            await fixture.systemActions.recordedActions() == [.playPause]
-        }
+        await fixture.systemActions.waitForActions()
         #expect(fixture.coordinator.isAgentConversationActive == false)
     }
 
     @Test func capture_WhenTermCannotGrow_RunsBeforeTheUtteranceEnds() async throws {
-        // The capture window here is a minute wide, so a term that cannot grow
-        // either acts within milliseconds or does not arrive at all. Waiting
-        // one out would overrun the timeout many times over.
-        let fixture = try Fixture(timing: .longCapture, profiles: [try makeProfile()])
+        // Under `.unreachableCapture` no capture timer can ever fire, so the run
+        // can only come from the early dispatch. The speech handler is
+        // synchronous, so execution is already under way when `emit` returns —
+        // that ordering, not a wall-clock budget, is the assertion.
+        let fixture = try Fixture(timing: .unreachableCapture, profiles: [try makeProfile()])
         fixture.coordinator.setPassiveEnabled(true)
 
         fixture.speech.emit("mac lock", isFinal: false)
 
-        await YapOpsCoordinatorTests().waitUntil {
-            await fixture.systemActions.recordedActions() == [.lockScreen]
-        }
+        #expect(fixture.coordinator.state == .executing)
+        await fixture.systemActions.waitForActions()
+        #expect(await fixture.systemActions.recordedActions() == [.lockScreen])
     }
 
     @Test func capture_WhenALongerTermIsReachable_WaitsForTheUtterance() async throws {
@@ -120,33 +122,35 @@ struct YapOpsCoordinatorSystemActionTests {
                 try SystemActionBinding(action: .nextTrack, phrases: ["next", "next track"]),
             ])),
             accent: .green)
-        let fixture = try Fixture(timing: .longCapture, profiles: [profile])
+        let fixture = try Fixture(timing: .unreachableCapture, profiles: [profile])
         fixture.coordinator.setPassiveEnabled(true)
 
         fixture.speech.emit("mac next", isFinal: false)
-        try await Task.sleep(for: .milliseconds(120))
 
-        // Still holding, because "next track" is reachable. The minute-wide
-        // window also means an overrunning sleep cannot end capture here and
-        // release the action for the wrong reason.
+        // Still holding, because "next track" is reachable. The hold is observed
+        // the instant the handler returns rather than waited out, and no timer
+        // can dispatch "next" later under this timing.
+        #expect(fixture.coordinator.state == .capturing)
+        #expect(fixture.coordinator.executingAction == nil)
         #expect(await fixture.systemActions.recordedActions().isEmpty)
 
         fixture.speech.emit("mac next track", isFinal: false)
 
-        await YapOpsCoordinatorTests().waitUntil {
-            await fixture.systemActions.recordedActions() == [.nextTrack]
-        }
+        #expect(fixture.coordinator.state == .executing)
+        await fixture.systemActions.waitForActions()
+        #expect(await fixture.systemActions.recordedActions() == [.nextTrack])
     }
 
     @Test func capture_ForACommandProfile_StillWaitsForTheUtterance() async throws {
         // Early dispatch belongs to system actions only; dictation must keep
-        // its full capture window.
-        let fixture = try Fixture(timing: .standard)
+        // its full capture window, which `.unreachableCapture` never reopens.
+        let fixture = try Fixture(timing: .unreachableCapture)
         fixture.coordinator.setPassiveEnabled(true)
 
         fixture.speech.emit("computer lock", isFinal: false)
-        try await Task.sleep(for: .milliseconds(120))
 
+        #expect(fixture.coordinator.state == .capturing)
+        #expect(fixture.coordinator.executingAction == nil)
         #expect(await fixture.runner.recordedTranscripts().isEmpty)
     }
 }

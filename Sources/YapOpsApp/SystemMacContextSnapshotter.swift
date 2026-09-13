@@ -377,8 +377,12 @@ private final class MacContextCaptureSettlement: @unchecked Sendable {
         }
         guard settled.didWin else { return }
         settled.deadlineTask?.cancel()
-        settled.continuation?.resume(returning: snapshot)
+        // Record before resuming: the waiter must not be able to observe a
+        // returned snapshot whose `capture_finished` entry has not been written
+        // yet. `settle` usually runs on the executor queue, so resuming first
+        // lets the caller read diagnostics from another thread mid-settlement.
         onSettled(snapshot, terminalState)
+        settled.continuation?.resume(returning: snapshot)
     }
 
     func cancel(captureID: UUID) {

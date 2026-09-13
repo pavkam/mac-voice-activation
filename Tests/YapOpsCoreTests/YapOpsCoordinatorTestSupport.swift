@@ -169,6 +169,19 @@ extension ActivationTiming {
         passiveRestart: .milliseconds(10),
         executionCooldown: .milliseconds(10))
 
+    /// Capture windows no test can wait out.
+    ///
+    /// Only an early dispatch can reach execution under this timing, so a
+    /// system action that runs proves it settled before the utterance ended,
+    /// and one that does not run cannot be rescued later by a timer.
+    static let unreachableCapture = ActivationTiming(
+        wakeHandoffDelay: .seconds(3_600),
+        captureInitialSilence: .seconds(3_600),
+        captureInactivity: .seconds(3_600),
+        captureMaximum: .seconds(3_600),
+        passiveRestart: .seconds(3_600),
+        executionCooldown: .milliseconds(10))
+
     static let pendingPassiveRestart = ActivationTiming(
         wakeHandoffDelay: .milliseconds(5),
         captureInitialSilence: .milliseconds(200),
@@ -180,9 +193,20 @@ extension ActivationTiming {
 
 
 /// Records performed actions and can be told to fail the next one.
+///
+/// `waitForActions(count:)` is a handshake, not a deadline: it resumes the
+/// moment the performer has recorded enough actions, so a test never has to
+/// guess how long a loaded machine needs. Pair it with `.timeLimit` so a
+/// genuinely stuck run still fails instead of hanging.
 actor RecordingSystemActionPerformer: SystemActionPerforming {
+    private struct Waiter {
+        let count: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
     private var performed: [SystemAction] = []
     private var failure: (any Error)?
+    private var waiters: [UUID: Waiter] = [:]
 
     init(failure: (any Error)? = nil) {
         self.failure = failure
@@ -193,9 +217,37 @@ actor RecordingSystemActionPerformer: SystemActionPerforming {
             throw failure
         }
         performed.append(action)
+        for (id, waiter) in waiters where performed.count >= waiter.count {
+            waiters.removeValue(forKey: id)
+            waiter.continuation.resume()
+        }
     }
 
     func recordedActions() -> [SystemAction] {
         performed
+    }
+
+    /// Suspends until at least `count` actions have been performed.
+    ///
+    /// Cancellation resumes the waiter instead of stranding it, so an expiring
+    /// `.timeLimit` reports the test as failed rather than hanging the run.
+    func waitForActions(count: Int = 1) async {
+        guard performed.count < count else { return }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard performed.count < count, !Task.isCancelled else {
+                    continuation.resume()
+                    return
+                }
+                waiters[id] = Waiter(count: count, continuation: continuation)
+            }
+        } onCancel: {
+            Task { await self.releaseWaiter(id) }
+        }
+    }
+
+    private func releaseWaiter(_ id: UUID) {
+        waiters.removeValue(forKey: id)?.continuation.resume()
     }
 }
