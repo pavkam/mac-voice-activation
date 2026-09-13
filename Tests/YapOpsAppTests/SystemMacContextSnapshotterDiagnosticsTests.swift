@@ -7,7 +7,10 @@ import YapOpsCore
 
 @testable import YapOpsApp
 
-@Suite(.serialized)
+// Every capture below is driven by an explicit executor handshake and a clock
+// that never fires, so no assertion depends on how fast the machine is. The
+// time limit only catches a handshake that never completes.
+@Suite(.serialized, .timeLimit(.minutes(1)))
 struct SystemMacContextSnapshotterDiagnosticsTests {
     @MainActor @Test func capture_WhenComplete_RecordsSafePairedMetadataWithDuration()
         async
@@ -17,6 +20,7 @@ struct SystemMacContextSnapshotterDiagnosticsTests {
         let selectedValue = "diagnostic selection sentinel"
         let titleValue = "diagnostic title sentinel"
         let uriValue = "file:///diagnostic-sentinel"
+        let executor = QueuedMacContextExecutor()
         let subject = SystemMacContextSnapshotter(
             workspace: MacContextWorkspaceStub(target: .editor),
             accessibility: MacContextAccessibilityStub(result: .init(
@@ -25,10 +29,15 @@ struct SystemMacContextSnapshotterDiagnosticsTests {
                 documentURL: uriValue,
                 selectedText: selectedValue,
                 resources: [.init(uri: uriValue, name: "diagnostic-name-sentinel")])),
+            executor: executor,
+            clock: WaitingDiagnosticClock(),
             diagnostics: diagnostics,
             now: now)
+        let capture = Task { await subject.capture(.editor) }
 
-        _ = await subject.capture(.editor)
+        await executor.waitForOperationCount(1)
+        executor.runNext()
+        _ = await capture.value
 
         let entries = diagnostics.snapshot()
         #expect(entries.count == 2)
@@ -61,13 +70,19 @@ struct SystemMacContextSnapshotterDiagnosticsTests {
              MacContextCaptureState.accessibilityFailed.rawValue),
         ] {
             let diagnostics = AppDiagnosticRecorderSpy()
+            let executor = QueuedMacContextExecutor()
             let subject = SystemMacContextSnapshotter(
                 workspace: MacContextWorkspaceStub(target: .editor),
                 accessibility: MacContextAccessibilityStub(result: .init(status: fixture.0)),
+                executor: executor,
+                clock: WaitingDiagnosticClock(),
                 diagnostics: diagnostics,
                 now: MacContextNowStub(values: [20, 23]))
+            let capture = Task { await subject.capture(.editor) }
 
-            _ = await subject.capture(.editor)
+            await executor.waitForOperationCount(1)
+            executor.runNext()
+            _ = await capture.value
 
             let entries = diagnostics.snapshot()
             #expect(entries.count == 2)
@@ -198,6 +213,7 @@ struct SystemMacContextSnapshotterDiagnosticsTests {
         let titleValue = "jsonl title sentinel"
         let uriValue = "file:///jsonl-sentinel"
         let resourceName = "jsonl-resource-sentinel"
+        let executor = QueuedMacContextExecutor()
         let subject = SystemMacContextSnapshotter(
             workspace: MacContextWorkspaceStub(target: .editor),
             accessibility: MacContextAccessibilityStub(result: .init(
@@ -206,10 +222,15 @@ struct SystemMacContextSnapshotterDiagnosticsTests {
                 documentURL: uriValue,
                 selectedText: selectedValue,
                 resources: [.init(uri: uriValue, name: resourceName)])),
+            executor: executor,
+            clock: WaitingDiagnosticClock(),
             diagnostics: recorder,
             now: MacContextNowStub(values: [1, 2]))
+        let capture = Task { await subject.capture(.editor) }
 
-        _ = await subject.capture(.editor)
+        await executor.waitForOperationCount(1)
+        executor.runNext()
+        _ = await capture.value
         recorder.flush()
 
         let contents = try String(contentsOf: recorder.currentLogURL, encoding: .utf8)
