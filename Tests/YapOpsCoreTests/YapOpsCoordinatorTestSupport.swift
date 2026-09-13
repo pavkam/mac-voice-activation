@@ -51,21 +51,76 @@ extension YapOpsCoordinatorTests {
         }
     }
 
+    /// Polls until `condition` holds, failing if it does not inside `timeout`.
+    ///
+    /// Callers pass a deliberately tight budget when the deadline *is* the
+    /// assertion — that a settled term acts without waiting out a capture
+    /// window measured in seconds — so the timeout has to keep meaning what
+    /// it says. What it must not measure is this loop's own starvation. The
+    /// suite runs in parallel, and under a sanitizer a 10ms poll sleep
+    /// routinely overshoots by an order of magnitude, which leaves a tight
+    /// budget only a couple of samples and lets the condition come true
+    /// unobserved.
+    ///
+    /// So time spent descheduled is given back to the deadline: it is time
+    /// the test runner took, not time the system under test took. A system
+    /// that is genuinely slow while polling is healthy still fails, and the
+    /// credit is capped so a permanently false condition cannot stall the
+    /// suite. The condition is always evaluated once more before recording a
+    /// failure, so a timeout is never reported without having looked.
     @MainActor func waitUntil(
         timeout: Duration = .seconds(5),
         condition: @escaping @MainActor () async -> Bool) async
     {
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        while clock.now < deadline {
+        let pollInterval = Duration.milliseconds(10)
+        let start = clock.now
+        let ceiling = start.advanced(by: max(timeout * 10, .seconds(5)))
+        var deadline = start.advanced(by: timeout)
+
+        var iterationStart = start
+        while true {
             if await condition() { return }
-            try? await Task.sleep(for: .milliseconds(10))
+            let polledAt = clock.now
+            guard polledAt < deadline, polledAt < ceiling else { break }
+
+            await Task.yield()
+            try? await Task.sleep(for: pollInterval)
+
+            // Everything this iteration spent beyond the poll interval is the
+            // loop's own cost — the sleep overshooting and the actor hop into
+            // `condition` — not the system under test being slow.
+            let overshoot = (clock.now - iterationStart) - pollInterval
+            if overshoot > .zero {
+                deadline = deadline.advanced(by: overshoot)
+            }
+            iterationStart = clock.now
         }
         Issue.record("Condition was not satisfied before timeout")
     }
 }
 
 extension ActivationTiming {
+    /// `.standard` handoff and cooldown, with capture windows long enough that
+    /// waiting one out is unmistakable.
+    ///
+    /// Early dispatch is the claim that a settled term acts *without* waiting
+    /// for the capture window. Asserting that against `.standard` means
+    /// separating "acted at once" from "waited out capture" by 500ms against
+    /// 1.5s, and the whole suite runs in parallel under a sanitizer where a
+    /// sleep dilates by an order of magnitude — so that budget ends up
+    /// measuring runner scheduling, not the coordinator. Stretching the window
+    /// to a minute makes the two outcomes differ by milliseconds against tens
+    /// of seconds, which no dilation can blur, and lets the tests use the
+    /// ordinary generous timeout.
+    static let longCapture = ActivationTiming(
+        wakeHandoffDelay: .milliseconds(350),
+        captureInitialSilence: .seconds(60),
+        captureInactivity: .seconds(60),
+        captureMaximum: .seconds(120),
+        passiveRestart: .seconds(1),
+        executionCooldown: .milliseconds(250))
+
     static let fast = ActivationTiming(
         wakeHandoffDelay: .milliseconds(5),
         captureInitialSilence: .milliseconds(200),

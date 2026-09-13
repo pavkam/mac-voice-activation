@@ -100,14 +100,15 @@ struct YapOpsCoordinatorSystemActionTests {
     }
 
     @Test func capture_WhenTermCannotGrow_RunsBeforeTheUtteranceEnds() async throws {
-        // .standard timing has a capture window measured in seconds; a quick
-        // action must not wait for it.
-        let fixture = try Fixture(timing: .standard, profiles: [try makeProfile()])
+        // The capture window here is a minute wide, so a term that cannot grow
+        // either acts within milliseconds or does not arrive at all. Waiting
+        // one out would overrun the timeout many times over.
+        let fixture = try Fixture(timing: .longCapture, profiles: [try makeProfile()])
         fixture.coordinator.setPassiveEnabled(true)
 
         fixture.speech.emit("mac lock", isFinal: false)
 
-        await YapOpsCoordinatorTests().waitUntil(timeout: .milliseconds(500)) {
+        await YapOpsCoordinatorTests().waitUntil {
             await fixture.systemActions.recordedActions() == [.lockScreen]
         }
     }
@@ -119,18 +120,20 @@ struct YapOpsCoordinatorSystemActionTests {
                 try SystemActionBinding(action: .nextTrack, phrases: ["next", "next track"]),
             ])),
             accent: .green)
-        let fixture = try Fixture(timing: .standard, profiles: [profile])
+        let fixture = try Fixture(timing: .longCapture, profiles: [profile])
         fixture.coordinator.setPassiveEnabled(true)
 
         fixture.speech.emit("mac next", isFinal: false)
         try await Task.sleep(for: .milliseconds(120))
 
-        // Still holding, because "next track" is reachable.
+        // Still holding, because "next track" is reachable. The minute-wide
+        // window also means an overrunning sleep cannot end capture here and
+        // release the action for the wrong reason.
         #expect(await fixture.systemActions.recordedActions().isEmpty)
 
         fixture.speech.emit("mac next track", isFinal: false)
 
-        await YapOpsCoordinatorTests().waitUntil(timeout: .milliseconds(500)) {
+        await YapOpsCoordinatorTests().waitUntil {
             await fixture.systemActions.recordedActions() == [.nextTrack]
         }
     }
