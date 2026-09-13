@@ -59,6 +59,13 @@ explicit gates, and observable terminal state. Existing support code includes:
 - `AppModelTestSupport.swift`
 - `AgentConversationAudioTestSupport.swift`
 
+A type that waits, retries, or debounces takes `any Clock<Duration>` in its
+initializer, defaulting to `ContinuousClock()`, and exposes a way to await its
+settled state. The test injects a clock whose `sleep` returns immediately, so a
+ten-attempt poll costs no wall-clock time and cannot flake. `SettingsAutosave`
+and `MacContextAccessPoller` both work this way; copy whichever is closer rather
+than inventing a third shape.
+
 Wall-clock waits are acceptable only when elapsed time or rendered transition
 progress is the behavior. Keep them short, bound the whole test, and assert the
 settled state. Never add a sleep merely to let an unknown race "finish."

@@ -23,6 +23,23 @@ reference, or helper under `.agents/skills`. A limit is not a target. Split by
 decision boundary before 150 lines; do not compress unrelated subjects into
 dense prose to game the count.
 
+## One library, several runtimes
+
+`.agents/skills` is canonical and is the only path that holds real files.
+`.claude/skills` and `.cursor/skills` are relative symlinks to it:
+
+```bash
+ln -sfn ../.agents/skills .claude/skills
+ln -sfn ../.agents/skills .cursor/skills
+```
+
+Claude Code, Cursor, and anything else reading a conventional path therefore see
+one library that cannot drift. Both links are committed. Never copy a skill into
+a runtime directory, and write cross-references against `.agents/skills/...` so
+a path quoted in one runtime resolves in every other. `check-agent-guidance.sh`
+walks only `.agents/skills`; `check-license-headers.sh` skips symlinks, because a
+symlink has no content to carry a header.
+
 ## Routing rules
 
 - Skill descriptions contain only concrete trigger conditions and start with

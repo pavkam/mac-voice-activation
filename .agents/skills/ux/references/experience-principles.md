@@ -18,7 +18,10 @@ without demanding attention, and preserve the foreground app's focus.
 - **Calm under load:** streaming output can be busy; the surrounding chrome is
   stable. Do not animate every token or tool update.
 - **Truthful:** show starting, listening, working, cancelling, failed, and
-  completed states distinctly. Never hide latency behind fake progress.
+  completed states distinctly. Never hide latency behind fake progress. A
+  control's label, symbol, and enabled state name what it will actually do in
+  the current phase; a button reading **Pause listening** that cancels the whole
+  turn is a lie the user only discovers by pressing it.
 - **Reversible:** cancellation, minimizing, restoration, and destructive
   actions remain obvious and preserve the user's context.
 - **Respectful:** no focus theft, surprise activation, unnecessary notification,
@@ -71,3 +74,9 @@ For each change, write the sequence as cause → visible response → settled st
 If two surfaces show the same state, their copy, symbol, available action, and
 accent must agree. If they disagree, fix the presentation mapping rather than
 papering over one view.
+
+Check the control against the data flow it represents, not against the view's
+own logic. A disabled-looking microphone and a transcript that only appeared
+after the turn both came from the composer testing `phase == .listening` while
+the coordinator delivered live transcript for every non-terminal phase. The view
+was self-consistent and still wrong. Derive both from the same predicate.

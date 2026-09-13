@@ -22,16 +22,24 @@ codesign --verify --deep --strict .build/YapOps.app
 `make app` copies the plist, icon, and sound assets, then signs and verifies the
 bundle. Local builds default to the persistent **YapOps Local Development**
 Keychain identity; run `make setup-signing` once per Mac. CI explicitly opts into
-`SIGN_IDENTITY=-`. Use the same key and app path for permission testing.
-Never reset TCC automatically.
+`SIGN_IDENTITY=-`. Use the same key and app path for permission testing. Never
+reset TCC yourself; `references/environment-reset.md` owns that boundary.
 
-If Accessibility stays On in System Settings but the app reports denied after
-an update, check TCC's code-requirement failure and the bundle's designated
-requirement. Two different `cdhash` requirements confirmed an ad-hoc rebuild
-invalidated the existing grant. Preserve the signing identity instead of hiding
-the permission action or repeatedly prompting. `scripts/test-build-app.py`
-guards the persistent default, explicit ad-hoc opt-in, and preservation of the
-previous app when signing or verification fails.
+If Accessibility stays On in System Settings but the app reports denied, compare
+the bundle's designated requirement against the one TCC stored:
+
+```bash
+codesign -d -r- .build/YapOps.app
+```
+
+Two different `cdhash` requirements confirm an ad-hoc rebuild invalidated the
+grant; preserve the signing identity instead of hiding the permission action or
+prompting repeatedly. A requirement pinning an unchanged certificate leaf hash
+rules signing out and leaves stale TCC state as the remaining explanation —
+`references/environment-reset.md` carries the 2026-09-13 evidence and the
+user-run recovery. `scripts/test-build-app.py` guards the persistent default,
+the explicit ad-hoc opt-in, the stable bundle directory, and preservation of the
+previous `Contents/` when signing or verification fails.
 
 ## LLDB
 

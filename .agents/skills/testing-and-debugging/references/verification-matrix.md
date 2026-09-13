@@ -19,6 +19,7 @@ output is evidence; remembered output is nostalgia.
 | Background task continuity | Capability/decoder/connection/runner fixtures, App registry/panel/audio suites, then sanitizer and isolated non-activating focus lane |
 | UX, layout, animation, sound feedback, accessibility | This matrix plus `ux`; report unexercised manual rows |
 | Resources, plist, signing, bundle, permissions, Keychain identity, login item | `make app`, plist/signature verification, real bundled flow from a stable path when relevant |
+| Packaging script, signing flow, or bundle layout | `python3 scripts/test-build-app.py`, then `make app` and a launch from the rebuilt bundle |
 | Public Core API or Swift file structure | `make check` |
 | Documentation or project skill | Skill validator where applicable, `make check`, `git diff --check` |
 

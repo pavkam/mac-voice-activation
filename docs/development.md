@@ -128,6 +128,12 @@ in `AGENTS.md`, domain routing in each `SKILL.md`, and focused procedures in
 skill references. Keep root and skill text at or below 150 physical lines and
 run `make check-agent-guidance` after changing it.
 
+`.agents/skills` holds the only copy of those skills. `.claude/skills` and
+`.cursor/skills` are committed relative symlinks to it, so Claude Code, Cursor,
+and any other assistant reading a conventional path get the same library and it
+cannot drift. Edit the canonical path; never copy a skill into a runtime
+directory.
+
 See [Documentation](documentation.md) for ownership, terminology, evidence, and
 the review checklist.
 

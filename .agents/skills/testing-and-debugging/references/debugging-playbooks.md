@@ -53,6 +53,7 @@ The useful question is “which owner had the value and did not hand it off?”
 | Narration or sounds overlap/stall | Speech queue state, synthesis/playback IDs, delegate completion | Segmenter → queue → player → activity loop; use silent controlled adapters |
 | Launch at Login fails | Bundle path, signature, `SMAppService.mainApp` observed state | Test injected service first; manually use a stable `/Applications` copy |
 | Permission/signing/resource failure | Real bundle, `Info.plist`, signature, stable path | Build with `make app`; `swift run` is the wrong experiment |
+| Grant reads On but the app is denied | The app's own authorization API result, `codesign -d -r-` | Compare stored vs. current requirement, then `references/environment-reset.md` |
 
 If repository quality fails to load `YapOpsPackageTests` during symbol graph
 extraction, reproduce `make check` in a fresh checkout. SwiftPM includes the
@@ -81,6 +82,16 @@ Do not "fix" a race by adding a delay or removing actor annotations. Verify:
 
 Use Thread Sanitizer after deterministic coverage. A clean sanitizer run cannot
 prove a logical ordering invariant; the regression test still carries that job.
+
+A closure written inline inside a `@MainActor` method inherits that isolation
+from its lexical position, even when the framework will invoke it from a
+real-time or background thread. A tap closure built inside `@MainActor`
+`AppleSpeechSession.start` crashed the app on the audio thread with
+`EXC_BREAKPOINT` the moment AVAudioEngine called it. The compiler was right and
+the code was still wrong: isolation was never stated, only inherited. Hoist such
+a closure into a `nonisolated static func` that returns it, so its isolation is
+declared rather than absorbed. Suspect this whenever a crash lands on a
+framework callback thread with no obvious data race.
 
 An AppKit transition test that passes alone and crashes the complete suite in
 `objc_release` or `_NSWindowTransformAnimation` has crossed a process-global
@@ -115,4 +126,6 @@ Build and reproduce from the signed app bundle for microphone, speech, Keychain,
 resources, Service Management, and menu-bar lifecycle. Do not automate TCC
 resets, real login-item changes, audible output, provider authentication, or
 credential import as part of diagnosis. Those mutate user state and usually
-replace the bug with a second one. Charming.
+replace the bug with a second one. Charming. When a grant really is stale,
+`references/environment-reset.md` says what to prove and hands the user
+`make reset-permissions` rather than running it for them.

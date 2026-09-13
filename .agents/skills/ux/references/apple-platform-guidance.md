@@ -31,6 +31,22 @@ authoritative because Apple guidance and SDK APIs evolve.
 - `PhaseAnimator` models discrete phases; `KeyframeAnimator` coordinates
   independently timed values and invokes its content closure each frame.
 
+## Verified macOS SwiftUI behaviors
+
+These were confirmed against the running app, not inferred from documentation.
+
+- Inside a `Form` or `Section`, `TextField(_: text:)` renders its title as a
+  persistent leading label, not as a placeholder that clears on input. A row
+  under an existing heading repeats itself that way. Use
+  `TextField("", text:, prompt: Text("..."))` with `.labelsHidden()` when the
+  surrounding row already names the field.
+- A view that has become the sole content of a container must not keep drawing
+  its own card background and border. Nested chrome reads as a bug, and the
+  inner card usually survives from when the view was one item among several.
+- `.task(id:)` cancels on identity change and on disappearance. Prefer it to a
+  manually retained `Task` unless the work must outlive the view; if it must,
+  the owner holding that `Task` is responsible for cancelling it.
+
 Do not use newer Liquid Glass or symbol features merely because current Apple
 documentation highlights them. An API newer than macOS 15 needs an explicit
 availability guard, a visually coherent fallback, and tests for both paths.

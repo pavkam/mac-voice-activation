@@ -21,6 +21,7 @@ behavior, then widen verification in proportion to the risk.
 | Runtime logs, instrumentation, redaction, or latency fields | `references/diagnostics.md` |
 | A crash, hang, flake, permission, speech, ACP, UI, or packaging symptom | `references/debugging-playbooks.md` |
 | Bundle execution, LLDB, crash reports, sanitizers, Instruments, signing, TCC | `references/runtime-tools.md` |
+| Stale build output, a lost privacy grant, signing identity, or any reset | `references/environment-reset.md` |
 | Toolchain, CI, test inventory, log schema, or environment drift | `references/validated-baseline.md` |
 | Completion claims and proportional gates | `references/verification-matrix.md` |
 
@@ -56,7 +57,9 @@ animation, sound feedback, or accessibility work, also use
   Keychain identity, Service Management, or privacy grants.
 - Never log or paste prompts, transcripts, credentials, authorization values,
   API keys, raw ACP payloads, provider content, or audio.
-- Never reset TCC, change login items, or delete user state as a debugging
-  shortcut.
+- Never reset TCC, change login items, or delete user state yourself, and never
+  as a debugging shortcut. `make reset-permissions` exists for the user to run
+  once the app's own API has been shown to disagree with System Settings; see
+  `references/environment-reset.md` for what to prove first.
 - A test that passed before the fix does not prove the regression. A command
   that was not run is not a pass.

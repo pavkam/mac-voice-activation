@@ -6,3 +6,4 @@
 .swiftpm/
 .superpowers/
 .worktrees/
+__pycache__/

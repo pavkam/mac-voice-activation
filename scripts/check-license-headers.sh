@@ -18,6 +18,14 @@ cd "$project_dir"
 while IFS= read -r -d '' path; do
     [[ -e "$path" ]] || continue
 
+    # A symlink stores a path, not content, so it cannot carry a header. Its
+    # target is checked under the target's own path. .claude/skills and
+    # .cursor/skills are relative symlinks into .agents/skills so every agent
+    # runtime reads one canonical skill library.
+    if [[ -L "$path" ]]; then
+        continue
+    fi
+
     case "$path" in
         LICENSE | Package.resolved | *.icns | *.wav)
             continue

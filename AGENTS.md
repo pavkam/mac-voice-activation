@@ -49,7 +49,8 @@ Load additional skills only when their trigger matches:
 
 Each skill is a second-stage router. Read only the reference rows matching the
 work; add another reference when the task crosses that boundary. Do not load an
-entire skill tree “just in case.”
+entire skill tree “just in case.” `.claude/skills` and `.cursor/skills` are
+symlinks to `.agents/skills`; edit the canonical path only.
 
 ## Universal invariants
 
