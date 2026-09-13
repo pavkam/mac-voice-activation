@@ -119,8 +119,9 @@ struct SettingsView: View {
                 Label("Conversation phrases", systemImage: "text.bubble")
             } footer: {
                 Text(
-                    "Saying one of these on its own ends the conversation and "
-                        + "closes its panel.")
+                    "Separate alternative phrases with commas. Saying one of "
+                        + "these on its own ends the conversation and closes "
+                        + "its panel.")
             }
             SpeechSettingsContent(model: model)
         }

@@ -25,23 +25,18 @@ struct SystemActionDraft: Equatable, Identifiable {
     init(binding: SystemActionBinding) {
         id = binding.id
         action = binding.action
-        terms = binding.phrases.joined(separator: ", ")
+        terms = CommaSeparatedTerms.text(binding.phrases)
     }
 
     /// Creates a row seeded with the action's suggested terms.
     init(suggestedFor action: SystemAction) {
         self.init(
             action: action,
-            terms: action.suggestedPhrases.joined(separator: ", "))
+            terms: CommaSeparatedTerms.text(action.suggestedPhrases))
     }
 
     /// The individual terms, split on commas and trimmed.
-    var termList: [String] {
-        terms
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-    }
+    var termList: [String] { CommaSeparatedTerms.list(terms) }
 }
 
 /// The editable form of a profile's system-action bindings.

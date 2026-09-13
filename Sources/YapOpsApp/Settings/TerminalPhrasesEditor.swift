@@ -7,50 +7,46 @@ import YapOpsCore
 /// Edits the spoken phrases that end a live agent conversation and close its
 /// panel — "cancel" and "stop" today, plus natural closers like "thank you".
 ///
-/// A blank row is dropped on save rather than matching every utterance, so
-/// clearing a field to delete it is safe. An explicitly saved empty list
-/// stays empty: `AppPreferences.terminalPhrases` only falls back to the
-/// built-in defaults when the setting has never been saved at all.
+/// The phrases read as one comma-separated line, the same shape system-action
+/// terms use, so the whole vocabulary is visible and editable in one place.
+/// Text is held as typed and parsed on the way out, so a trailing comma or a
+/// half-typed phrase survives a redraw. Clearing the field saves an empty list:
+/// `AppPreferences.terminalPhrases` only falls back to the built-in defaults
+/// when the setting has never been saved at all.
 struct TerminalPhrasesEditor: View {
     @Binding var phrases: [String]
+    @State private var text: String
+
+    init(phrases: Binding<[String]>) {
+        _phrases = phrases
+        _text = State(initialValue: CommaSeparatedTerms.text(phrases.wrappedValue))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.row) {
-            ForEach(phrases.indices, id: \.self) { index in
-                HStack(spacing: Design.Space.small) {
-                    // A bare TextField(_:text:) renders its title as a
-                    // persistent row label inside a Form/Section, not a
-                    // placeholder — nine rows all captioned "Phrase" the
-                    // header already named. `prompt:` is the placeholder that
-                    // actually disappears once a phrase is typed.
-                    TextField("", text: $phrases[index], prompt: Text("Phrase"))
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Terminal phrase \(index + 1)")
-                    Button(role: .destructive) {
-                        phrases.remove(at: index)
-                    } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Remove phrase")
-                }
-            }
+            // A bare TextField(_:text:) renders its title as a persistent row
+            // label inside a Form/Section, repeating the section header.
+            // `prompt:` is the placeholder that disappears once text is typed.
+            TextField("", text: $text, prompt: Text("Phrases, comma separated"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Conversation phrases, comma separated")
 
-            HStack(spacing: Design.Space.card) {
-                Button {
-                    phrases.append("")
-                } label: {
-                    Label("Add phrase", systemImage: "plus.circle")
-                }
-                .buttonStyle(.borderless)
-
-                Button("Reset to defaults") {
-                    phrases = AppPreferences.defaultTerminalPhrases
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+            Button("Reset to defaults") {
+                text = CommaSeparatedTerms.text(AppPreferences.defaultTerminalPhrases)
             }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
         }
+        .onChange(of: text) { phrases = CommaSeparatedTerms.list(text) }
+        .onChange(of: phrases) { adoptExternalChange() }
+    }
+
+    /// Rewrites the field when the list changes underneath it — a reload after
+    /// a save — while leaving text alone when it already describes that list,
+    /// so an edit in progress is never reformatted under the cursor.
+    private func adoptExternalChange() {
+        guard CommaSeparatedTerms.list(text) != phrases else { return }
+        text = CommaSeparatedTerms.text(phrases)
     }
 }
