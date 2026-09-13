@@ -57,15 +57,18 @@ struct MacContextSettingsPresentation {
 struct MacContextSettingsActions {
     let enableAccessibility: () -> Void
     let appear: () -> Void
+    let refresh: () -> Void
 
     init(model: AppModel) {
         enableAccessibility = model.requestMacContextAccess
         appear = model.settingsDidAppear
+        refresh = model.refreshMacContextAccessStatus
     }
 }
 
 struct MacContextSettingsSection: View {
     @Bindable var model: AppModel
+    @State private var poller = MacContextAccessPoller()
 
     private var actions: MacContextSettingsActions {
         MacContextSettingsActions(model: model)
@@ -75,8 +78,20 @@ struct MacContextSettingsSection: View {
         MacContextSettingsContent(
             isEnabled: $model.capturesMacContext,
             accessStatus: model.macContextAccessStatus,
-            enableAccessibility: actions.enableAccessibility)
-            .onAppear(perform: actions.appear)
+            enableAccessibility: actions.enableAccessibility,
+            refresh: actions.refresh)
+            .onAppear {
+                actions.appear()
+                startPolling()
+            }
+            .onDisappear { poller.stop() }
+            .onChange(of: model.macContextAccessStatus) { startPolling() }
+    }
+
+    private func startPolling() {
+        poller.start(
+            refresh: actions.refresh,
+            isAuthorized: { model.macContextAccessStatus == .authorized })
     }
 }
 
@@ -84,6 +99,7 @@ struct MacContextSettingsContent: View {
     @Binding var isEnabled: Bool
     let accessStatus: MacContextAccessStatus
     let enableAccessibility: () -> Void
+    var refresh: () -> Void = {}
 
     private var presentation: MacContextSettingsPresentation {
         MacContextSettingsPresentation(accessStatus: accessStatus, isEnabled: isEnabled)
@@ -122,10 +138,21 @@ struct MacContextSettingsContent: View {
             .accessibilityElement(children: .combine)
 
             if presentation.showsEnableAccessibilityButton {
-                Button("Enable Accessibility…", action: enableAccessibility)
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .help("Approve YapOps in System Settings, then return here.")
+                HStack(spacing: 8) {
+                    Button("Enable Accessibility…", action: enableAccessibility)
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .help("Approve YapOps in System Settings, then return here.")
+
+                    // macOS can hold this process's trust check stale right
+                    // after the checkbox is toggled, particularly off then
+                    // back on. A manual recheck is a guaranteed lever when the
+                    // automatic one hasn't caught up yet.
+                    Button("Recheck", systemImage: "arrow.clockwise", action: refresh)
+                        .buttonStyle(.borderless)
+                        .controlSize(.regular)
+                        .help("Already approved it in System Settings? Check again.")
+                }
             }
 
             DisclosureGroup("What your agent receives") {
