@@ -95,6 +95,16 @@ missing, expired, or broken key. Regular builds never generate keys and never
 fall back to ad-hoc signing. The previous app remains intact if signing or
 verification fails; only a verified staged bundle replaces it.
 
+`.build/YapOps.app`'s own bundle directory is created once and reused across
+every rebuild; only its `Contents/` is replaced, and only after the staged
+copy is signed and verified. Earlier builds instead swapped the whole `.app`
+directory in with `mv`, which gave it a new directory inode on every build —
+macOS Accessibility (and other privacy) trust for a locally signed dev build
+can fail to carry over across that change even with this same, unchanging
+signing identity. If a privacy grant stops working despite the identity being
+stable, see "Accessibility or another privacy grant stops working after a
+rebuild" in [Troubleshooting](troubleshooting.md), and `make reset-permissions`.
+
 This identity supports local development. It is not an Apple Developer ID or a
 notarization credential. To use an existing Apple identity, override it:
 

@@ -306,13 +306,42 @@ See [Packaging](packaging.md) for the signed bundle workflow.
 
 ## macOS asks for privacy access after every rebuild
 
-The default development bundle is ad-hoc signed, so its identity can change with
-the executable. Build with a stable installed development identity and launch a
-consistent copy from `/Applications`:
+`make app` signs with a persistent local identity by default
+(`make setup-signing` provisions it once per Mac; see
+[Packaging](packaging.md)), not an ad-hoc one, so this should not happen from
+signing identity alone. If it still does, either identity was never
+provisioned — run `make setup-signing`, then rebuild — or you built with an
+explicit ad-hoc override:
 
 ```bash
-SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" make app
+SIGN_IDENTITY=- make app   # only if you passed this yourself
 ```
+
+## Accessibility or another privacy grant stops working after a rebuild
+
+Rarer, and different from the case above: the grant was working, the toggle in
+**System Settings > Privacy & Security** still shows on, `Enable
+Accessibility…` / **Recheck** in YapOps Settings do nothing, and the signing
+identity is confirmed stable
+(`codesign -d -r- .build/YapOps.app` still shows
+`certificate leaf = H"..."` unchanged from before). This is macOS holding a
+stale trust record for the identifier that a fresh rebuild no longer matches,
+not a bug in the persistent-identity signing itself.
+
+```bash
+make reset-permissions
+```
+
+Clears Accessibility, Microphone, and Speech Recognition for `dev.alex.yapops`,
+then re-grant each from a clean state: **Enable Accessibility…** in Settings,
+and speak once to re-trigger the Microphone and Speech Recognition prompts.
+
+If this recurs often during active development, `make app` keeps
+`.build/YapOps.app`'s own bundle directory in place across rebuilds and only
+replaces its `Contents/` — a prior version replaced the whole directory on
+every build, which is a documented way for this exact class of staleness to
+happen even with an unchanging signing identity. Confirm you are not on an
+older checkout of `scripts/build-app.sh` before assuming this is unavoidable.
 
 ## Related guides
 

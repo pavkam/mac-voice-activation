@@ -19,8 +19,8 @@ staged_app="$staging_dir/YapOps.app"
 contents_path="$staged_app/Contents"
 
 cleanup() {
-    if [[ -d "$staging_dir/previous.app" && ! -e "$app_path" ]]; then
-        mv "$staging_dir/previous.app" "$app_path"
+    if [[ -d "$staging_dir/previous-contents" && ! -e "$app_path/Contents" ]]; then
+        mv "$staging_dir/previous-contents" "$app_path/Contents"
     fi
     rm -rf "$staging_dir"
 }
@@ -45,9 +45,17 @@ if ! codesign --force --deep --sign "$sign_identity" "$staged_app"; then
 fi
 codesign --verify --deep --strict "$staged_app"
 
-if [[ -e "$app_path" ]]; then
-    mv "$app_path" "$staging_dir/previous.app"
+# Update the bundle's contents in place rather than swapping the whole .app
+# directory in with mv. That swap gave .build/YapOps.app a new directory inode
+# on every single rebuild; macOS Accessibility/TCC trust for a locally signed
+# dev build can fail to carry over across that change even with an identical,
+# persistent signing identity (docs/troubleshooting.md has the recovery
+# command if this still happens). The bundle directory itself is created once
+# and never re-created afterward - only Contents/ is replaced.
+mkdir -p "$app_path"
+if [[ -d "$app_path/Contents" ]]; then
+    mv "$app_path/Contents" "$staging_dir/previous-contents"
 fi
-mv "$staged_app" "$app_path"
+mv "$contents_path" "$app_path/Contents"
 
 printf 'Built %s\n' "$app_path"

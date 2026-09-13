@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
 # SPDX-License-Identifier: MIT
 
-.PHONY: build test app run check-license check-agent-guidance check-structure check-documentation check-design-tokens check-packaging setup-signing check
+.PHONY: build test app run check-license check-agent-guidance check-structure check-documentation check-design-tokens check-packaging setup-signing reset-permissions check
 
 check-license:
 	./scripts/check-license-headers.sh
@@ -23,6 +23,9 @@ check-packaging:
 
 setup-signing:
 	./scripts/setup-local-signing.sh
+
+reset-permissions:
+	./scripts/reset-tcc.sh
 
 check: check-license check-agent-guidance check-structure check-documentation check-design-tokens check-packaging
 

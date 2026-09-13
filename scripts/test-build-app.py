@@ -31,8 +31,14 @@ class BuildAppTests(unittest.TestCase):
         ]:
             (resources / name).write_text("inert resource")
         self.app = self.root / ".build/YapOps.app"
-        self.app.mkdir(parents=True)
-        (self.app / "previous-build").write_text("keep until signing succeeds")
+        (self.app / "Contents").mkdir(parents=True)
+        # A stale prior build's Contents/, to be replaced by a successful
+        # rebuild but preserved if this rebuild fails.
+        (self.app / "Contents/previous-build").write_text("keep until signing succeeds")
+        # A marker outside Contents/, at the bundle's own top level. The build
+        # must never recreate that top-level directory - only its Contents/ -
+        # so this must survive every rebuild, successful or not.
+        (self.app / "bundle-directory-marker").write_text("must outlive every rebuild")
         self.bin = self.root / "tools"
         self.bin.mkdir()
         stub = f"#!{sys.executable}\n" + '''
@@ -84,7 +90,18 @@ elif name == "codesign":
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.signing_identity(), "YapOps Local Development")
         self.assertTrue((self.app / "Contents/MacOS/YapOps").exists())
-        self.assertFalse((self.app / "previous-build").exists())
+        self.assertFalse((self.app / "Contents/previous-build").exists())
+
+    def test_successful_build_never_recreates_the_bundle_directory(self):
+        """The whole point of the in-place Contents/ swap: a stray file
+        living outside Contents/, at the bundle's own top level, must survive
+        a successful rebuild untouched. Recreating that directory (rather than
+        updating it in place) is exactly what let macOS Accessibility/TCC
+        trust go stale across rebuilds with an otherwise identical, persistent
+        signing identity."""
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.app / "bundle-directory-marker").exists())
 
     def test_explicit_signing_identity_is_preserved_as_one_argument(self):
         result = self.build(SIGN_IDENTITY="Apple Development: Fixture (TEST)")
@@ -99,14 +116,16 @@ elif name == "codesign":
     def test_failed_signing_keeps_previous_app_without_falling_back(self):
         result = self.build(FAIL_SIGN="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertTrue((self.app / "previous-build").exists())
+        self.assertTrue((self.app / "Contents/previous-build").exists())
+        self.assertTrue((self.app / "bundle-directory-marker").exists())
         self.assertEqual(self.signing_identity(), "YapOps Local Development")
         self.assertEqual(list((self.root / ".build").glob("YapOps-package.*")), [])
 
     def test_failed_verification_keeps_previous_app(self):
         result = self.build(FAIL_VERIFY="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertTrue((self.app / "previous-build").exists())
+        self.assertTrue((self.app / "Contents/previous-build").exists())
+        self.assertTrue((self.app / "bundle-directory-marker").exists())
         self.assertEqual(list((self.root / ".build").glob("YapOps-package.*")), [])
 
 
