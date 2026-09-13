@@ -22,7 +22,7 @@ import Testing
     @Test func tapBlockRunsOffTheMainActorWithoutTrapping() async throws {
         let request = SFSpeechAudioBufferRecognitionRequest()
         let bufferSink = SpeechAudioBufferSink(request: request)
-        let levelMeter = await SpeechAudioLevelMeter(scheduler: MainRunLoopScheduler()) { _ in }
+        let levelMeter = SpeechAudioLevelMeter(scheduler: MainRunLoopScheduler()) { _ in }
         let tap = AppleSpeechSession.makeTap(bufferSink: bufferSink, levelMeter: levelMeter)
         let buffer = try #require(makeSilentBuffer())
 
