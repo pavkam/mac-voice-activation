@@ -250,12 +250,34 @@ extension YapOpsCoordinator {
 
         cancelWakeHandoff()
         cancelCaptureInitialSilence()
+
+        if !update.isFinal, capturedTermResolvesNow(match.command) {
+            finishPassiveCapture()
+            return
+        }
+
         scheduleCaptureInactivity()
         scheduleCaptureHardStop()
 
         if update.isFinal {
             finishPassiveCapture()
         }
+    }
+
+    /// Whether a system-action term can run before the utterance ends.
+    ///
+    /// Waiting out the capture window would make "mac lock" feel like dictation
+    /// rather than a shortcut. Only a term that no longer term can extend
+    /// qualifies, so "next" still waits for a possible "next track".
+    func capturedTermResolvesNow(_ term: String) -> Bool {
+        guard case let .systemAction(set) = capturedAction else { return false }
+        guard case .matched = SystemActionMatcher.resolve(term, in: set, isComplete: false)
+        else { return false }
+        diagnostics.record(
+            category: .systemAction,
+            event: "coordinator.system_action_term_settled_early",
+            fields: ["character_count": String(term.count)])
+        return true
     }
 
     func startCommandCapture(localeID: String) {
@@ -335,6 +357,12 @@ extension YapOpsCoordinator {
         }
 
         cancelCaptureInitialSilence()
+
+        if !update.isFinal, capturedTermResolvesNow(capturedCommand) {
+            finishPassiveCapture()
+            return
+        }
+
         scheduleCaptureInactivity()
         if update.isFinal {
             finishPassiveCapture()

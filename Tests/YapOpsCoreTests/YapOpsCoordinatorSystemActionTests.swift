@@ -98,8 +98,55 @@ struct YapOpsCoordinatorSystemActionTests {
         }
         #expect(fixture.coordinator.isAgentConversationActive == false)
     }
-}
 
+    @Test func capture_WhenTermCannotGrow_RunsBeforeTheUtteranceEnds() async throws {
+        // .standard timing has a capture window measured in seconds; a quick
+        // action must not wait for it.
+        let fixture = try Fixture(timing: .standard, profiles: [try makeProfile()])
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("mac lock", isFinal: false)
+
+        await YapOpsCoordinatorTests().waitUntil(timeout: .milliseconds(500)) {
+            await fixture.systemActions.recordedActions() == [.lockScreen]
+        }
+    }
+
+    @Test func capture_WhenALongerTermIsReachable_WaitsForTheUtterance() async throws {
+        let profile = try WakeProfile(
+            wakePhrase: "mac",
+            action: .systemAction(try SystemActionSet(bindings: [
+                try SystemActionBinding(action: .nextTrack, phrases: ["next", "next track"]),
+            ])),
+            accent: .green)
+        let fixture = try Fixture(timing: .standard, profiles: [profile])
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("mac next", isFinal: false)
+        try await Task.sleep(for: .milliseconds(120))
+
+        // Still holding, because "next track" is reachable.
+        #expect(await fixture.systemActions.recordedActions().isEmpty)
+
+        fixture.speech.emit("mac next track", isFinal: false)
+
+        await YapOpsCoordinatorTests().waitUntil(timeout: .milliseconds(500)) {
+            await fixture.systemActions.recordedActions() == [.nextTrack]
+        }
+    }
+
+    @Test func capture_ForACommandProfile_StillWaitsForTheUtterance() async throws {
+        // Early dispatch belongs to system actions only; dictation must keep
+        // its full capture window.
+        let fixture = try Fixture(timing: .standard)
+        fixture.coordinator.setPassiveEnabled(true)
+
+        fixture.speech.emit("computer lock", isFinal: false)
+        try await Task.sleep(for: .milliseconds(120))
+
+        #expect(await fixture.runner.recordedTranscripts().isEmpty)
+    }
+}
 
 /// Collects every activation state the coordinator publishes.
 @MainActor
