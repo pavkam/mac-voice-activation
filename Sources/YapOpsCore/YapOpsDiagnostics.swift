@@ -17,6 +17,8 @@ public enum YapOpsDiagnosticCategory: String, Codable, Sendable {
     case speechRecognition = "speech_recognition"
     /// Direct command validation and execution.
     case command
+    /// macOS system-action matching and execution.
+    case systemAction = "system_action"
     /// Raw ACP connection and protocol behavior.
     case acp
     /// Agent turn and conversation orchestration.

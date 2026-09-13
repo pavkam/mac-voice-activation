@@ -73,14 +73,18 @@ struct ProfileSettingsEditor: View {
     @ViewBuilder
     private var targetEditor: some View {
         Picker("Target", selection: targetKind) {
-            Text("Command").tag(WakeProfileTargetKind.command)
-            Text("Agent").tag(WakeProfileTargetKind.agent)
+            ForEach(WakeProfileTargetKind.allCases, id: \.self) { kind in
+                Text(kind.title).tag(kind)
+            }
         }
         .pickerStyle(.segmented)
 
         switch profile.targetKind {
         case .command:
             commandEditor
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+        case .systemAction:
+            SystemActionSettingsView(profile: $profile)
                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
         case .agent:
             AgentHarnessSettingsView(profile: $profile)

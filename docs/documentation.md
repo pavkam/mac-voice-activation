@@ -44,8 +44,11 @@ are validated and launched.
 
 ## Shared terminology
 
-- A **profile** combines one wake phrase, one command or agent target, an accent,
-  an enabled state, and an optional push-to-talk shortcut.
+- A **profile** combines one wake phrase, one target — a command, a set of macOS
+  system actions, or an agent — an accent, an enabled state, and an optional
+  push-to-talk shortcut.
+- A **system action** is a macOS operation such as play/pause or lock screen,
+  invoked by speaking a bound term after the profile's wake phrase.
 - **Passive wake** is continuous on-device recognition used only to detect the
   enabled profiles' wake phrases.
 - A **capture** is one recognized utterance being collected for a profile or an

@@ -462,6 +462,10 @@ extension AppModel {
                     throw SettingsValidationError.workingDirectoryIsNotDirectory(
                         configuration.workingDirectory)
                 }
+            case .systemAction:
+                // System actions address macOS subsystems, not files, so there
+                // is no path to validate before saving.
+                continue
             }
         }
     }
@@ -516,7 +520,7 @@ extension AppModel {
                 guard case .agent(let oldConfiguration) = oldProfile.action else { return nil }
                 guard let newProfile = newProfilesByID[oldProfile.id] else { return oldProfile.id }
                 switch newProfile.action {
-                case .command:
+                case .command, .systemAction:
                     return oldProfile.id
                 case .agent(let newConfiguration):
                     let oldFingerprint = AgentProviderFingerprint.make(

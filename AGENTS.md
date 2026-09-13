@@ -15,8 +15,8 @@ prose; update the owning guide when behavior changes.
 YapOps is a native SwiftPM macOS 15 menu-bar app using Swift tools
 6.2, SwiftUI/AppKit, Apple Speech, Carbon hotkeys, Service Management, Keychain,
 and local ACP v1 providers. Wake phrases or per-profile push-to-talk capture a
-transcript, then either launch a direct executable or continue an ACP agent
-conversation.
+transcript, which launches a direct executable, performs the bound macOS system
+action, or continues an ACP agent conversation.
 
 There is no app server or YapOps account. Passive recognition is
 on-device only. Direct commands never use a shell. Provider authentication stays

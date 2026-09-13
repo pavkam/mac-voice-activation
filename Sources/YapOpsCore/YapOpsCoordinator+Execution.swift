@@ -110,6 +110,13 @@ extension YapOpsCoordinator {
                     }
                 }
             }
+        case .systemAction(let set):
+            activeAgentRunID = nil
+            startSystemAction(
+                set: set,
+                transcript: transcript,
+                profile: profile,
+                generation: generation)
         case .agent(let agentConfiguration):
             guard let agentInput, activeAgentInput?.id == agentInput.id else {
                 return

@@ -6,7 +6,17 @@ import YapOpsCore
 
 enum WakeProfileTargetKind: String, CaseIterable {
     case command
+    case systemAction
     case agent
+
+    /// The segmented-control label for this target.
+    var title: String {
+        switch self {
+        case .command: "Command"
+        case .systemAction: "System action"
+        case .agent: "Agent"
+        }
+    }
 }
 
 struct WakeProfileDraft: Equatable, Identifiable {
@@ -17,6 +27,7 @@ struct WakeProfileDraft: Equatable, Identifiable {
     var executablePath: String
     var commandArguments: ArgumentDraftCollection
     var agentHarness: AgentHarnessDraft
+    var systemActions: SystemActionSetDraft
     var targetKind: WakeProfileTargetKind
     var accent: WakeProfileAccent
     var isEnabled: Bool
@@ -58,6 +69,7 @@ struct WakeProfileDraft: Equatable, Identifiable {
         commandArguments = ArgumentDraftCollection(values: [urlTemplate])
         agentHarness = .empty(
             workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+        systemActions = .defaultValue
         targetKind = .command
         self.accent = accent
         self.isEnabled = isEnabled
@@ -73,6 +85,7 @@ struct WakeProfileDraft: Equatable, Identifiable {
         executablePath: String,
         argumentTemplates: [String],
         agentHarness: AgentHarnessDraft,
+        systemActions: SystemActionSetDraft = .defaultValue,
         targetKind: WakeProfileTargetKind,
         accent: WakeProfileAccent,
         isEnabled: Bool = true,
@@ -86,6 +99,7 @@ struct WakeProfileDraft: Equatable, Identifiable {
         self.executablePath = executablePath
         commandArguments = ArgumentDraftCollection(values: argumentTemplates)
         self.agentHarness = agentHarness
+        self.systemActions = systemActions
         self.targetKind = targetKind
         self.accent = accent
         self.isEnabled = isEnabled
@@ -108,13 +122,23 @@ struct WakeProfileDraft: Equatable, Identifiable {
             commandArguments = ArgumentDraftCollection(values: command.argumentTemplates)
             agentHarness = .empty(
                 workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+            systemActions = .defaultValue
             targetKind = .command
         case let .agent(configuration):
             executablePath = "/usr/bin/open"
             commandArguments = ArgumentDraftCollection(
                 values: ["https://www.google.com/search?q={urlText}"])
             agentHarness = AgentHarnessDraft(configuration: configuration)
+            systemActions = .defaultValue
             targetKind = .agent
+        case let .systemAction(set):
+            executablePath = "/usr/bin/open"
+            commandArguments = ArgumentDraftCollection(
+                values: ["https://www.google.com/search?q={urlText}"])
+            agentHarness = .empty(
+                workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+            systemActions = SystemActionSetDraft(set: set)
+            targetKind = .systemAction
         }
     }
 
@@ -139,6 +163,8 @@ struct WakeProfileDraft: Equatable, Identifiable {
             }) else {
                 throw WakeProfile.ValidationError.missingTranscriptPlaceholder
             }
+        case .systemAction:
+            action = .systemAction(try systemActions.validatedSet())
         case .agent:
             action = .agent(try agentHarness.validatedConfiguration())
         }

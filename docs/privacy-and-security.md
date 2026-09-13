@@ -43,6 +43,14 @@ command receives the recognized text, and an ACP provider runs with the current
 macOS user's access. Treat executable paths, working folders, custom URL schemes,
 and provider permission policies as trusted configuration.
 
+System-action targets are different in kind: they cannot be pointed at an
+executable at all. A profile selects from a fixed catalog, and each entry
+resolves to one built-in effect — a system-defined media key, a reserved
+keyboard shortcut, the screen saver bundle, or `/usr/bin/pmset` with a literal
+argument. Recognized speech chooses which catalog entry runs; it never becomes
+part of a path, an argument, or a key sequence. Actions that synthesize input
+require the Accessibility grant and refuse to run without it.
+
 ## What is persisted
 
 - `UserDefaults` stores application settings and encoded wake profiles. A

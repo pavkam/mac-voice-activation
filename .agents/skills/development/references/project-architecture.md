@@ -32,6 +32,10 @@ Tests/YapOpsAppTests/     App and adapter contracts
 - Wake-profile types: matching, validation, action, and hotkey identity.
 - `CommandTemplate`/`CommandRunner`: validated argument expansion and direct
   process execution.
+- `SystemAction`/`SystemActionSet`/`SystemActionMatcher`: the macOS action
+  catalog, a profile's term-to-action bindings, and the resolution that decides
+  whether recognized text names an action, could still become one, or names
+  none. `SystemActionPerforming` is the App-implemented boundary.
 - `ACPAgentRunner`, `ACPClientConnection`, `ACPProcessTransport`: cached ACP
   sessions, JSON-RPC turns, permissions, processes, and pipes.
 - `AgentRunEventDelivery`: ordered bounded transport-to-consumer delivery.
@@ -59,6 +63,7 @@ not add a manager or view model that merely forwards one concrete operation.
 ```text
 permission -> passive speech -> wake/push-to-talk -> capture
   -> command: validated argv -> direct Process -> passive speech
+  -> system action: term -> bound action -> macOS effect -> passive speech
   -> agent: ACP runner -> ordered events -> presentation/panel
             -> conversation speech -> follow-up or explicit end
 ```

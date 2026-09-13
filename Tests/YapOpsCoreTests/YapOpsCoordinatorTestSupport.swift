@@ -12,18 +12,21 @@ extension YapOpsCoordinatorTests {
         let speech = FakeSpeechSession()
         let runner = RecordingCommandRunner()
         let agentRunner: ControlledAgentRunner
+        let systemActions: RecordingSystemActionPerformer
         let coordinator: YapOpsCoordinator
 
         init(
             timing: ActivationTiming = .standard,
             profiles: [WakeProfile]? = nil,
             agentRunner: ControlledAgentRunner = ControlledAgentRunner(),
+            systemActions: RecordingSystemActionPerformer = RecordingSystemActionPerformer(),
             contextCapturer: any MacContextCapturing = EmptyMacContextCapturer(),
             terminalPhrases: @escaping () -> [String] = { AppPreferences.defaultTerminalPhrases },
             diagnostics: any YapOpsDiagnosticRecording = YapOpsDiagnostics.shared
         ) throws
         {
             self.agentRunner = agentRunner
+            self.systemActions = systemActions
             let template = try CommandTemplate(
                 executablePath: "/usr/bin/printf",
                 argumentTemplates: ["{text}"])
@@ -31,6 +34,7 @@ extension YapOpsCoordinatorTests {
                 speechSession: speech,
                 commandRunner: runner,
                 agentRunner: agentRunner,
+                systemActionPerformer: systemActions,
                 contextCapturer: contextCapturer,
                 configuration: {
                     if let profiles {
@@ -117,4 +121,26 @@ extension ActivationTiming {
         captureMaximum: .milliseconds(500),
         passiveRestart: .milliseconds(20),
         executionCooldown: .milliseconds(10))
+}
+
+
+/// Records performed actions and can be told to fail the next one.
+actor RecordingSystemActionPerformer: SystemActionPerforming {
+    private var performed: [SystemAction] = []
+    private var failure: (any Error)?
+
+    init(failure: (any Error)? = nil) {
+        self.failure = failure
+    }
+
+    func perform(_ action: SystemAction) async throws {
+        if let failure {
+            throw failure
+        }
+        performed.append(action)
+    }
+
+    func recordedActions() -> [SystemAction] {
+        performed
+    }
 }

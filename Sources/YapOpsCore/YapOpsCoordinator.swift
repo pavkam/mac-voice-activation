@@ -139,6 +139,7 @@ public final class YapOpsCoordinator {
     let speechSession: any SpeechSessionProtocol
     let commandRunner: any CommandRunning
     let agentRunner: any AgentHarnessRunning
+    let systemActionPerformer: any SystemActionPerforming
     let agentRunContinuity: @MainActor @Sendable (UUID) -> AgentRunContinuityRequest
     let macContextCapturer: any MacContextCapturing
     let configuration: () throws -> ActivationConfiguration
@@ -208,6 +209,7 @@ public final class YapOpsCoordinator {
     ///   - speechSession: Owns the current microphone recognition session.
     ///   - commandRunner: Executes direct-command profiles.
     ///   - agentRunner: Runs and caches ACP agent sessions.
+    ///   - systemActionPerformer: Performs macOS actions for system-action profiles.
     ///   - agentRunContinuity: Supplies exact consume-on-publication markers by profile.
     ///   - contextCapturer: Freezes bounded native context for admitted ACP turns.
     ///   - configuration: Supplies a fresh immutable settings snapshot when needed.
@@ -216,6 +218,7 @@ public final class YapOpsCoordinator {
         speechSession: any SpeechSessionProtocol,
         commandRunner: any CommandRunning,
         agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
+        systemActionPerformer: any SystemActionPerforming = UnavailableSystemActionPerformer(),
         agentRunContinuity: @escaping @MainActor @Sendable (UUID) ->
             AgentRunContinuityRequest = { _ in AgentRunContinuityRequest() },
         contextCapturer: any MacContextCapturing = EmptyMacContextCapturer(),
@@ -227,6 +230,7 @@ public final class YapOpsCoordinator {
             speechSession: speechSession,
             commandRunner: commandRunner,
             agentRunner: agentRunner,
+            systemActionPerformer: systemActionPerformer,
             agentRunContinuity: agentRunContinuity,
             contextCapturer: contextCapturer,
             configuration: configuration,
@@ -239,6 +243,7 @@ public final class YapOpsCoordinator {
         speechSession: any SpeechSessionProtocol,
         commandRunner: any CommandRunning,
         agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
+        systemActionPerformer: any SystemActionPerforming = UnavailableSystemActionPerformer(),
         agentRunContinuity: @escaping @MainActor @Sendable (UUID) ->
             AgentRunContinuityRequest = { _ in AgentRunContinuityRequest() },
         contextCapturer: any MacContextCapturing = EmptyMacContextCapturer(),
@@ -249,6 +254,7 @@ public final class YapOpsCoordinator {
     ) {
         self.speechSession = speechSession
         self.commandRunner = commandRunner
+        self.systemActionPerformer = systemActionPerformer
         self.agentRunner = agentRunner
         self.agentRunContinuity = agentRunContinuity
         self.macContextCapturer = contextCapturer
@@ -610,6 +616,7 @@ extension WakeProfileAction {
         switch self {
         case .command: "command"
         case .agent: "agent"
+        case .systemAction: "system_action"
         }
     }
 }
@@ -662,6 +669,7 @@ extension AgentRunEvent {
 enum CoordinatorError: Error, LocalizedError {
     case profileUnavailable
     case actionUnavailable
+    case systemActionNotRecognized(String)
 
     var errorDescription: String? {
         switch self {
@@ -669,6 +677,10 @@ enum CoordinatorError: Error, LocalizedError {
             "The push-to-talk profile is no longer available."
         case .actionUnavailable:
             "The captured voice action is no longer available."
+        case .systemActionNotRecognized(let term):
+            term.isEmpty
+                ? "No system action was named."
+                : "“\(term)” is not a system action in this profile."
         }
     }
 }

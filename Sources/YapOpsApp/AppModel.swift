@@ -111,6 +111,7 @@ final class AppModel {
     @ObservationIgnored let preferences: AppPreferences
     @ObservationIgnored let speechSession: any SpeechSessionProtocol
     @ObservationIgnored let commandRunner: any CommandRunning
+    @ObservationIgnored let systemActionPerformer: any SystemActionPerforming
     @ObservationIgnored let agentRunner: any AgentHarnessRunning
     @ObservationIgnored let continuityStore: any AgentContinuityStoring
     @ObservationIgnored let isExecutableFile: @MainActor (String) -> Bool
@@ -160,6 +161,7 @@ final class AppModel {
         speechSession: speechSession,
         commandRunner: commandRunner,
         agentRunner: agentRunner,
+        systemActionPerformer: systemActionPerformer,
         agentRunContinuity: { [weak self] profileID in
             self?.agentRunContinuityRequest(for: profileID) ?? AgentRunContinuityRequest()
         },
@@ -186,6 +188,7 @@ final class AppModel {
         shortcut: any PushToTalkShortcutManaging = PushToTalkShortcut(),
         speechSession: any SpeechSessionProtocol = AppleSpeechSession(),
         commandRunner: any CommandRunning = CommandRunner(),
+        systemActionPerformer: any SystemActionPerforming = MacSystemActionPerformer(),
         agentRunner: any AgentHarnessRunning = ACPAgentRunner(),
         continuityStore: any AgentContinuityStoring = InMemoryAgentContinuityStore(),
         permissionRequest: @escaping @MainActor () async -> Bool = SpeechPermissions.request,
@@ -236,6 +239,7 @@ final class AppModel {
         self.shortcut = shortcut
         self.speechSession = speechSession
         self.commandRunner = commandRunner
+        self.systemActionPerformer = systemActionPerformer
         self.agentRunner = agentRunner
         self.continuityStore = continuityStore
         self.isExecutableFile = isExecutableFile

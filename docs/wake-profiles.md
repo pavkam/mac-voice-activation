@@ -5,9 +5,9 @@ SPDX-License-Identifier: MIT
 
 # Wake profiles
 
-Use profiles to route different wake phrases and shortcuts to different command
-or agent targets. This guide owns wake matching, passive listening,
-push-to-talk, capture timing, and spoken capture cancellation.
+Use profiles to route different wake phrases and shortcuts to different command,
+system-action, or agent targets. This guide owns wake matching, passive
+listening, push-to-talk, capture timing, and spoken capture cancellation.
 
 ## What a profile controls
 
@@ -15,7 +15,7 @@ Every profile combines:
 
 - a user-facing name, SF Symbol or emoji, and accent color;
 - one wake phrase;
-- one command or agent target;
+- one target: a command, a set of macOS system actions, or an agent;
 - an enabled state for passive wake; and
 - an optional global push-to-talk shortcut; and
 - an inherited, disabled, or explicit reply voice.
@@ -38,6 +38,50 @@ Phrases must contain at least one letter or number and must be unique after the
 same canonical normalization. Saved enabled phrases are supplied to Apple
 Speech as contextual vocabulary, which helps intentional names and uncommon
 spellings without changing the match rules.
+
+## Perform a macOS action
+
+A **System action** profile treats the words after its wake phrase as the name
+of an action rather than as text to pass along. With a profile whose phrase is
+`mac`, saying `mac play` toggles playback and `mac lock` locks the screen.
+
+The profile is the group. One profile holds as many bindings as you want, each
+pairing one macOS action with the terms that invoke it, so a single `mac`
+profile can cover transport, volume, and locking. Create a second profile with
+its own phrase when you want a separate group — for example a `music` profile
+bound only to playback.
+
+Each row binds one action to comma-separated terms. Terms are matched with the
+same normalization as wake phrases: case, accents, width, and surrounding
+punctuation are ignored. A term may not be bound to two actions in the same
+profile.
+
+The available actions are:
+
+| Group | Actions |
+| --- | --- |
+| Media | Play or pause, next track, previous track |
+| Volume | Volume up, volume down, mute or unmute |
+| Display | Brightness up, brightness down |
+| Session | Lock screen, start screen saver, sleep display, sleep |
+| Windows | Mission Control, application windows, show desktop |
+
+A new system-action profile starts with transport, volume, and locking bound.
+Sleeping, brightness, and window exposure are available but not bound by
+default, so a misheard term cannot suspend or darken the machine.
+
+When one term is a prefix of another — `next` and `next track` — the profile
+waits for the utterance to finish before deciding. Terms that cannot grow act as
+soon as they are recognized.
+
+Everything except the screen saver, display sleep, and system sleep works by
+synthesizing the key the action is bound to, which requires Accessibility. Grant
+it in **Settings… > General > Mac context**; without it those actions report the
+missing permission instead of failing silently. Brightness keys apply to the
+built-in display.
+
+A term the profile does not recognize reports itself — `"teleport" is not a
+system action in this profile.` — rather than silently doing nothing.
 
 ## Enable or pause passive wake
 

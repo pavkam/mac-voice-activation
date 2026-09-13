@@ -66,6 +66,12 @@ ten-attempt poll costs no wall-clock time and cannot flake. `SettingsAutosave`
 and `MacContextAccessPoller` both work this way; copy whichever is closer rather
 than inventing a third shape.
 
+Do not poll for a state the production code passes through. A failed execution
+returns to listening after the cooldown, so a poll for `.failed` sees it only if
+it lands inside that window — such a test passes alone and fails under full-suite
+main-actor load. Record the transitions through the published callback and assert
+the expected one appears.
+
 Wall-clock waits are acceptable only when elapsed time or rendered transition
 progress is the behavior. Keep them short, bound the whole test, and assert the
 settled state. Never add a sleep merely to let an unknown race "finish."

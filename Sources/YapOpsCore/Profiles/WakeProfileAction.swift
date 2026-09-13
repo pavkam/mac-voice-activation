@@ -9,4 +9,6 @@ public enum WakeProfileAction: Codable, Equatable, Sendable {
     case command(CommandTemplate)
     /// Submits the recognized transcript to an ACP-compatible agent harness.
     case agent(AgentHarnessConfiguration)
+    /// Performs the macOS action bound to the recognized term.
+    case systemAction(SystemActionSet)
 }
