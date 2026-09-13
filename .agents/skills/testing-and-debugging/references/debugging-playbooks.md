@@ -112,6 +112,25 @@ fixture missed its second pulse in CI. Isolate the mode-pumping test, release
 its fake clock from inside event tracking, and assert the delivery's actual
 run-loop mode. A bounded timeout detects failure; it is not a latency benchmark.
 
+If the suite stops with an idle main run loop, idle libdispatch workers, live
+AppKit and CoreAudio threads, and nothing burning CPU, no test is slow: one is
+parked on a signal an owner sends on only one path. A cancelled caller skips
+the slow path and still owes every signal it would have sent.
+`ManualACPAgentRunnerClock` reported an entered sleep only when it parked, and
+`ACPAgentProcessExitLatch.wait()` returned `.cancelled` without running its
+cancelled-wait hook; both were entered already cancelled from the `raceDrain`
+and prompt-settlement groups. Expect this more than once per call path: report
+entry you were asked to observe, retain it for an observer that has not arrived
+yet, and let a cancelled wait settle through the one cancellation path.
+
+Neither `.timeLimit` nor `group.cancelAll()` can retire a wait parked on an
+unresumed `withCheckedContinuation`, so a suite without its own bound stops
+rather than fails; bound the observation inside the test. To name the culprit,
+loop the suite and diff started against finished test names, running several
+suites at once from a *copy* of the bundle: contention found this in tens of
+runs after twelve clean ones, and rebuilding the binary under a live soak
+resurrects the old code path as phantom failures.
+
 ## macOS state boundaries
 
 When a file selection has no resource links, inspect whether the selected AX row

@@ -173,6 +173,7 @@ actor ManualACPAgentRunnerClock: ACPAgentRunnerClock {
 
     private var waiters: [UUID: Waiter] = [:]
     private var waitingObservers: [CheckedContinuation<Void, Never>] = []
+    private var unobservedSleepEntries = 0
     private var durations: [Duration] = []
 
     func sleep(for duration: Duration) async {
@@ -180,16 +181,16 @@ actor ManualACPAgentRunnerClock: ACPAgentRunnerClock {
         durations.append(duration)
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                if Task.isCancelled {
+                guard !Task.isCancelled else {
+                    // An already-cancelled sleep never parks, but it did enter.
+                    // Callers of `waitUntilSleeping()` are observing the entry,
+                    // not the park, so this path owes them the same report.
+                    recordSleepEntry()
                     continuation.resume()
-                } else {
-                    waiters[id] = Waiter(continuation: continuation)
-                    let observers = waitingObservers
-                    waitingObservers.removeAll()
-                    for observer in observers {
-                        observer.resume()
-                    }
+                    return
                 }
+                waiters[id] = Waiter(continuation: continuation)
+                recordSleepEntry()
             }
         } onCancel: {
             Task { await self.cancel(id: id) }
@@ -197,12 +198,30 @@ actor ManualACPAgentRunnerClock: ACPAgentRunnerClock {
     }
 
     func waitUntilSleeping() async {
+        if unobservedSleepEntries > 0 {
+            unobservedSleepEntries -= 1
+            return
+        }
         guard waiters.isEmpty else {
             return
         }
         await withCheckedContinuation { continuation in
             waitingObservers.append(continuation)
         }
+    }
+
+    /// Hands one sleep entry to whoever is already waiting, or retains it for
+    /// the next observer so an entry can never be missed by arriving early.
+    private func recordSleepEntry() {
+        guard waitingObservers.isEmpty else {
+            let observers = waitingObservers
+            waitingObservers.removeAll()
+            for observer in observers {
+                observer.resume()
+            }
+            return
+        }
+        unobservedSleepEntries += 1
     }
 
     func advance() {
@@ -317,4 +336,85 @@ actor RunnerCompletionObservation {
 
 @Suite(.serialized)
 struct ACPAgentRunnerTests {
+}
+
+extension ACPAgentRunnerTests {
+    /// `raceDrain` adds its clock task to a group whose parent may already be
+    /// cancelled, so that task enters `sleep(for:)` with cancellation already
+    /// observed and never parks. The clock still owes that entry to whoever is
+    /// observing it; when it did not, `waitUntilSleeping()` waited for a park
+    /// that was never going to happen and the whole suite stopped.
+    @Test func manualClock_WhenSleepEntersAlreadyCancelled_StillReportsTheEnteredSleep()
+        async throws
+    {
+        let clock = ManualACPAgentRunnerClock()
+        let entry = RunnerPromptSettleCancellationGate()
+        let sleeping = Task {
+            await entry.pause()
+            await clock.sleep(for: .seconds(1))
+        }
+
+        // Retire the sleeper while it is held short of the clock, so the call
+        // below is guaranteed to enter `sleep(for:)` already cancelled.
+        await entry.waitUntilPaused()
+        sleeping.cancel()
+        await entry.open()
+        _ = await sleeping.value
+
+        #expect(await clock.observedDurations() == [.seconds(1)])
+        #expect(await clock.isSleeping() == false)
+
+        // `waitUntilSleeping()` parks on a continuation that cancellation cannot
+        // reach, so a regression hangs the run instead of failing it: neither
+        // `.timeLimit` nor a task group can retire this wait. Bound the
+        // observation so the contract break is reported rather than waited out.
+        let completion = RunnerCompletionObservation()
+        let observation = Task {
+            await clock.waitUntilSleeping()
+            await completion.complete()
+        }
+        defer { observation.cancel() }
+        for _ in 0..<100 {
+            if await completion.completed() { break }
+            try await ContinuousClock().sleep(for: .milliseconds(50))
+        }
+
+        #expect(
+            await completion.completed(),
+            "The entered sleep was never reported to its observer.")
+    }
+
+    /// The same ownership rule one boundary further in. `processExitWasObserved
+    /// DuringPromptSettlement` cancels its group as soon as settlement wins, so
+    /// the exit waiter can reach `wait()` with cancellation already observed.
+    /// That return is still a cancelled wait and still owes
+    /// `beforeCancelledWaitReturns`, which is the only signal a caller has that
+    /// the cancelled path ran.
+    @Test func exitLatch_WhenWaitEntersAlreadyCancelled_StillRunsTheCancelledWaitHook()
+        async throws
+    {
+        let hook = RunnerCompletionObservation()
+        let latch = ACPAgentProcessExitLatch(
+            beforeCancelledWaitReturns: { await hook.complete() })
+        let entry = RunnerPromptSettleCancellationGate()
+        let waiting = Task {
+            await entry.pause()
+            return await latch.wait()
+        }
+
+        // Retire the waiter before it reaches the latch, so `wait()` is entered
+        // with cancellation already observed.
+        await entry.waitUntilPaused()
+        waiting.cancel()
+        await entry.open()
+        let result = await waiting.value
+
+        guard case .cancelled = result else {
+            Issue.record("Expected a cancelled wait, got \(result)")
+            return
+        }
+        #expect(
+            await hook.completed(),
+            "A cancelled wait returned without running its cancelled-wait hook.")
+    }
 }

@@ -196,13 +196,17 @@ actor ACPAgentProcessExitLatch {
         let id = UUID()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                if wasResolved {
+                guard !wasResolved else {
                     continuation.resume(returning: .processExited)
-                } else if Task.isCancelled {
-                    continuation.resume(returning: .cancelled)
-                } else {
-                    waiters[id] = continuation
+                    return
                 }
+                // A wait entered under cancellation parks like any other, so
+                // its cancellation settles through `cancelWaiter` and runs the
+                // cancelled-wait hook exactly once. Returning `.cancelled`
+                // straight from here would skip that hook, leaving a caller
+                // that observes the cancelled path waiting on a signal this
+                // latch had already decided never to send.
+                waiters[id] = continuation
             }
         } onCancel: {
             Task { await self.cancelWaiter(id: id) }
