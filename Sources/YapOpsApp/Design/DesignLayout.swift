@@ -40,6 +40,9 @@ extension Design {
         /// Recording orb before any words arrive.
         static let orbIdle: CGFloat = 92
         /// Panel header glyph and button slot.
+        /// Caps a feedback card's failure reason so a long message wraps
+        /// to its second line instead of stretching the card off screen.
+        static let feedbackDetailWidth: CGFloat = 268
         static let glyphSlot: CGFloat = 22
         /// Artifact preview.
         static let artifactPreview: CGFloat = 128

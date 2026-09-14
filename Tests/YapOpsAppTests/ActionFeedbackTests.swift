@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alexandru Ciobanu (alex+git@ciobanu.org)
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Testing
 @testable import YapOpsApp
 @testable import YapOpsCore
@@ -123,7 +124,12 @@ final class RecordingActionFeedbackDisplay: ActionFeedbackDisplaying {
     private(set) var shown: [ActionFeedbackPresentation] = []
     private(set) var hideCount = 0
 
-    func show(_ presentation: ActionFeedbackPresentation) { shown.append(presentation) }
+    private(set) var handoffs: [RecordingOverlayHandoff?] = []
+
+    func show(_ presentation: ActionFeedbackPresentation, from handoff: RecordingOverlayHandoff?) {
+        shown.append(presentation)
+        handoffs.append(handoff)
+    }
     func hide() { hideCount += 1 }
 }
 
@@ -169,6 +175,20 @@ struct AppModelActionFeedbackWiringTests {
 
         #expect(fixture.actionFeedback.shown.count == 1)
         #expect(fixture.actionFeedback.shown.first?.title == SystemAction.lockScreen.title)
+    }
+
+    @Test func firstMoment_CarriesTheOverlayHandoffSoItCanGrowFromIt() async throws {
+        let fixture = try AppModelTests.Fixture()
+        await fixture.model.start()
+        // What AppModel captures when execution begins while the orb is up.
+        let handoff = RecordingOverlayHandoff(
+            visibleScreenFrame: NSRect(x: 0, y: 0, width: 1_440, height: 900),
+            sourceFrame: NSRect(x: 657, y: 42, width: 126, height: 118))
+        fixture.model.pendingAgentHandoff = handoff
+
+        fixture.model.coordinator.onActionFeedback?(.systemActionSucceeded(.lockScreen))
+
+        #expect(fixture.actionFeedback.handoffs.first ?? nil == handoff)
     }
 
     @Test func newCapture_ClearsAStillRunningCommandsSurface() async throws {

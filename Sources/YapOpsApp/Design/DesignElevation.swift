@@ -24,6 +24,8 @@ extension Design {
         static let statusDot = (radius: CGFloat(4), y: CGFloat(0), alpha: 0.55)
         /// The app mark's waveform bars. The only black shadow in the app.
         static let markBars = (radius: CGFloat(2), y: CGFloat(1), alpha: 0.18)
+        /// Lifts the action-feedback card off whatever it is floating over.
+        static let feedbackCard = (radius: CGFloat(14), y: CGFloat(6), alpha: 0.22)
     }
 
     /// Vibrancy tiers.

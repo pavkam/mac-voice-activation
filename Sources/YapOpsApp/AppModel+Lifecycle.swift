@@ -224,7 +224,11 @@ extension AppModel {
             self?.handleAgentRunLifecycleEvent(event)
         }
         coordinator.onActionFeedback = { [weak self] event in
-            self?.actionFeedbackPresenter.handle(event)
+            guard let self else { return }
+            // The same handoff the agent panel would have used. Only one of an
+            // agent, a command or a system action runs per execution, so
+            // reading it here cannot take it from a conversation.
+            self.actionFeedbackPresenter.handle(event, from: self.pendingAgentHandoff)
         }
         coordinator.onAgentSpeechCancellation = { [weak self] in
             self?.diagnostics.record(

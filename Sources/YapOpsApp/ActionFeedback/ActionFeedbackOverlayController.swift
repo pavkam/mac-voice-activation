@@ -17,7 +17,7 @@ final class ActionFeedbackOverlayController: ActionFeedbackDisplaying {
 
     init() {
         panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: ActionFeedbackOverlayLayout.size),
+            contentRect: NSRect(origin: .zero, size: ActionFeedbackOverlayLayout.canvasSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)
@@ -34,7 +34,17 @@ final class ActionFeedbackOverlayController: ActionFeedbackDisplaying {
         panel.contentView = NSHostingView(rootView: ActionFeedbackOverlayView(model: model))
     }
 
-    func show(_ presentation: ActionFeedbackPresentation) {
+    /// Shows one moment, growing out of the recording overlay when the surface
+    /// is arriving for the first time.
+    ///
+    /// - Parameters:
+    ///   - presentation: What to show.
+    ///   - handoff: Where the recording overlay just was. Used only when the
+    ///     panel is not already on screen: an outcome replacing a running
+    ///     command keeps the frame it already settled into, because the card
+    ///     is the same object changing state rather than a new one arriving.
+    func show(_ presentation: ActionFeedbackPresentation, from handoff: RecordingOverlayHandoff?) {
+        let wasVisible = panel.isVisible
         YapOpsDiagnostics.shared.record(
             category: .ui,
             event: "action_feedback.shown",
@@ -42,16 +52,19 @@ final class ActionFeedbackOverlayController: ActionFeedbackDisplaying {
             fields: [
                 "tone": String(describing: presentation.tone),
                 "has_detail": String(presentation.detail != nil),
+                "was_visible": String(wasVisible),
+                "has_handoff": String(handoff != nil),
             ])
         model.presentation = presentation
-        if let visibleFrame = activeScreenVisibleFrame() {
-            panel.setFrame(
-                ActionFeedbackOverlayLayout.frame(
-                    showsDetail: presentation.detail != nil,
-                    in: visibleFrame),
-                display: true)
-        }
+        guard !wasVisible else { return }
+
+        let visibleFrame =
+            handoff?.visibleScreenFrame ?? activeScreenVisibleFrame()
+            ?? NSRect(origin: .zero, size: ActionFeedbackOverlayLayout.canvasSize)
+        let targetFrame = ActionFeedbackOverlayLayout.frame(in: visibleFrame)
+        panel.setFrame(handoff?.sourceFrame ?? targetFrame, display: true)
         panel.orderFrontRegardless()
+        animate(to: targetFrame)
     }
 
     func hide() {
@@ -64,6 +77,18 @@ final class ActionFeedbackOverlayController: ActionFeedbackDisplaying {
         panel.orderOut(nil)
     }
 
+    private func animate(to frame: NSRect) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            panel.setFrame(frame, display: true)
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = ActionFeedbackOverlayMotion.morphDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }
+    }
+
     private func activeScreenVisibleFrame() -> NSRect? {
         let mouseLocation = NSEvent.mouseLocation
         let screen =
@@ -72,4 +97,10 @@ final class ActionFeedbackOverlayController: ActionFeedbackDisplaying {
             } ?? NSScreen.main
         return screen?.visibleFrame
     }
+}
+
+/// The one duration the panel frame and the card's own transition share, so
+/// the window and its contents settle together rather than in sequence.
+enum ActionFeedbackOverlayMotion {
+    static let morphDuration: TimeInterval = 0.30
 }

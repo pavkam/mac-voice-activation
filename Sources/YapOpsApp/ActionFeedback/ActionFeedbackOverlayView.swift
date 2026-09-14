@@ -9,6 +9,9 @@ import SwiftUI
 /// acknowledgement rather than a notification: nothing here is interactive,
 /// because the surface leaves on its own and a control the user has two
 /// seconds to find is a control that should not exist.
+///
+/// The card sizes itself to its content and centres in the panel, so it reads
+/// as a settled object rather than a box with a symbol parked at one end.
 struct ActionFeedbackOverlayView: View {
     @Bindable var model: ActionFeedbackOverlayModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -16,7 +19,7 @@ struct ActionFeedbackOverlayView: View {
     var body: some View {
         ZStack {
             if let presentation = model.presentation {
-                content(for: presentation)
+                card(for: presentation)
                     .transition(transition)
             }
         }
@@ -24,8 +27,8 @@ struct ActionFeedbackOverlayView: View {
         .animation(animation, value: model.presentation)
     }
 
-    private func content(for presentation: ActionFeedbackPresentation) -> some View {
-        HStack(spacing: Design.Space.overlayGutter) {
+    private func card(for presentation: ActionFeedbackPresentation) -> some View {
+        HStack(spacing: Design.Space.card) {
             symbol(for: presentation)
 
             VStack(alignment: .leading, spacing: Design.Space.hairline) {
@@ -37,29 +40,39 @@ struct ActionFeedbackOverlayView: View {
                         .font(Design.Text.statusDetail)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                        .frame(maxWidth: Design.Layout.feedbackDetailWidth, alignment: .leading)
                 }
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, Design.Space.overlayGutter)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(background)
+        .fixedSize()
+        .padding(.leading, Design.Space.small)
+        .padding(.trailing, Design.Space.panelContent)
+        .padding(.vertical, Design.Space.small)
+        .background(background(for: presentation))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.accessibilityLabel)
     }
 
     private func symbol(for presentation: ActionFeedbackPresentation) -> some View {
-        ZStack {
+        let tint = tint(for: presentation.tone)
+        return ZStack {
             Circle()
-                .fill(tint(for: presentation.tone).opacity(Design.Alpha.accentBadge))
+                .fill(tint.opacity(Design.Alpha.accentBadge))
+                .overlay {
+                    Circle()
+                        .strokeBorder(
+                            tint.opacity(Design.Alpha.accentBorder),
+                            lineWidth: Design.Border.hairline)
+                }
             Image(systemName: presentation.symbolName)
                 .font(Design.Text.rowTitle)
-                .foregroundStyle(tint(for: presentation.tone))
+                .foregroundStyle(tint)
                 // The running state needs a signal that is not colour, and one
                 // that stops when the work does.
                 .symbolEffect(.pulse, isActive: presentation.tone == .working && !reduceMotion)
+                .contentTransition(.symbolEffect(.replace))
         }
-        .frame(width: Design.Layout.orbIdle, height: Design.Layout.orbIdle)
+        .frame(width: Design.Layout.iconBadge, height: Design.Layout.iconBadge)
     }
 
     private func tint(for tone: ActionFeedbackPresentation.Tone) -> Color {
@@ -70,24 +83,34 @@ struct ActionFeedbackOverlayView: View {
         }
     }
 
-    private var background: some View {
-        RoundedRectangle(cornerRadius: Design.Radius.capsule, style: .continuous)
+    private func background(for presentation: ActionFeedbackPresentation) -> some View {
+        let shape = RoundedRectangle(
+            cornerRadius: presentation.detail == nil
+                ? Design.Radius.capsule
+                : Design.Radius.panelExpanded,
+            style: .continuous)
+        return shape
             .fill(Design.Material.floating)
             .overlay {
-                RoundedRectangle(cornerRadius: Design.Radius.capsule, style: .continuous)
-                    .strokeBorder(
-                        .white.opacity(Design.Alpha.hairline),
-                        lineWidth: Design.Border.hairline)
+                shape.strokeBorder(
+                    .white.opacity(Design.Alpha.hairlineCard),
+                    lineWidth: Design.Border.hairline)
             }
+            .shadow(
+                color: .black.opacity(Design.Glow.feedbackCard.alpha),
+                radius: Design.Glow.feedbackCard.radius,
+                y: Design.Glow.feedbackCard.y)
     }
 
     private var animation: Animation {
-        reduceMotion ? Design.Motion.quick : Design.Motion.snappy
+        reduceMotion ? Design.Motion.quick : Design.Motion.dock
     }
 
+    /// The card grows out of where the recording orb was rather than sliding
+    /// in from somewhere the interaction never was.
     private var transition: AnyTransition {
         reduceMotion
             ? .opacity
-            : .move(edge: .bottom).combined(with: .opacity)
+            : .scale(scale: 0.86, anchor: .center).combined(with: .opacity)
     }
 }

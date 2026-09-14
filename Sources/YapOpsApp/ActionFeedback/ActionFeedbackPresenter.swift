@@ -6,7 +6,9 @@ import YapOpsCore
 /// Shows a command or system action's progress, then takes it away.
 @MainActor
 protocol ActionFeedbackDisplaying: AnyObject {
-    func show(_ presentation: ActionFeedbackPresentation)
+    /// - Parameter handoff: Where the recording overlay just was, so the
+    ///   surface can grow out of it rather than appear beside it.
+    func show(_ presentation: ActionFeedbackPresentation, from handoff: RecordingOverlayHandoff?)
     func hide()
 }
 
@@ -42,12 +44,17 @@ final class ActionFeedbackPresenter {
     }
 
     /// Presents one coordinator event.
-    func handle(_ event: ActionFeedbackEvent) {
+    ///
+    /// - Parameters:
+    ///   - event: What the coordinator just reported.
+    ///   - handoff: Where the recording overlay just was, carried through so
+    ///     the surface can continue from it.
+    func handle(_ event: ActionFeedbackEvent, from handoff: RecordingOverlayHandoff? = nil) {
         let next = ActionFeedbackPresentation.next(after: current, event: event)
         current = next
         dismissal?.cancel()
         dismissal = nil
-        display.show(next)
+        display.show(next, from: handoff)
 
         guard let dwell = next.dismissAfter else { return }
         dismissal = Task { [weak self, sleep] in

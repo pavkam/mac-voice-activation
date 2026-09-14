@@ -91,8 +91,11 @@ extension YapOpsCoordinator {
             ])
         executionTask = nil
         executingAction = nil
-        state = .failed(error.localizedDescription)
+        // Ahead of the state change, which retires the recording overlay's
+        // handoff — the success path reports first too, and a failure should
+        // arrive the same way rather than skipping the transition.
         onActionFeedback?(.systemActionFailed(action, reason: error.localizedDescription))
+        state = .failed(error.localizedDescription)
         resumePassiveAfterCooldown()
     }
 }
