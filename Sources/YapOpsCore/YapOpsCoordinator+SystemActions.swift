@@ -74,6 +74,7 @@ extension YapOpsCoordinator {
             ])
         executionTask = nil
         executingAction = nil
+        onActionFeedback?(.systemActionSucceeded(action))
         resumePassiveAfterCooldown()
     }
 
@@ -91,6 +92,7 @@ extension YapOpsCoordinator {
         executionTask = nil
         executingAction = nil
         state = .failed(error.localizedDescription)
+        onActionFeedback?(.systemActionFailed(action, reason: error.localizedDescription))
         resumePassiveAfterCooldown()
     }
 }

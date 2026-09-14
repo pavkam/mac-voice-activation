@@ -131,6 +131,9 @@ public final class YapOpsCoordinator {
     public var onActiveProfileChange: ((WakeProfile?) -> Void)?
     /// Delivers ordered agent conversation lifecycle events.
     public var onAgentRunEvent: ((AgentRunLifecycleEvent) -> Void)?
+
+    /// Reports command and system-action progress for transient feedback.
+    public var onActionFeedback: ((ActionFeedbackEvent) -> Void)?
     /// Requests immediate cancellation of queued or playing agent speech.
     public var onAgentSpeechCancellation: (() -> Void)?
     /// Offers spoken conversation commands to the presentation layer before submission.

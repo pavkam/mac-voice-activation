@@ -95,6 +95,7 @@ extension YapOpsCoordinator {
         switch action {
         case .command(let template):
             activeAgentRunID = nil
+            onActionFeedback?(.commandStarted(title: profile.wakePhrase))
             let mainRunLoopScheduler = MainRunLoopScheduler.shared
             executionTask = Task.detached(priority: .userInitiated) {
                 [weak self, commandRunner] in
@@ -321,6 +322,7 @@ extension YapOpsCoordinator {
             fields: ["generation": String(generation)])
         executionTask = nil
         executingAction = nil
+        onActionFeedback?(.commandSucceeded)
         resumePassiveAfterCooldown()
     }
 
@@ -337,6 +339,7 @@ extension YapOpsCoordinator {
         executionTask = nil
         executingAction = nil
         state = .failed(error.localizedDescription)
+        onActionFeedback?(.commandFailed(reason: error.localizedDescription))
         resumePassiveAfterCooldown()
     }
 
