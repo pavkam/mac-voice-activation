@@ -53,14 +53,16 @@ extension YapOpsCoordinatorTests {
 
     /// Polls until `condition` holds, failing if it does not inside `timeout`.
     ///
-    /// Callers pass a deliberately tight budget when the deadline *is* the
-    /// assertion — that a settled term acts without waiting out a capture
-    /// window measured in seconds — so the timeout has to keep meaning what
-    /// it says. What it must not measure is this loop's own starvation. The
-    /// suite runs in parallel, and under a sanitizer a 10ms poll sleep
-    /// routinely overshoots by an order of magnitude, which leaves a tight
-    /// budget only a couple of samples and lets the condition come true
-    /// unobserved.
+    /// Some callers pass a deliberately tight budget, so the timeout has to
+    /// keep meaning what it says. What it must not measure is this loop's own
+    /// starvation. The suite runs in parallel, and under a sanitizer a 10ms
+    /// poll sleep routinely overshoots by an order of magnitude, which leaves
+    /// a tight budget only a couple of samples and lets the condition come
+    /// true unobserved.
+    ///
+    /// Prefer a handshake — see `RecordingSystemActionPerformer.waitForActions`
+    /// — when the component can signal directly; polling is the fallback for
+    /// state that publishes no such edge.
     ///
     /// So time spent descheduled is given back to the deadline: it is time
     /// the test runner took, not time the system under test took. A system
@@ -101,26 +103,6 @@ extension YapOpsCoordinatorTests {
 }
 
 extension ActivationTiming {
-    /// `.standard` handoff and cooldown, with capture windows long enough that
-    /// waiting one out is unmistakable.
-    ///
-    /// Early dispatch is the claim that a settled term acts *without* waiting
-    /// for the capture window. Asserting that against `.standard` means
-    /// separating "acted at once" from "waited out capture" by 500ms against
-    /// 1.5s, and the whole suite runs in parallel under a sanitizer where a
-    /// sleep dilates by an order of magnitude — so that budget ends up
-    /// measuring runner scheduling, not the coordinator. Stretching the window
-    /// to a minute makes the two outcomes differ by milliseconds against tens
-    /// of seconds, which no dilation can blur, and lets the tests use the
-    /// ordinary generous timeout.
-    static let longCapture = ActivationTiming(
-        wakeHandoffDelay: .milliseconds(350),
-        captureInitialSilence: .seconds(60),
-        captureInactivity: .seconds(60),
-        captureMaximum: .seconds(120),
-        passiveRestart: .seconds(1),
-        executionCooldown: .milliseconds(250))
-
     static let fast = ActivationTiming(
         wakeHandoffDelay: .milliseconds(5),
         captureInitialSilence: .milliseconds(200),
