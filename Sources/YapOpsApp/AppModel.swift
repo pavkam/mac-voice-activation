@@ -121,6 +121,7 @@ final class AppModel {
     @ObservationIgnored let macContextCapturer: ConfigurableMacContextCapturer
     @ObservationIgnored let shortcut: any PushToTalkShortcutManaging
     @ObservationIgnored let overlayPresenter: RecordingOverlayPresenter
+    @ObservationIgnored let actionFeedbackPresenter: ActionFeedbackPresenter
     @ObservationIgnored var agentRunPresentation: AgentRunPresentation
     @ObservationIgnored let agentSessionPresentationRegistry: AgentSessionPresentationRegistry
     @ObservationIgnored let agentSessionEventScheduler: any AgentSessionEventScheduling
@@ -183,6 +184,7 @@ final class AppModel {
     init(
         preferences: AppPreferences = AppPreferences(),
         recordingOverlay: any RecordingOverlayDisplaying = RecordingOverlayController(),
+        actionFeedback: any ActionFeedbackDisplaying = ActionFeedbackOverlayController(),
         agentRunPanel: any AgentRunPanelDisplaying = AgentRunPanelController(),
         artifactOpener: any AgentArtifactOpening = SystemAgentArtifactOpener(),
         shortcut: any PushToTalkShortcutManaging = PushToTalkShortcut(),
@@ -256,6 +258,7 @@ final class AppModel {
         self.agentSpeechSettingsState = agentSpeechSettingsState
         self.diagnostics = diagnostics
         overlayPresenter = RecordingOverlayPresenter(display: recordingOverlay)
+        actionFeedbackPresenter = ActionFeedbackPresenter(display: actionFeedback)
         agentRunPresentation = AgentRunPresentation(diagnostics: diagnostics)
         agentSessionPresentationRegistry = AgentSessionPresentationRegistry()
         agentRunPanelPresenter = AgentRunPanelPresenter(

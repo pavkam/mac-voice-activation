@@ -189,6 +189,8 @@ extension AppModel {
         coordinator.onStateChange = { [weak self] in
             guard let self else { return }
             if $0 == .capturing {
+                // The recording overlay is about to take this spot back.
+                self.actionFeedbackPresenter.dismiss()
                 self.pendingAgentHandoff = nil
             } else if $0 == .executing, self.pendingAgentHandoff == nil {
                 self.pendingAgentHandoff = self.overlayPresenter.takeAgentRunHandoff()
@@ -220,6 +222,9 @@ extension AppModel {
         }
         coordinator.onAgentRunEvent = { [weak self] event in
             self?.handleAgentRunLifecycleEvent(event)
+        }
+        coordinator.onActionFeedback = { [weak self] event in
+            self?.actionFeedbackPresenter.handle(event)
         }
         coordinator.onAgentSpeechCancellation = { [weak self] in
             self?.diagnostics.record(

@@ -30,6 +30,7 @@ extension AppModelTests {
         let shortcut = ShortcutSpy()
         let speech = AppModelSpeechSessionSpy()
         let agentRunPanel: AppModelAgentPanelSpy
+        let actionFeedback = RecordingActionFeedbackDisplay()
         let macContextAccess: MacContextAccessSpy
         let macContextCapturer: MacContextCapturerSpy
         let model: AppModel
@@ -77,6 +78,7 @@ extension AppModelTests {
             model = AppModel(
                 preferences: preferences,
                 recordingOverlay: AppModelOverlayStub(),
+                actionFeedback: actionFeedback,
                 agentRunPanel: agentRunPanel,
                 shortcut: shortcut,
                 speechSession: speech,
