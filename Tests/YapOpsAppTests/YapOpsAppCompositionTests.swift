@@ -118,8 +118,8 @@ extension AppModelTests {
         profiles: [WakeProfile],
         passiveEnabled: Bool
     ) throws -> AppPreferences {
-        let suite = "YapOpsCompositionTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsCompositionTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         preferences.wakeProfiles = profiles

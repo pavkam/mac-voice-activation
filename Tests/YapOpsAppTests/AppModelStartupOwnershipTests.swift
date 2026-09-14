@@ -146,8 +146,8 @@ extension AppModelTests {
         beforeMonitorArm: @escaping @MainActor @Sendable () async -> Void = {},
         diagnostics: any YapOpsDiagnosticRecording = YapOpsDiagnostics.shared
     ) throws -> YapOpsAppComposition {
-        let suite = "YapOpsStartupOwnershipTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsStartupOwnershipTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         return YapOpsAppComposition.make(

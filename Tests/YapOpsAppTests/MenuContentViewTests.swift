@@ -140,8 +140,8 @@ struct MenuContentViewTests {
     }
 
     @MainActor private func model(profileCount: Int) throws -> AppModel {
-        let suite = "YapOpsMenuLayoutTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsMenuLayoutTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         preferences.wakeProfiles = try (1...profileCount).map { index in

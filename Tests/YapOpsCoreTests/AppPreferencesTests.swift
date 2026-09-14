@@ -7,8 +7,8 @@ import Testing
 
 struct AppPreferencesTests {
     @Test func capturesMacContext_WhenDefaultsAreEmpty_DefaultsToTrue() throws {
-        let suite = "YapOpsMacContextDefaultsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsMacContextDefaultsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
 
         let capturesMacContext = AppPreferences(defaults: defaults).capturesMacContext
@@ -17,8 +17,8 @@ struct AppPreferencesTests {
     }
 
     @Test func capturesMacContext_WhenChanged_RoundTripsThroughDefaults() throws {
-        let suite = "YapOpsMacContextPersistenceTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsMacContextPersistenceTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         AppPreferences(defaults: defaults).capturesMacContext = false
 
@@ -28,16 +28,16 @@ struct AppPreferencesTests {
     }
 
     @Test func hasCompletedFirstRun_WhenDefaultsAreEmpty_DefaultsToFalse() throws {
-        let suite = "YapOpsFirstRunDefaultsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsFirstRunDefaultsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
 
         #expect(!AppPreferences(defaults: defaults).hasCompletedFirstRun)
     }
 
     @Test func hasCompletedFirstRun_WhenChanged_RoundTripsThroughDefaults() throws {
-        let suite = "YapOpsFirstRunPersistenceTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsFirstRunPersistenceTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         AppPreferences(defaults: defaults).hasCompletedFirstRun = true
 
@@ -45,8 +45,8 @@ struct AppPreferencesTests {
     }
 
     @Test func terminalPhrases_WhenDefaultsAreEmpty_ReturnsTheBuiltInList() throws {
-        let suite = "YapOpsTerminalPhrasesDefaultsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTerminalPhrasesDefaultsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
 
         #expect(
@@ -55,8 +55,8 @@ struct AppPreferencesTests {
     }
 
     @Test func terminalPhrases_WhenChanged_RoundTripsThroughDefaults() throws {
-        let suite = "YapOpsTerminalPhrasesPersistenceTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTerminalPhrasesPersistenceTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         AppPreferences(defaults: defaults).terminalPhrases = ["cancel", "thank you"]
 
@@ -66,8 +66,8 @@ struct AppPreferencesTests {
     /// An explicitly saved empty list must stay empty, not fall back to the
     /// built-in defaults - clearing every phrase is a real, honoured choice.
     @Test func terminalPhrases_WhenExplicitlySavedEmpty_StaysEmpty() throws {
-        let suite = "YapOpsTerminalPhrasesEmptyTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTerminalPhrasesEmptyTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         AppPreferences(defaults: defaults).terminalPhrases = []
 
@@ -75,8 +75,8 @@ struct AppPreferencesTests {
     }
 
     @Test func wakeProfiles_WhenStoredProfileIsCorrupt_DoesNotRewriteStoredBytes() throws {
-        let suite = "YapOpsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let storedData = try #require("[{not valid JSON}]".data(using: .utf8))
         defaults.set(storedData, forKey: "wakeProfiles")
@@ -87,8 +87,8 @@ struct AppPreferencesTests {
     }
 
     @Test func values_WhenDefaultsAreEmpty_ReturnDocumentedDefaults() throws {
-        let suite = "YapOpsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         var expectedProfile = WakeProfile.defaultValue
@@ -110,8 +110,8 @@ struct AppPreferencesTests {
     }
 
     @Test func values_WhenChanged_RoundTripThroughDefaults() throws {
-        let suite = "YapOpsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let writer = AppPreferences(defaults: defaults)
         writer.passiveEnabled = true
@@ -157,8 +157,8 @@ struct AppPreferencesTests {
     }
 
     @Test func defaultSpeechVoice_WhenChanged_RoundTripsNewRepresentation() throws {
-        let suite = "YapOpsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let writer = AppPreferences(defaults: defaults)
         writer.defaultSpeechVoice = TextToSpeechVoiceSelection(
@@ -173,8 +173,8 @@ struct AppPreferencesTests {
     }
 
     @Test func pushToTalkHotKey_WhenStoredValuesAreInvalid_ReturnsDefault() throws {
-        let suite = "YapOpsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         defaults.set(40, forKey: "pushToTalkKeyCode")
         defaults.set(0, forKey: "pushToTalkModifiers")
@@ -186,8 +186,8 @@ struct AppPreferencesTests {
     }
 
     @Test func wakeProfiles_WhenStoredBeforeEnabledFlagExisted_MigrateAsEnabled() throws {
-        let suite = "YapOpsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let id = UUID(uuidString: "F39F8151-6192-452E-8C96-36D29AB7335D")!
         let legacyJSON = """
@@ -204,8 +204,8 @@ struct AppPreferencesTests {
     }
 
     @Test func wakeProfiles_WhenHotKeysWereGlobal_MigratesBindingToFirstProfile() throws {
-        let suite = "YapOpsTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         let legacyProfiles = [

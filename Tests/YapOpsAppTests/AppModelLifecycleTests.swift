@@ -69,8 +69,8 @@ extension AppModelTests {
     }
 
     @MainActor @Test func togglePassiveListening_WhenPaused_ResumesPreviousProfiles() async throws {
-        let suite = "YapOpsResumeAllTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsResumeAllTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         preferences.passiveEnabled = false
@@ -115,8 +115,8 @@ extension AppModelTests {
     @MainActor @Test func start_WhenPassiveListeningIsEnabled_WiresAndStartsDependencies()
         async throws
     {
-        let suite = "YapOpsStartupTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsStartupTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         let speech = AppModelSpeechSessionSpy()
@@ -141,8 +141,8 @@ extension AppModelTests {
     }
 
     @MainActor @Test func start_WhenCalledTwice_StartsDependenciesOnce() async throws {
-        let suite = "YapOpsStartupIdempotencyTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsStartupIdempotencyTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         let speech = AppModelSpeechSessionSpy()
@@ -169,8 +169,8 @@ extension AppModelTests {
     @MainActor @Test func start_WhenCalledFromBackground_RequestsPermissionAtUserPriority()
         async throws
     {
-        let suite = "YapOpsStartupPriorityTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsStartupPriorityTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let priorities = PermissionPriorityRecorder()
         let model = AppModel(
@@ -200,8 +200,8 @@ extension AppModelTests {
     @MainActor @Test func passiveListening_WhenDisabledDuringPermissionRequest_StaysOff()
         async throws
     {
-        let suite = "YapOpsPermissionRaceTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsPermissionRaceTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         preferences.passiveEnabled = false
@@ -235,8 +235,8 @@ extension AppModelTests {
     @MainActor @Test func passiveListening_WhenDisabledBeforePermissionDenial_DoesNotShowFailure()
         async throws
     {
-        let suite = "YapOpsLatePermissionDenialTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsLatePermissionDenialTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         preferences.passiveEnabled = false
@@ -266,8 +266,8 @@ extension AppModelTests {
     @MainActor @Test func passiveListening_WhenSettingDoesNotChange_DoesNotRequestPermissions()
         async throws
     {
-        let suite = "YapOpsIdempotentToggleTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsIdempotentToggleTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         let permission = PermissionRequestGate()
@@ -294,8 +294,8 @@ extension AppModelTests {
 
     @MainActor @Test
     func pushToTalk_WhenStartupIsNotReady_DoesNotStartAnotherPermissionRequest() async throws {
-        let suite = "YapOpsPermissionCoalescingTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsPermissionCoalescingTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         let permission = PermissionRequestGate()
@@ -327,8 +327,8 @@ extension AppModelTests {
     @MainActor @Test func shutdown_WhenStartupPermissionCompletesLate_DoesNotRestartListening()
         async throws
     {
-        let suite = "YapOpsShutdownPermissionTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsShutdownPermissionTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         let permission = PermissionRequestGate()
@@ -365,8 +365,8 @@ extension AppModelTests {
             }
         }
 
-        let suite = "YapOpsConcurrentShutdownTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsConcurrentShutdownTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let opener = ControlledShutdownArtifactOpener()
         defer { opener.completeShutdown() }
@@ -402,8 +402,8 @@ extension AppModelTests {
     }
 
     @MainActor @Test func start_WhenPassiveDisabledDuringPermissionRequest_StaysOff() async throws {
-        let suite = "YapOpsStartupPausePermissionTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsStartupPausePermissionTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         let permission = PermissionRequestGate()
@@ -434,8 +434,8 @@ extension AppModelTests {
     @MainActor @Test func pushToTalk_WhenHeldProfileChangesDuringPermission_UsesNewestBinding()
         async throws
     {
-        let suite = "YapOpsHotKeyPermissionRaceTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsHotKeyPermissionRaceTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         preferences.passiveEnabled = false

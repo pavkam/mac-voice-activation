@@ -111,8 +111,8 @@ extension AppModelTests {
         modelStoreWasShared: (Bool) -> Void = { _ in },
         runnerCreated: (ACPAgentRunner) -> Void = { _ in }
     ) throws -> YapOpsAppComposition {
-        let suite = "YapOpsRealContinuityCompositionTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let suite = InMemoryDefaults.makeSuiteName("YapOpsRealContinuityCompositionTests")
+        let defaults = try #require(InMemoryDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
         let preferences = AppPreferences(defaults: defaults)
         preferences.wakeProfiles = [profile]

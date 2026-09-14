@@ -369,12 +369,12 @@ import Testing
         diagnostics: any YapOpsDiagnosticRecording = YapOpsDiagnostics.shared,
         operation: (UserDefaultsAgentContinuityStore, TestDefaults) async throws -> Void
     ) async throws {
-        let suite = "UserDefaultsAgentContinuityStoreTests.\(UUID().uuidString)"
+        let suite = InMemoryDefaults.makeSuiteName("UserDefaultsAgentContinuityStoreTests")
         let defaults = TestDefaults(suite: suite)
         defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = UserDefaultsAgentContinuityStore(
-            defaults: try #require(UserDefaults(suiteName: suite)),
+            defaults: try #require(InMemoryDefaults(suiteName: suite)),
             diagnostics: diagnostics)
         try await operation(store, defaults)
     }
@@ -440,15 +440,15 @@ import Testing
         let suite: String
 
         func data(forKey key: String) -> Data? {
-            UserDefaults(suiteName: suite)?.data(forKey: key)
+            InMemoryDefaults(suiteName: suite)?.data(forKey: key)
         }
 
         func set(_ value: Data, forKey key: String) {
-            UserDefaults(suiteName: suite)?.set(value, forKey: key)
+            InMemoryDefaults(suiteName: suite)?.set(value, forKey: key)
         }
 
         func removePersistentDomain(forName name: String) {
-            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: name)
+            InMemoryDefaults(suiteName: suite)?.removePersistentDomain(forName: name)
         }
     }
 }

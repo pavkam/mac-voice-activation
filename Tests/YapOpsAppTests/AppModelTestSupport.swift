@@ -64,8 +64,8 @@ extension AppModelTests {
             diagnostics: any YapOpsDiagnosticRecording =
                 YapOpsDiagnostics.shared
         ) throws {
-            let suite = "YapOpsAppModelTests.\(UUID().uuidString)"
-            let defaults = try #require(UserDefaults(suiteName: suite))
+            let suite = InMemoryDefaults.makeSuiteName("YapOpsAppModelTests")
+            let defaults = try #require(InMemoryDefaults(suiteName: suite))
             defaults.removePersistentDomain(forName: suite)
             preferences = AppPreferences(defaults: defaults)
             self.agentRunPanel = agentRunPanel
